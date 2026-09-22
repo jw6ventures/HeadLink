@@ -1,0 +1,23 @@
+[package]
+name = "aap-jni"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+# cdylib is packaged in the APK; rlib lets host tests exercise the probe.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+aap-session = { path = "../aap-session" }
+aap-tls = { path = "../aap-tls" }
+aap-wire = { path = "../aap-wire" }
+# Exact: 0.3.1 re-exports 0.4, which adds a proc-macro dependency chain.
+jni-sys = "=0.3.0"
+libc = "0.2.189"
+
+[dev-dependencies]
+hu-sim = { path = "../../tools/hu-sim" }
+aap-proto = { path = "../aap-proto" }
+test-pattern = { path = "../../tools/test-pattern" }

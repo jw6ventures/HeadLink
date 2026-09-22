@@ -1,0 +1,14 @@
+[package]
+name = "hu-sim"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+# Test-only head-unit peer; never packaged or distributed.
+[dependencies]
+aap-proto = { path = "../../core/aap-proto" }
+aap-wire = { path = "../../core/aap-wire" }
+openssl = "0.10.81"
+prost = { version = "=0.14.4", default-features = false, features = ["derive", "std"] }

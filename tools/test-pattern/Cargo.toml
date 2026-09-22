@@ -1,0 +1,10 @@
+[package]
+name = "test-pattern"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+# Lab and test video source (I_PCM/P_Skip H.264); never packaged or distributed.
+[dependencies]

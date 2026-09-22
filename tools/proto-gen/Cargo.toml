@@ -1,0 +1,16 @@
+# Build-time generator for core/aap-proto (not part of the workspace, never shipped).
+# Its own lockfile pins prost-build; run through tools/proto-gen.sh.
+[package]
+name = "proto-gen"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "GPL-3.0-only"
+publish = false
+
+[dependencies]
+prost-build = "=0.14.4"
+prost-types = "=0.14.4"
+prost = "=0.14.4"
+
+[workspace]

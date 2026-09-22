@@ -1,0 +1,36 @@
+# Reference pins from spec v0.1. No upstream implementation or schemas vendored.
+# Licenses were audited at these commits; see ../../docs/licenses.md.
+[[reference]]
+name = "AACS"
+repository = "https://github.com/tomasz-grobelny/AACS"
+commit = "faa1cf208feb5dfe1cb9535be16daeac4f08da0c"
+license = "GPL-3.0-only"
+[[reference]]
+name = "open-android-auto"
+repository = "https://github.com/mrmees/open-android-auto"
+commit = "61eab61c5f9968154ff1a80faa8c0a427b208479"
+license = "GPL-3.0-or-later"
+[[reference]]
+name = "OpenAuto Prodigy"
+repository = "https://github.com/mrmees/openauto-prodigy"
+commit = "3afc5dd8bbacb5ce68e109189b18b14b251fabef"
+license = "GPL-3.0"
+[[reference]]
+name = "aasdk"
+repository = "https://github.com/f1xpl/aasdk"
+commit = "9ee5283245a630afce3a441696b9dde484ecbcd9"
+license = "GPL-3.0-or-later"
+# Read-only platform evidence for accessory descriptor behavior (P0.2 audit).
+[[reference]]
+name = "Android common kernel f_accessory (android14-6.1)"
+repository = "https://android.googlesource.com/kernel/common"
+commit = "22764d91f0efd150423a3a489be434ac184c3b78"
+license = "GPL-2.0"
+# Lab-only build input (P1.1): the proto submodule gitlink recorded in the Prodigy commit
+# above, fetched by tools/lab-receiver.sh to build the controlled receiver. Not vendored,
+# not an input to project code, and not checked for ancestry against the spec pin.
+[[reference]]
+name = "open-android-auto (Prodigy proto submodule, dist branch)"
+repository = "https://github.com/mrmees/open-android-auto"
+commit = "5ff4aa218dd33913237993f2968bf70e16dc464e"
+license = "GPL-3.0-or-later"

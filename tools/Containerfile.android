@@ -1,0 +1,61 @@
+# Android APK and Rust cross-build environment (P0.2). Build with network access:
+#   podman build -f tools/Containerfile.android -t localhost/openauto-android:p0.2 .
+# Every download is pinned by version and checksum. sdkmanager verifies the SHA-1
+# published in Google's repository manifest; the installed package revisions are
+# asserted below so a republished package fails the build instead of drifting.
+# Building this image accepts the Android SDK License on behalf of the builder.
+FROM docker.io/library/rust@sha256:bf7d87666c4da6eace19e06d21bc4859c6e2a5c97a21ac273b0e082112753cf0
+
+RUN rustup component add --toolchain 1.85.1 rustfmt clippy \
+ && rustup target add --toolchain 1.85.1 aarch64-linux-android
+ENV RUSTUP_TOOLCHAIN=1.85.1
+
+# Eclipse Temurin JDK 17.0.20.1+1: runs Gradle, AGP, sdkmanager, and apksigner.
+ARG JDK_URL=https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.20.1%2B1/OpenJDK17U-jdk_x64_linux_hotspot_17.0.20.1_1.tar.gz
+ARG JDK_SHA256=3808d1d15e3ec6bd5b84057fb5d84c33d8a1536a258146bcea2e603fc726e08e
+RUN curl -fsSL --retry 5 --retry-all-errors -o /tmp/jdk.tar.gz "$JDK_URL" \
+ && echo "$JDK_SHA256  /tmp/jdk.tar.gz" | sha256sum -c - \
+ && mkdir /opt/jdk \
+ && tar -xzf /tmp/jdk.tar.gz -C /opt/jdk --strip-components=1 \
+ && rm /tmp/jdk.tar.gz
+ENV JAVA_HOME=/opt/jdk \
+    PATH=/opt/jdk/bin:$PATH \
+    ANDROID_HOME=/opt/android-sdk
+
+# Command-line tools 23.0 (published SHA-1 e025545c62a8e64c7559119566a569fb1dec5f60).
+# Used only during this build; removed afterwards so builds cannot install packages.
+ARG CMDLINE_TOOLS_URL=https://dl.google.com/android/repository/commandlinetools-linux-16111833_latest.zip
+ARG CMDLINE_TOOLS_SHA256=0877a1d048fe4a24efe2eff536ca4223f7adeb58648bb81909d33c446918cfa8
+RUN curl -fsSL --retry 5 --retry-all-errors -o /tmp/cmdline-tools.zip "$CMDLINE_TOOLS_URL" \
+ && echo "$CMDLINE_TOOLS_SHA256  /tmp/cmdline-tools.zip" | sha256sum -c - \
+ && unzip -q /tmp/cmdline-tools.zip -d /opt/sdk-installer \
+ && rm /tmp/cmdline-tools.zip \
+ && yes | /opt/sdk-installer/cmdline-tools/bin/sdkmanager --sdk_root="$ANDROID_HOME" --licenses > /dev/null
+
+# Separate layers so a failed large download does not repeat the smaller ones.
+# sdkmanager extracts owner-only executables, but builds run as the invoking host
+# user; fix modes in the same layer so the SDK is not duplicated.
+RUN /opt/sdk-installer/cmdline-tools/bin/sdkmanager --sdk_root="$ANDROID_HOME" \
+      "platforms;android-36" "build-tools;36.1.0" \
+ && chmod -R a+rX "$ANDROID_HOME/platforms" "$ANDROID_HOME/build-tools"
+RUN /opt/sdk-installer/cmdline-tools/bin/sdkmanager --sdk_root="$ANDROID_HOME" \
+      "ndk;29.0.14206865" \
+ && chmod -R a+rX "$ANDROID_HOME/ndk"
+# AGP otherwise attempts to download platform-tools during the build.
+RUN /opt/sdk-installer/cmdline-tools/bin/sdkmanager --sdk_root="$ANDROID_HOME" \
+      "platform-tools" \
+ && chmod -R a+rX "$ANDROID_HOME/platform-tools"
+
+RUN set -e; \
+    check() { tr -d ' \r' < "$ANDROID_HOME/$1/source.properties" | grep -qx "Pkg.Revision=$2" \
+      || { echo "unexpected revision for $1"; exit 1; }; }; \
+    check platforms/android-36 2; \
+    check build-tools/36.1.0 36.1.0; \
+    check ndk/29.0.14206865 29.0.14206865; \
+    check platform-tools 37.0.1; \
+    rm -rf /opt/sdk-installer; \
+    ls "$ANDROID_HOME"
+
+ENV ANDROID_NDK_HOME=/opt/android-sdk/ndk/29.0.14206865 \
+    CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=/opt/android-sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang \
+    PATH=/opt/android-sdk/build-tools/36.1.0:/opt/android-sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin:/opt/jdk/bin:/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin

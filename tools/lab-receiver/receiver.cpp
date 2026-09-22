@@ -1,0 +1,2362 @@
+// Controlled lab receiver for OpenAutoAndroid (GPL-3.0-only). Accepts one TCP
+// connection and runs the pinned OpenAuto Prodigy receiver session over it, requesting
+// a configurable protocol version and recording receiver-side state and message traces.
+// TCP is a lab transport to an instrumented receiver, not wireless Android Auto.
+//
+// With --projection it also registers Prodigy's head-unit video, input, sensor,
+// now-playing and (with --audio) PCM audio handlers, decodes the received H.264 with
+// libavcodec, and runs a script:
+// tap each button of the source's test scene and check that the decoded picture changes
+// to that button's color, press a head-unit button, and optionally drop video focus,
+// withhold acknowledgements, or (--script transport) press media buttons and check that
+// both the now-playing channel and the decoded picture follow. With --audio it also
+// measures the received PCM against the tone the source says it is sending, which is the
+// P5.3 round-trip check; --underflow-after injects 0x800B, which no open-source head unit
+// sends. With --script track (P6.1) it instead plays a moving synthetic position into the
+// sensor channel and measures whether the projected map pane follows it, against the half
+// of the dashboard that must stay still. With --script guidance (P6.5) the vehicle waits at
+// the kerb until the source puts a route on the cluster, then drives --track-file - real
+// road geometry that follows the route, misses a turn, and reaches the destination another
+// way - while the receiver records what the cluster is told. That is the independent
+// decode, input, audio, map-motion and guidance evidence for P4, P5.1, P5.3, P6.1 and
+// P6.5; it proves nothing about a factory head unit.
+#include <QCommandLineParser>
+#include <QCoreApplication>
+#include <QElapsedTimer>
+#include <QFile>
+#include <QHostAddress>
+#include <QPoint>
+#include <QTcpServer>
+#include <QTcpSocket>
+#include <QTextStream>
+#include <QTimer>
+
+#include <oaa/HU/Handlers/AudioChannelHandler.hpp>
+#include <oaa/HU/Handlers/InputChannelHandler.hpp>
+#include <oaa/HU/Handlers/MediaStatusChannelHandler.hpp>
+#include <oaa/HU/Handlers/NavigationChannelHandler.hpp>
+#include <oaa/HU/Handlers/SensorChannelHandler.hpp>
+#include <oaa/HU/Handlers/VideoChannelHandler.hpp>
+#include <oaa/Messenger/ProtocolLogger.hpp>
+#include <oaa/Session/AASession.hpp>
+#include <oaa/Transport/TCPTransport.hpp>
+
+#include "oaa/av/AVMediaAckIndicationMessage.pb.h"
+#include "oaa/common/StatusEnum.pb.h"
+#include "oaa/control/ChannelDescriptorData.pb.h"
+#include "oaa/sensor/SensorEventIndicationMessage.pb.h"
+#include "oaa/sensor/SensorStartRequestMessage.pb.h"
+#include "oaa/sensor/SensorStartResponseMessage.pb.h"
+#include "oaa/sensor/SensorTypeEnum.pb.h"
+
+extern "C" {
+#include <libavcodec/avcodec.h>
+#include <libavutil/imgutils.h>
+}
+
+#include <algorithm>
+#include <cmath>
+#include <cstdlib>
+#include <cstring>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+namespace {
+
+const char* stateName(oaa::SessionState state)
+{
+    switch (state) {
+    case oaa::SessionState::Idle: return "Idle";
+    case oaa::SessionState::Connecting: return "Connecting";
+    case oaa::SessionState::VersionExchange: return "VersionExchange";
+    case oaa::SessionState::TLSHandshake: return "TLSHandshake";
+    case oaa::SessionState::ServiceDiscovery: return "ServiceDiscovery";
+    case oaa::SessionState::Active: return "Active";
+    case oaa::SessionState::ShuttingDown: return "ShuttingDown";
+    case oaa::SessionState::Disconnected: return "Disconnected";
+    }
+    return "Unknown";
+}
+
+const char* reasonName(oaa::DisconnectReason reason)
+{
+    switch (reason) {
+    case oaa::DisconnectReason::Normal: return "Normal";
+    case oaa::DisconnectReason::PingTimeout: return "PingTimeout";
+    case oaa::DisconnectReason::TransportError: return "TransportError";
+    case oaa::DisconnectReason::VersionMismatch: return "VersionMismatch";
+    case oaa::DisconnectReason::Timeout: return "Timeout";
+    case oaa::DisconnectReason::UserRequested: return "UserRequested";
+    case oaa::DisconnectReason::HandshakeError: return "HandshakeError";
+    case oaa::DisconnectReason::TlsError: return "TlsError";
+    case oaa::DisconnectReason::ProtocolError: return "ProtocolError";
+    }
+    return "Unknown";
+}
+
+QByteArray serialized(const google::protobuf::MessageLite& message)
+{
+    std::string bytes;
+    message.SerializeToString(&bytes);
+    return QByteArray(bytes.data(), static_cast<int>(bytes.size()));
+}
+
+struct Yuv {
+    int y = 0;
+    int u = 0;
+    int v = 0;
+};
+
+// BT.601 limited range, matching the source scene's conversion.
+Yuv fromRgb(int r, int g, int b)
+{
+    auto clamp = [](int value) { return std::max(1, std::min(254, value)); };
+    return Yuv{clamp((66 * r + 129 * g + 25 * b + 128) / 256 + 16),
+               clamp((-38 * r - 74 * g + 112 * b + 128) / 256 + 128),
+               clamp((112 * r - 94 * g - 18 * b + 128) / 256 + 128)};
+}
+
+// The scene's button colors (tools/source-harness/src/scene.rs and the app's DemoScene).
+Yuv buttonColor(int index)
+{
+    switch (index) {
+    case 0: return fromRgb(200, 40, 40);
+    case 1: return fromRgb(40, 180, 60);
+    case 2: return fromRgb(50, 90, 220);
+    default: return fromRgb(220, 190, 40);
+    }
+}
+
+// The scene layout inside the content rectangle, as the source draws it.
+struct Layout {
+    int x = 0, y = 0, width = 0, height = 0;
+    int header() const { return height / 5; }
+    int margin() const { return std::max(2, width / 40); }
+    int buttonWidth() const { return (width - 3 * margin()) / 2; }
+    int buttonHeight() const { return (height - (header() + 3 * margin())) / 2; }
+    QPoint origin(int index) const
+    {
+        const int col = index % 2, row = index / 2;
+        return QPoint(x + margin() + col * (buttonWidth() + margin()),
+                      y + header() + margin() + row * (buttonHeight() + margin()));
+    }
+    QPoint center(int index) const
+    {
+        return origin(index) + QPoint(buttonWidth() / 2, buttonHeight() / 2);
+    }
+    /// The color patch the scene keeps free of text and of the touch crosshair.
+    QPoint sample(int index) const
+    {
+        return origin(index) + QPoint(buttonWidth() / 4, buttonHeight() * 3 / 4);
+    }
+    /// Middle of the now-playing swatch, in the band between the header and the first row
+    /// of buttons (tools/source-harness/src/scene.rs, Layout::transport_swatch).
+    QPoint transportSample() const
+    {
+        return QPoint(x + margin() + width / 16, y + header() + margin() / 2);
+    }
+};
+
+// Playback-state colors of the now-playing swatch (scene.rs, transport_color). Prodigy's
+// MediaStatusChannelHandler numbers the states Stopped 1, Playing 2, Paused 3.
+Yuv transportColor(int state)
+{
+    switch (state) {
+    case 2: return fromRgb(40, 200, 120);
+    case 3: return fromRgb(230, 160, 30);
+    case 1: return fromRgb(90, 90, 90);
+    default: return fromRgb(190, 40, 130);
+    }
+}
+
+/// The fraction of pixels differing by more than `threshold`, or -1 when the two
+/// samples cannot be compared at all.
+double changedFraction(const QByteArray& before, const QByteArray& after, int threshold)
+{
+    if (before.isEmpty() || before.size() != after.size())
+        return -1.0;
+    qsizetype changed = 0;
+    const auto* a = reinterpret_cast<const unsigned char*>(before.constData());
+    const auto* b = reinterpret_cast<const unsigned char*>(after.constData());
+    for (qsizetype i = 0; i < before.size(); ++i) {
+        if (std::abs(static_cast<int>(a[i]) - static_cast<int>(b[i])) > threshold)
+            ++changed;
+    }
+    return static_cast<double>(changed) / static_cast<double>(before.size());
+}
+
+/// Two rectangles of the projected dashboard (P5.5), mirroring `DashboardLayout` in
+/// app/src/main/kotlin/org/openautoandroid/source/Dashboard.kt field for field.
+///
+/// The second one is the point. A check that only watched the map pane would pass on a
+/// picture where every pixel changes every frame — a broken encoder, a flashing scene,
+/// a decoder producing noise — so the track script measures the half of the dashboard
+/// that must *not* move at the same time as the half that must.
+struct DashboardPane {
+    struct Rect {
+        int x = 0, y = 0, width = 0, height = 0;
+    };
+    /// The top half of the map pane: the floating controls sit in its bottom-left
+    /// corner and the attribution in its bottom-right, and neither follows the vehicle.
+    Rect map;
+    /// The configurable tile row, which reads "not configured" for the whole session.
+    Rect tiles;
+
+    static DashboardPane of(const Layout& content, bool mapOnLeft)
+    {
+        const int margin = std::max(2, content.width / 96);
+        const int header = std::max(24, content.height / 9);
+        const int bodyY = content.y + header;
+        const int bodyHeight = content.height - header;
+        const int paneWidth = (content.width - 3 * margin) / 2;
+        const int paneHeight = bodyHeight - 2 * margin;
+        const int leftX = content.x + margin;
+        const int rightX = content.x + 2 * margin + paneWidth;
+        const int rowHeight = (paneHeight - margin) / 2;
+        DashboardPane pane;
+        pane.map = {mapOnLeft ? leftX : rightX, bodyY + margin, paneWidth, paneHeight / 2};
+        pane.tiles = {mapOnLeft ? rightX : leftX, bodyY + margin + rowHeight + margin,
+                      paneWidth, rowHeight};
+        return pane;
+    }
+};
+
+/// One H.264 decoder for the received stream.
+class Decoder {
+public:
+    bool open()
+    {
+        const AVCodec* codec = avcodec_find_decoder(AV_CODEC_ID_H264);
+        if (!codec)
+            return false;
+        context_ = avcodec_alloc_context3(codec);
+        if (!context_)
+            return false;
+        // Report broken bitstreams instead of concealing them.
+        context_->err_recognition = AV_EF_EXPLODE | AV_EF_CAREFUL;
+        context_->thread_count = 1;
+        if (avcodec_open2(context_, codec, nullptr) < 0)
+            return false;
+        packet_ = av_packet_alloc();
+        frame_ = av_frame_alloc();
+        latest_ = av_frame_alloc();
+        return packet_ && frame_ && latest_;
+    }
+
+    ~Decoder()
+    {
+        av_frame_free(&latest_);
+        av_frame_free(&frame_);
+        av_packet_free(&packet_);
+        avcodec_free_context(&context_);
+    }
+
+    /// Whether an Annex B unit contains a coded slice; a codec configuration unit
+    /// (SPS and PPS only) produces no picture and is not a decode error.
+    static bool hasSlice(const QByteArray& unit)
+    {
+        const auto* data = reinterpret_cast<const uint8_t*>(unit.constData());
+        for (int i = 0; i + 3 < unit.size(); ++i) {
+            if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1) {
+                const uint8_t type = data[i + 3] & 0x1f;
+                if (type == 1 || type == 5)
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    /// Decodes one access unit. Returns the number of pictures it produced.
+    int decode(const QByteArray& unit)
+    {
+        const bool slices = hasSlice(unit);
+        // The decoder needs padded input.
+        buffer_.resize(unit.size() + AV_INPUT_BUFFER_PADDING_SIZE);
+        std::memcpy(buffer_.data(), unit.constData(), unit.size());
+        std::memset(buffer_.data() + unit.size(), 0, AV_INPUT_BUFFER_PADDING_SIZE);
+        packet_->data = reinterpret_cast<uint8_t*>(buffer_.data());
+        packet_->size = unit.size();
+        int sent = avcodec_send_packet(context_, packet_);
+        if (sent < 0) {
+            if (slices)
+                ++errors;
+            else
+                ++configs;
+            return 0;
+        }
+        if (!slices)
+            ++configs;
+        int pictures = 0;
+        while (true) {
+            int got = avcodec_receive_frame(context_, frame_);
+            if (got == AVERROR(EAGAIN) || got == AVERROR_EOF)
+                break;
+            if (got < 0) {
+                ++errors;
+                break;
+            }
+            ++pictures;
+            ++frames;
+            width = frame_->width;
+            height = frame_->height;
+            // The next receive call unrefs frame_, so keep this picture for sampling.
+            av_frame_unref(latest_);
+            av_frame_move_ref(latest_, frame_);
+            haveFrame_ = true;
+        }
+        return pictures;
+    }
+
+    /// Luma and chroma of the latest decoded picture at (x, y).
+    Yuv sample(int x, int y) const
+    {
+        if (!haveFrame_ || !latest_->data[0] || x < 0 || y < 0 || x >= width || y >= height)
+            return Yuv{-1, -1, -1};
+        return Yuv{latest_->data[0][y * latest_->linesize[0] + x],
+                   latest_->data[1][(y / 2) * latest_->linesize[1] + x / 2],
+                   latest_->data[2][(y / 2) * latest_->linesize[2] + x / 2]};
+    }
+
+    /// The luma plane over a rectangle of the latest picture, row-major.
+    ///
+    /// A single pixel says whether one thing changed colour; a rectangle says how much
+    /// of a pane changed, which is the only way to tell a map that is panning under the
+    /// vehicle from one that redrew a marker and nothing else. Luma alone: a map moving
+    /// over its own tiles changes brightness everywhere it moves, and carrying the
+    /// chroma planes would triple the copy for no extra evidence.
+    QByteArray luma(int x, int y, int w, int h) const
+    {
+        if (!haveFrame_ || !latest_->data[0] || x < 0 || y < 0 || w <= 0 || h <= 0
+            || x + w > width || y + h > height)
+            return QByteArray();
+        QByteArray out(w * h, 0);
+        for (int row = 0; row < h; ++row) {
+            std::memcpy(out.data() + static_cast<qsizetype>(row) * w,
+                        latest_->data[0] + static_cast<size_t>(y + row) * latest_->linesize[0] + x,
+                        static_cast<size_t>(w));
+        }
+        return out;
+    }
+
+    int frames = 0;
+    int errors = 0;
+    /// Codec configuration units (parameter sets without a picture).
+    int configs = 0;
+    int width = 0;
+    int height = 0;
+
+private:
+    AVCodecContext* context_ = nullptr;
+    AVPacket* packet_ = nullptr;
+    AVFrame* frame_ = nullptr;
+    /// The most recent decoded picture, kept for pixel checks.
+    AVFrame* latest_ = nullptr;
+    QByteArray buffer_;
+    bool haveFrame_ = false;
+};
+
+/// Prodigy's video handler with an ack stall for the source's flow-control test.
+class LabVideoHandler : public oaa::hu::VideoChannelHandler {
+public:
+    LabVideoHandler(uint8_t channelId, QObject* parent)
+        : oaa::hu::VideoChannelHandler(channelId,
+                                       oaa::proto::enums::VideoFocusMode::PROJECTED,
+                                       parent)
+    {
+        connect(this, &oaa::hu::VideoChannelHandler::streamStarted, this,
+                [this](int32_t session, uint32_t) { session_ = session; });
+    }
+
+    void onMediaData(const QByteArray& data, uint64_t timestamp) override
+    {
+        // Prodigy's AV callback loses the message ID. For our source, a unit
+        // without a slice is SPS/PPS configuration: decode it without an ACK.
+        // Timestamp zero alone cannot identify configuration (the first frame
+        // may also have timestamp zero).
+        if (!Decoder::hasSlice(data)) {
+            emit videoFrameData(std::make_shared<const QByteArray>(data), 0);
+            return;
+        }
+        if (stalling_) {
+            // Decode without acknowledging: the source's window fills up.
+            ++withheld_;
+            emit videoFrameData(std::make_shared<const QByteArray>(data), 0);
+            return;
+        }
+        oaa::hu::VideoChannelHandler::onMediaData(data, timestamp);
+    }
+
+    void setStalling(bool stalling) { stalling_ = stalling; }
+
+    /// Acknowledges everything withheld in one message, as a head unit that caught up.
+    int releaseAcks()
+    {
+        const int count = withheld_;
+        withheld_ = 0;
+        if (count > 0) {
+            oaa::proto::messages::AVMediaAckIndication ack;
+            ack.set_session_id(session_);
+            ack.set_ack_count(count);
+            emit sendRequested(channelId(), oaa::AVMessageId::ACK_INDICATION, serialized(ack));
+        }
+        return count;
+    }
+
+private:
+    bool stalling_ = false;
+    int withheld_ = 0;
+    int32_t session_ = 0;
+};
+
+/// The sphere the track's arithmetic moves a vehicle over. A drive of a few hundred
+/// metres does not need a geoid, and a spherical step cannot be wrong about a longitude
+/// the way a flat one can.
+constexpr double EARTH_RADIUS_M = 6371000.0;
+
+/// A synthetic drive for the sensor channel: a position that moves, with a speed and a
+/// bearing that are the ones that position is actually moving at (P6.1).
+///
+/// The lab has only ever reported one fixed fix, so nothing in this source has had to
+/// follow a moving map: steady-state redraw, a changing heading and a non-zero speed
+/// have never been exercised at all, and three of the four silent defects P5.5's first
+/// run caught were about change over time.
+///
+/// **Every value is integrated from the one before it** — the next position is the
+/// previous one advanced along the current heading at the current speed. That is what
+/// makes position, speed and bearing consistent by construction rather than by
+/// agreement: a player reading three independent tables could publish a vehicle heading
+/// north at 13 m/s whose coordinates went east, and nothing downstream would notice,
+/// because nothing downstream has any other source to check it against.
+class TrackPlayer {
+public:
+    struct Leg {
+        double heading; ///< degrees clockwise from north
+        double metres;  ///< how far to run before the next corner
+        double speed;   ///< m/s to settle at along it
+    };
+
+    TrackPlayer(double latitude, double longitude) : latitude_(latitude), longitude_(longitude)
+    {
+        heading_ = LEGS[0].heading;
+        remaining_ = LEGS[0].metres;
+    }
+
+    /// A drive along given road geometry instead of the block circuit (P6.5): a vehicle
+    /// that follows real streets, so a route computed from it can be followed and left.
+    /// It pulls away, holds `cruise`, slows to a stop at the last point, and stays there.
+    TrackPlayer(std::vector<std::pair<double, double>> path, double cruise)
+        : latitude_(path.front().first), longitude_(path.front().second), path_(std::move(path)),
+          cruise_(cruise)
+    {
+        heading_ = path_.size() > 1 ? bearing(path_[0], path_[1]) : 0.0;
+        for (size_t i = 1; i < path_.size(); ++i)
+            pathLength_ += distance(path_[i - 1], path_[i]);
+    }
+
+    /// Advances the vehicle by `seconds`. A parked one stays exactly where it is.
+    void advance(double seconds)
+    {
+        if (!departed_)
+            return;
+        if (!path_.empty()) {
+            advanceAlongPath(seconds);
+            return;
+        }
+        const Leg& leg = LEGS[index_];
+        // Corners are driven, not teleported. A head unit that jumps its heading by 90
+        // degrees between two fixes is not something a road produces, and a source that
+        // only re-rotated on a large change would pass against one that did.
+        const double turn = TURN_RATE_DEG * seconds;
+        heading_ += std::clamp(std::remainder(leg.heading - heading_, 360.0), -turn, turn);
+        heading_ = std::fmod(heading_ + 360.0, 360.0);
+        // Pulling away and slowing for a corner, rather than stepping between speeds:
+        // the speed the source is shown has to be one the position could have produced.
+        const double accel = ACCEL_MS2 * seconds;
+        speed_ += std::clamp(leg.speed - speed_, -accel, accel);
+        maxSpeed_ = std::max(maxSpeed_, speed_);
+
+        const double step = speed_ * seconds;
+        const double angular = step / EARTH_RADIUS_M;
+        const double lat = latitude_ * M_PI / 180.0;
+        const double lon = longitude_ * M_PI / 180.0;
+        const double theta = heading_ * M_PI / 180.0;
+        const double nextLat = std::asin(std::sin(lat) * std::cos(angular)
+                                         + std::cos(lat) * std::sin(angular) * std::cos(theta));
+        const double nextLon =
+            lon
+            + std::atan2(std::sin(theta) * std::sin(angular) * std::cos(lat),
+                         std::cos(angular) - std::sin(lat) * std::sin(nextLat));
+        latitude_ = nextLat * 180.0 / M_PI;
+        longitude_ = std::fmod(nextLon * 180.0 / M_PI + 540.0, 360.0) - 180.0;
+
+        travelled_ += step;
+        remaining_ -= step;
+        if (remaining_ <= 0.0) {
+            index_ = (index_ + 1) % std::size(LEGS);
+            remaining_ = LEGS[index_].metres;
+            ++corners_;
+        }
+    }
+
+    /// Pulls away from the kerb. Held until then so the script has a settled picture of
+    /// a parked vehicle to measure the moving one against.
+    void depart() { departed_ = true; }
+    bool moving() const { return departed_; }
+    /// A path drive has reached its last point and stopped. Never true for the circuit.
+    bool finished() const { return !path_.empty() && segment_ + 1 >= path_.size() && speed_ == 0.0; }
+    bool followsPath() const { return !path_.empty(); }
+    double pathLength() const { return pathLength_; }
+
+    double speed() const { return speed_; }
+    double heading() const { return heading_; }
+    double travelled() const { return travelled_; }
+    double maxSpeed() const { return maxSpeed_; }
+    int corners() const { return corners_; }
+
+    // The scales this lab sends, and the reason each is what it is. None of them is
+    // measured from a vehicle: Ford was stationary for the whole P5.2 harvest, so its
+    // speed was 0, which is 0 at every scale, and its bearing (103553459) reads as 1e6
+    // rather than the 1e3 the lab has always used. The lab deliberately keeps its own
+    // scales unequal to Ford's so that a source which hardcoded either one fails here.
+    /// Degrees at 1e7, which is Android Auto's convention for a position.
+    int32_t wireLatitude() const { return scaled(latitude_, 1e7); }
+    int32_t wireLongitude() const { return scaled(longitude_, 1e7); }
+    /// Thousandths of a degree, matching the fixed fix's 1790 (1.79 degrees).
+    int32_t wireBearing() const { return scaled(heading_, 1e3); }
+    /// Millimetres per second. Unambiguous under the app's own candidate list, where a
+    /// raw m/s value below 90 would also be in range and could not be told apart.
+    int32_t wireSpeed() const { return scaled(speed_, 1e3); }
+
+private:
+    static int32_t scaled(double value, double factor)
+    {
+        return static_cast<int32_t>(std::llround(value * factor));
+    }
+
+    using Point = std::pair<double, double>;
+
+    static double distance(const Point& a, const Point& b)
+    {
+        const double lat = (a.first + b.first) / 2.0 * M_PI / 180.0;
+        const double x = (b.second - a.second) * M_PI / 180.0 * std::cos(lat) * EARTH_RADIUS_M;
+        const double y = (b.first - a.first) * M_PI / 180.0 * EARTH_RADIUS_M;
+        return std::hypot(x, y);
+    }
+
+    static double bearing(const Point& a, const Point& b)
+    {
+        const double lat = (a.first + b.first) / 2.0 * M_PI / 180.0;
+        const double x = (b.second - a.second) * std::cos(lat);
+        const double y = b.first - a.first;
+        return std::fmod(std::atan2(x, y) * 180.0 / M_PI + 360.0, 360.0);
+    }
+
+    /// Moves along the path: the position is on the geometry at every tick, the heading is
+    /// the direction of the segment it is on, and the speed is what the distance covered
+    /// says it is — the same by-construction consistency the circuit has.
+    void advanceAlongPath(double seconds)
+    {
+        const double left = pathLength_ - travelled_;
+        // Slowing so as to stop at the last point rather than overshoot it.
+        const double target = std::min(cruise_, std::sqrt(std::max(0.0, 2.0 * ACCEL_MS2 * left)));
+        const double accel = ACCEL_MS2 * seconds;
+        speed_ += std::clamp(target - speed_, -accel, accel);
+        if (left <= 0.5) {
+            // Arrived: at the last point exactly, rather than half a metre short of it
+            // with nothing left to move by.
+            speed_ = 0.0;
+            travelled_ = pathLength_;
+            segment_ = path_.size() - 1;
+            latitude_ = path_.back().first;
+            longitude_ = path_.back().second;
+            return;
+        }
+        maxSpeed_ = std::max(maxSpeed_, speed_);
+        double step = std::min(speed_ * seconds, left);
+        travelled_ += step;
+        while (step > 0.0 && segment_ + 1 < path_.size()) {
+            const Point& a = path_[segment_];
+            const Point& b = path_[segment_ + 1];
+            const double length = distance(a, b);
+            const double remaining = length - offset_;
+            if (step < remaining) {
+                offset_ += step;
+                step = 0.0;
+            } else {
+                step -= remaining;
+                offset_ = 0.0;
+                ++segment_;
+                ++corners_;
+            }
+        }
+        if (segment_ + 1 >= path_.size()) {
+            latitude_ = path_.back().first;
+            longitude_ = path_.back().second;
+            speed_ = 0.0;
+            return;
+        }
+        const Point& a = path_[segment_];
+        const Point& b = path_[segment_ + 1];
+        const double length = distance(a, b);
+        const double t = length > 0.0 ? offset_ / length : 0.0;
+        latitude_ = a.first + t * (b.first - a.first);
+        longitude_ = a.second + t * (b.second - a.second);
+        if (length > 0.0)
+            heading_ = bearing(a, b);
+    }
+
+    // Roughly a block circuit around the position the lab has always reported, at
+    // suburban speeds, repeating so a longer run keeps driving instead of stopping.
+    // Four cardinal headings with driven corners between them means the bearing sweeps
+    // the whole circle, including the wrap through north, over one lap.
+    static constexpr Leg LEGS[] = {
+        {90.0, 200.0, 13.4},  // east, 48 km/h
+        {0.0, 150.0, 9.0},    // north, 32 km/h
+        {270.0, 200.0, 13.4}, // west
+        {180.0, 150.0, 9.0},  // south
+    };
+    /// Degrees per second through a corner: about three seconds for a right angle.
+    static constexpr double TURN_RATE_DEG = 30.0;
+    /// Metres per second per second, pulling away and slowing down. Comfortable rather
+    /// than brisk; a harder number would only make the speed less plausible.
+    static constexpr double ACCEL_MS2 = 2.0;
+
+    double latitude_;
+    double longitude_;
+    double heading_ = 0.0;
+    double speed_ = 0.0;
+    double maxSpeed_ = 0.0;
+    double travelled_ = 0.0;
+    double remaining_ = 0.0;
+    size_t index_ = 0;
+    int corners_ = 0;
+    bool departed_ = false;
+    std::vector<Point> path_;
+    double cruise_ = 0.0;
+    double pathLength_ = 0.0;
+    size_t segment_ = 0;
+    double offset_ = 0.0;
+};
+
+// Ford SYNC 4.0's nine advertised sensor types (report 617af5ce), so the lab asks the
+// same questions the vehicle will answer. FUEL_LEVEL and GEAR are accepted and then
+// never sent: "advertised, accepted, and silent" is the case P5.2 has to tell apart from
+// populated, and Prodigy's own SensorChannelHandler cannot produce it.
+const int LAB_SENSOR_TYPES[] = {1, 3, 6, 7, 8, 10, 13, 21, 24};
+
+/// Sensor channel that answers a subscription for any type and pushes values for the
+/// types it models: one fixed reading each, or — given a [TrackPlayer] — a vehicle that
+/// sits at the kerb and then drives away (P6.1).
+///
+/// Prodigy's SensorChannelHandler covers night mode, driving status and parking brake
+/// only, so the wider harvest needs this; the protobuf classes are still Prodigy's, so
+/// the encode stays independent of the source's generated Rust types.
+class LabSensorHandler : public oaa::IChannelHandler {
+public:
+    LabSensorHandler(TrackPlayer* track, int intervalMs, QObject* parent)
+        : oaa::IChannelHandler(parent), track_(track), intervalMs_(intervalMs)
+    {
+        timer_.setInterval(intervalMs_);
+        QObject::connect(&timer_, &QTimer::timeout, this, [this]() { play(); });
+    }
+
+    uint8_t channelId() const override { return oaa::ChannelId::Sensor; }
+    void onChannelOpened() override { open_ = true; }
+    void onChannelClosed() override
+    {
+        open_ = false;
+        timer_.stop();
+    }
+
+    void onMessage(uint16_t messageId, const QByteArray& payload, int dataOffset) override
+    {
+        const QByteArray data = QByteArray::fromRawData(payload.constData() + dataOffset,
+                                                        payload.size() - dataOffset);
+        if (messageId != oaa::SensorMessageId::SENSOR_START_REQUEST) {
+            emit unknownMessage(messageId, data);
+            return;
+        }
+        oaa::proto::messages::SensorStartRequestMessage request;
+        if (!request.ParseFromArray(data.constData(), data.size()))
+            return;
+        const int type = static_cast<int>(request.sensor_type());
+        requested.append(type);
+
+        oaa::proto::messages::SensorStartResponseMessage response;
+        response.set_status(oaa::proto::enums::Status::OK);
+        emit sendRequested(channelId(), oaa::SensorMessageId::SENSOR_START_RESPONSE,
+                           serialized(response));
+
+        oaa::proto::messages::SensorEventIndication event;
+        switch (type) {
+        case 1:
+            fillLocation(event.add_gps_location());
+            // The track reports from its parked position until the script releases it,
+            // so a run starts from the same picture the fixed fix produced.
+            if (track_)
+                timer_.start();
+            break;
+        case 3:
+            fillSpeed(event.add_speed());
+            break;
+        case 7:
+            event.add_parking_brake()->set_parking_brake(true);
+            break;
+        case 10:
+            event.add_night_mode()->set_is_night(true);
+            break;
+        case 13:
+            event.add_driving_status()->set_status(0);
+            break;
+        case 21:
+            fillSatellites(event.add_gps_satellite());
+            break;
+        case 24:
+            event.add_trailer();
+            break;
+        default:
+            return; // advertised, accepted, and silent
+        }
+        populated.append(type);
+        emit sendRequested(channelId(), oaa::SensorMessageId::SENSOR_EVENT_INDICATION,
+                           serialized(event));
+    }
+
+    QList<int> requested;
+    QList<int> populated;
+    /// Position events played by the track, including the parked ones.
+    int fixes = 0;
+    /// Events carrying speed and satellites but no position.
+    int slowEvents = 0;
+
+private:
+    /// One position, in the scales documented on [TrackPlayer], or the fixed inland fix
+    /// the lab reported before P6.1. The source must redact either by default, and the
+    /// check at the end of a run is that no report ever repeats them.
+    void fillLocation(oaa::proto::data::GPSLocation* fix) const
+    {
+        if (track_) {
+            fix->set_latitude(track_->wireLatitude());
+            fix->set_longitude(track_->wireLongitude());
+            fix->set_speed(track_->wireSpeed());
+            fix->set_bearing(track_->wireBearing());
+        } else {
+            fix->set_latitude(424242424);
+            fix->set_longitude(-712121212);
+            fix->set_speed(0);
+            fix->set_bearing(1790);
+        }
+        fix->set_accuracy(8);
+        fix->set_altitude(213);
+    }
+
+    void fillSpeed(oaa::proto::data::Speed* speed) const
+    {
+        speed->set_speed(track_ ? track_->wireSpeed() : 0);
+        speed->set_cruise_engaged(false);
+    }
+
+    static void fillSatellites(oaa::proto::data::GpsSatelliteData* gps)
+    {
+        gps->set_satellite_count(11);
+        gps->set_satellites_used(7);
+    }
+
+    /// One tick of the track: a position, and every fifth time also the speed and
+    /// satellite counts.
+    ///
+    /// The two rates are the ones the vehicle itself used. The G6/G7 runs recorded 208
+    /// LOCATION events against 42 CAR_SPEED and 42 GPS in the same session — five to
+    /// one — so a lab that pushed all three together would never produce the message
+    /// that matters most here: one carrying no position at all, which the source has to
+    /// merge into the fix it already holds rather than treat as a vehicle at 0,0.
+    void play()
+    {
+        if (!open_ || !track_)
+            return;
+        track_->advance(intervalMs_ / 1000.0);
+        if (requested.contains(1)) {
+            oaa::proto::messages::SensorEventIndication event;
+            fillLocation(event.add_gps_location());
+            ++fixes;
+            emit sendRequested(channelId(), oaa::SensorMessageId::SENSOR_EVENT_INDICATION,
+                               serialized(event));
+        }
+        if (++tick_ % SLOW_EVERY != 0)
+            return;
+        oaa::proto::messages::SensorEventIndication event;
+        bool any = false;
+        if (requested.contains(3)) {
+            fillSpeed(event.add_speed());
+            any = true;
+        }
+        if (requested.contains(21)) {
+            fillSatellites(event.add_gps_satellite());
+            any = true;
+        }
+        if (!any)
+            return;
+        ++slowEvents;
+        emit sendRequested(channelId(), oaa::SensorMessageId::SENSOR_EVENT_INDICATION,
+                           serialized(event));
+    }
+
+    /// Position events per speed event, from the vehicle's measured 208:42.
+    static constexpr int SLOW_EVERY = 5;
+
+    TrackPlayer* track_ = nullptr;
+    int intervalMs_ = 200;
+    int tick_ = 0;
+    QTimer timer_;
+    bool open_ = false;
+};
+
+/// The fundamentals the source's own audio carries: 440 Hz left, 880 Hz right. Both
+/// sides of this check are written from the same two numbers, so a swapped pair or a
+/// wrong sample rate shows up as a failed check rather than as silence nobody notices.
+constexpr double LAB_TONE_LEFT_HZ = 440.0;
+constexpr double LAB_TONE_RIGHT_HZ = 880.0;
+
+/// Goertzel magnitude of `hz` in one channel of an interleaved S16LE buffer, normalised
+/// so a full-scale sine reads 1.0. Cheaper and clearer here than an FFT: the two
+/// frequencies to test are known in advance.
+double toneMagnitude(const QByteArray& pcm, int channels, int channel, int sampleRate,
+                     double hz)
+{
+    const int frames = pcm.size() / (2 * channels);
+    if (frames <= 0 || sampleRate <= 0)
+        return 0.0;
+    const double w = 2.0 * M_PI * hz / sampleRate;
+    const double coeff = 2.0 * std::cos(w);
+    double s1 = 0.0, s2 = 0.0;
+    const auto* samples = reinterpret_cast<const qint16*>(pcm.constData());
+    for (int frame = 0; frame < frames; ++frame) {
+        const double x = samples[frame * channels + channel] / 32768.0;
+        const double s0 = x + coeff * s1 - s2;
+        s2 = s1;
+        s1 = s0;
+    }
+    const double power = s1 * s1 + s2 * s2 - coeff * s1 * s2;
+    return 2.0 * std::sqrt(std::max(0.0, power)) / frames;
+}
+
+/// Prodigy's navigation handler, plus the one thing it does not do: announce a cluster.
+///
+/// `NavigationChannelHandler` decodes the state, the maneuver and the distance from the
+/// pinned Prodigy library's own generated schemas — a second reader that shares no code
+/// with the source, which is the whole point of checking here rather than only in
+/// `hu-sim` (spec §8.1). What it never sends is `InstrumentClusterStart`, so without this
+/// subclass the lab can only ever exercise the head unit that has no cluster behind the
+/// service it advertises. That case is worth having too, and `--navigation-cluster=none`
+/// is it.
+///
+/// Gaps are measured on this side's own clock. A source that ignored the advertised
+/// `minimum_interval_ms` cannot be caught by reading its own report, which would say the
+/// interval it believes it used.
+class LabNavigationHandler : public oaa::hu::NavigationChannelHandler {
+public:
+    LabNavigationHandler(bool announceCluster, QObject* parent)
+        : oaa::hu::NavigationChannelHandler(parent), announce_(announceCluster)
+    {
+    }
+
+    void onChannelOpened() override
+    {
+        oaa::hu::NavigationChannelHandler::onChannelOpened();
+        if (!announce_)
+            return;
+        // Empty message: the id is the whole of it.
+        emit sendRequested(channelId(), 0x8001, QByteArray());
+        clusterAnnounced = true;
+    }
+
+    void onMessage(uint16_t messageId, const QByteArray& payload, int dataOffset) override
+    {
+        switch (messageId) {
+        case oaa::NavigationMessageId::NAV_STATE:
+            ++states;
+            break;
+        case oaa::NavigationMessageId::NAV_STEP:
+            ++notifications;
+            timeUpdate();
+            break;
+        case oaa::NavigationMessageId::NAV_DISTANCE:
+            ++distances;
+            timeUpdate();
+            break;
+        default:
+            ++unexpected;
+            break;
+        }
+        oaa::hu::NavigationChannelHandler::onMessage(messageId, payload, dataOffset);
+    }
+
+    bool announceCluster() const { return announce_; }
+
+    bool clusterAnnounced = false;
+    int states = 0;
+    int notifications = 0;
+    int distances = 0;
+    int unexpected = 0;
+    /// Smallest gap between two updates, in milliseconds; -1 until there are two.
+    qint64 smallestGapMs = -1;
+    int updates = 0;
+
+private:
+    /// One update is a maneuver and a distance about the same instant, arriving back to
+    /// back, so anything within a tenth of a second of the last message is the same
+    /// update rather than a new one.
+    void timeUpdate()
+    {
+        if (!clock_.isValid()) {
+            clock_.start();
+            ++updates;
+            return;
+        }
+        const qint64 gap = clock_.elapsed();
+        if (gap < 100)
+            return;
+        clock_.restart();
+        ++updates;
+        if (smallestGapMs < 0 || gap < smallestGapMs)
+            smallestGapMs = gap;
+    }
+
+    bool announce_ = true;
+    QElapsedTimer clock_;
+};
+
+/// Prodigy's audio handler with the underflow injection the P5.3 plan asks for, plus a
+/// record of what arrived. Prodigy answers the setup, the start indication and every
+/// buffer itself; the only thing missing is 0x800B, which no open-source head unit sends
+/// and which is the most valuable diagnostic in the audio path.
+class LabAudioHandler : public oaa::hu::AudioChannelHandler {
+public:
+    LabAudioHandler(uint8_t channelId, QObject* parent)
+        : oaa::hu::AudioChannelHandler(channelId, parent)
+    {
+    }
+
+    void onMediaData(const QByteArray& data, uint64_t timestamp) override
+    {
+        ++buffers;
+        bytes += data.size();
+        if (largest < data.size())
+            largest = data.size();
+        latest = data;
+        oaa::hu::AudioChannelHandler::onMediaData(data, timestamp);
+        if (underflowAfter > 0 && buffers == underflowAfter) {
+            // Never answered by the source, and sent with no payload: modern Android Auto
+            // parses none for this message.
+            emit sendRequested(channelId(), oaa::AVMessageId::AUDIO_UNDERFLOW, QByteArray());
+            ++underflowsSent;
+        }
+    }
+
+    int underflowAfter = 0;
+    int underflowsSent = 0;
+    int buffers = 0;
+    qint64 bytes = 0;
+    int largest = 0;
+    /// The most recent buffer, for the tone check.
+    QByteArray latest;
+};
+
+struct Capabilities {
+    uint8_t video = oaa::ChannelId::Video;
+    uint8_t input = oaa::ChannelId::Input;
+    int width = 800;
+    int height = 480;
+    int fps = 2; // VideoFPS::_30
+    int marginWidth = 0;
+    int marginHeight = 0;
+    int touchWidth = 800;
+    int touchHeight = 480;
+    bool sensors = false;
+    /// Advertise Ford's nine types and drive them from LabSensorHandler (P5.2) instead
+    /// of the restriction pair Prodigy's own handler covers.
+    bool sensorsAll = false;
+    /// Play a moving synthetic track into the sensor channel rather than one fixed
+    /// position (P6.1). Needs the full sensor set: the track is LOCATION.
+    bool track = false;
+    /// Position rate. 200 ms is the vehicle's own measured LOCATION cadence (208 events
+    /// in a 40.8 s session), not a number chosen for the lab's convenience.
+    int trackIntervalMs = 200;
+    /// Which half of the dashboard the owned map occupies, mirroring the app's own
+    /// setting, which defaults to the left.
+    bool mapOnLeft = true;
+    /// Advertise the now-playing channel. Prodigy's MediaStatusChannelHandler hardcodes
+    /// ChannelId::MediaStatus (10), so the descriptor has to use that id.
+    bool mediaInfo = false;
+    /// Advertise the instrument cluster channel (P6.2). Prodigy's
+    /// NavigationChannelHandler hardcodes ChannelId::Navigation (9), so the descriptor
+    /// has to use that id — which is deliberately not Ford's 11 or hu-sim's, so a source
+    /// that hardcoded either fails here.
+    bool navigation = false;
+    /// Whether the receiver announces a cluster at all. Prodigy never does on its own;
+    /// a head unit that advertises the service and has no cluster behind it is a real
+    /// shape and the one the vehicle may turn out to have.
+    bool navigationCluster = true;
+    /// Advertised minimum_interval_ms. 1500 is slower than the source's own default, so
+    /// the head unit's floor is the one that binds and the gap below can check it.
+    int navigationIntervalMs = 1500;
+    /// Whether a maneuver sequence is expected at all. It follows from
+    /// [`navigationCluster`] — a source that waits for a cluster sends nothing to a head
+    /// unit that never announces one — and is overridable, because a source told to send
+    /// regardless is the other half of that experiment.
+    bool navigationExpectSequence = true;
+    /// Advertise one PCM MEDIA audio channel on ChannelId::MediaAudio (4), at the
+    /// conventional 48000/16/2 (P5.3).
+    bool audio = false;
+    int audioSampleRate = 48000;
+    int audioChannels = 2;
+    int configs = 1;
+    // Space to report touches in; mirrors aap_session::input::TouchSpace. Ford SYNC 4.0
+    // sends frame pixels whatever touch screen it advertises, counted from the content
+    // rectangle's origin, so that is the default here too (docs/references.md, "Touch
+    // coordinate space"). With no margins it is the same as "frame".
+    QString touchSpace = "content";
+
+    Layout layout() const
+    {
+        return Layout{marginWidth / 2, marginHeight / 2, width - marginWidth,
+                      height - marginHeight};
+    }
+    // A frame pixel as this head unit would report it (spec §8.3).
+    QPoint toTouch(QPoint frame) const
+    {
+        const Layout l = layout();
+        if (touchSpace == "content")
+            return QPoint(frame.x() - l.x, frame.y() - l.y);
+        if (touchSpace == "advertised")
+            return QPoint((frame.x() - l.x) * touchWidth / l.width,
+                          (frame.y() - l.y) * touchHeight / l.height);
+        return frame;
+    }
+};
+
+void addChannels(oaa::SessionConfig& config, const Capabilities& caps)
+{
+    oaa::proto::data::ChannelDescriptor video;
+    video.set_channel_id(caps.video);
+    auto* av = video.mutable_av_channel();
+    av->set_stream_type(oaa::proto::enums::MediaCodecType::MEDIA_CODEC_VIDEO_H264_BP);
+    av->set_display_id(0);
+    auto* videoConfig = av->add_video_configs();
+    videoConfig->set_video_resolution(
+        caps.width == 1920 ? oaa::proto::enums::VideoResolution::VIDEO_1920x1080
+                           : caps.width == 1280
+                                 ? oaa::proto::enums::VideoResolution::VIDEO_1280x720
+                                 : oaa::proto::enums::VideoResolution::VIDEO_800x480);
+    videoConfig->set_video_fps(caps.fps == 1 ? oaa::proto::enums::VideoFPS::_60
+                                             : oaa::proto::enums::VideoFPS::_30);
+    videoConfig->set_margin_width(caps.marginWidth);
+    videoConfig->set_margin_height(caps.marginHeight);
+    videoConfig->set_dpi(160);
+    if (caps.marginWidth > 0 || caps.marginHeight > 0) {
+        // Ford SYNC 4 sends insets alongside the margins; mirror that shape.
+        auto* insets = videoConfig->mutable_additional_config()->mutable_display_insets();
+        insets->set_left(caps.marginWidth / 2);
+        insets->set_right(caps.marginWidth - caps.marginWidth / 2);
+        insets->set_top(caps.marginHeight / 2);
+        insets->set_bottom(caps.marginHeight - caps.marginHeight / 2);
+    }
+    config.channels.append({caps.video, serialized(video)});
+
+    oaa::proto::data::ChannelDescriptor input;
+    input.set_channel_id(caps.input);
+    auto* inputConfig = input.mutable_input_channel();
+    auto* touch = inputConfig->add_touch_screen_configs();
+    touch->set_width(caps.touchWidth);
+    touch->set_height(caps.touchHeight);
+    inputConfig->add_supported_keycodes(84);
+    // The transport keycodes Ford SYNC 4.0 binds, so --script transport can press them:
+    // PLAY_PAUSE, MEDIA_NEXT, MEDIA_PREVIOUS.
+    inputConfig->add_supported_keycodes(85);
+    inputConfig->add_supported_keycodes(87);
+    inputConfig->add_supported_keycodes(88);
+    config.channels.append({caps.input, serialized(input)});
+
+    if (caps.mediaInfo) {
+        // MediaInfoChannel is an empty message: advertising the service is the whole of
+        // the descriptor, and there is nothing for the source to negotiate.
+        oaa::proto::data::ChannelDescriptor media;
+        media.set_channel_id(oaa::ChannelId::MediaStatus);
+        media.mutable_media_info_channel();
+        config.channels.append({oaa::ChannelId::MediaStatus, serialized(media)});
+    }
+
+    if (caps.navigation) {
+        // Unlike media_info this descriptor is configuration, not a marker: how often the
+        // head unit will accept an update, and which presentation it wants. No image
+        // options — Ford sends none either, and this source sends no images (P6 plan §2).
+        oaa::proto::data::ChannelDescriptor navigation;
+        navigation.set_channel_id(oaa::ChannelId::Navigation);
+        auto* nav = navigation.mutable_navigation_channel();
+        nav->set_minimum_interval_ms(caps.navigationIntervalMs);
+        nav->set_type(oaa::proto::enums::NavigationType::TURN_BY_TURN);
+        config.channels.append({oaa::ChannelId::Navigation, serialized(navigation)});
+    }
+
+    if (caps.audio) {
+        // One audio channel, PCM carrying MEDIA: the slice deliberately starts with the
+        // one configuration that needs no encoder on the source side.
+        oaa::proto::data::ChannelDescriptor audio;
+        audio.set_channel_id(oaa::ChannelId::MediaAudio);
+        auto* audioAv = audio.mutable_av_channel();
+        audioAv->set_stream_type(oaa::proto::enums::MediaCodecType::MEDIA_CODEC_AUDIO_PCM);
+        audioAv->set_audio_type(oaa::proto::enums::AudioType::MEDIA);
+        auto* audioConfig = audioAv->add_audio_configs();
+        audioConfig->set_sample_rate(caps.audioSampleRate);
+        audioConfig->set_bit_depth(16);
+        audioConfig->set_channel_count(caps.audioChannels);
+        config.channels.append({oaa::ChannelId::MediaAudio, serialized(audio)});
+    }
+
+    if (caps.sensors) {
+        oaa::proto::data::ChannelDescriptor sensor;
+        sensor.set_channel_id(oaa::ChannelId::Sensor);
+        auto* sensorConfig = sensor.mutable_sensor_channel();
+        if (caps.sensorsAll) {
+            for (int type : LAB_SENSOR_TYPES)
+                sensorConfig->add_sensors()->set_sensor_type(
+                    static_cast<oaa::proto::enums::SensorType_Enum>(type));
+        } else {
+            sensorConfig->add_sensors()->set_sensor_type(
+                oaa::proto::enums::SensorType::DRIVING_STATUS);
+            sensorConfig->add_sensors()->set_sensor_type(
+                oaa::proto::enums::SensorType::NIGHT_DATA);
+        }
+        config.channels.append({oaa::ChannelId::Sensor, serialized(sensor)});
+    }
+}
+
+} // namespace
+
+int main(int argc, char** argv)
+{
+    QCoreApplication app(argc, argv);
+    QCommandLineParser parser;
+    parser.setApplicationDescription("OpenAutoAndroid controlled lab receiver (Prodigy protocol library)");
+    parser.addHelpOption();
+    QCommandLineOption listenOption("listen", "Address and port to accept one source on.", "host:port", "127.0.0.1:5288");
+    QCommandLineOption connectOption("connect", "Connect to this address instead of listening.", "host:port");
+    QCommandLineOption versionOption("request-version", "Protocol version the receiver requests.", "major.minor", "1.1");
+    QCommandLineOption traceOption("trace", "Receiver-side message trace (JSONL).", "path", "lab-receiver-trace.jsonl");
+    QCommandLineOption timeoutOption("timeout-ms", "Give up after this long.", "ms", "30000");
+    QCommandLineOption projectionOption("projection", "Register video, input, and sensor handlers and run the projection script.");
+    QCommandLineOption sensorsOption("sensors",
+                                     "Advertise a sensor channel: restriction (driving status and "
+                                     "night mode, through Prodigy's own handler) or all (Ford's "
+                                     "nine types, two of them accepted and then silent).",
+                                     "set", "restriction");
+    QCommandLineOption mediaInfoOption("media-info", "Advertise the now-playing channel and decode what the source publishes on it.");
+    QCommandLineOption audioOption("audio",
+                                   "Advertise one PCM MEDIA audio channel, grant audio focus, and "
+                                   "measure the received PCM against the source's own tone.");
+    QCommandLineOption navigationOption("navigation",
+                                        "Advertise the instrument cluster channel, announce a "
+                                        "cluster, grant navigation focus, and decode the maneuver "
+                                        "sequence the source sends (P6.2).");
+    QCommandLineOption navigationClusterOption("navigation-cluster",
+                                               "Whether the receiver announces a cluster: start or "
+                                               "none. `none` is what Prodigy does unaided — a head "
+                                               "unit that advertises the service and never says a "
+                                               "cluster is there.", "mode", "start");
+    QCommandLineOption navigationIntervalOption("navigation-interval-ms",
+                                                "Advertised minimum_interval_ms; the floor the "
+                                                "source must not send faster than.", "ms", "1500");
+    QCommandLineOption navigationExpectOption("navigation-expect",
+                                              "What the cluster channel should carry: sequence, "
+                                              "silence, or auto (sequence when a cluster is "
+                                              "announced, silence when it is not).",
+                                              "what", "auto");
+    QCommandLineOption underflowOption("underflow-after",
+                                       "Send 0x800B AUDIO_UNDERFLOW after this many audio buffers "
+                                       "(0 never). No open-source head unit sends it.", "n", "0");
+    // The vehicle projects 1920x1080; the lab defaulting to 800x480 makes anything
+    // that depends on pixel area - label density on the owned map above all - behave
+    // quite differently here than on the head unit (P5.5).
+    QCommandLineOption videoConfigOption("video-config",
+                                         "Advertised video configuration: 800x480, 1280x720 or 1920x1080.",
+                                         "WxH", "800x480");
+    QCommandLineOption marginsOption("margins", "Advertised video margins WxH (a Ford-like layout uses 74x0).", "WxH", "0x0");
+    QCommandLineOption touchOption("touch", "Advertised touch screen size WxH.", "WxH", "");
+    QCommandLineOption touchSpaceOption("touch-space",
+                                        "Space to report touches in: content (what Ford SYNC 4.0 "
+                                        "sends), frame, or advertised.", "name", "content");
+    QCommandLineOption scriptOption("script",
+                                    "Projection script: taps, focus, stall, transport, audio, "
+                                    "track, or none.", "name", "taps");
+    QCommandLineOption videoOutOption("video-out", "Write the received Annex B stream here.", "path");
+    QCommandLineOption holdOption("hold-ms", "Keep the session after the script.", "ms", "1000");
+    QCommandLineOption toleranceOption("tolerance",
+                                       "Allowed difference per color component in decoded frames.", "n", "20");
+    QCommandLineOption audioOutOption("audio-out", "Write the received PCM here.", "path");
+    QCommandLineOption trackOption("track",
+                                   "Play a moving synthetic track into the sensor channel instead "
+                                   "of one fixed position (P6.1). Implied by --script track.");
+    QCommandLineOption trackIntervalOption("track-interval-ms",
+                                           "Position rate of the track; the vehicle's own measured "
+                                           "cadence is 200.", "ms", "200");
+    QCommandLineOption trackFileOption("track-file",
+                                       "Drive along this road geometry, one lat,lon per line "
+                                       "(# comments allowed), instead of the block circuit "
+                                       "(P6.5). Implies --track.", "path");
+    QCommandLineOption trackSpeedOption("track-speed",
+                                        "Cruise speed along --track-file, m/s.", "ms", "15");
+    QCommandLineOption mapSideOption("map-side",
+                                     "Which half of the dashboard the owned map occupies, as the "
+                                     "app is configured: left or right.", "side", "left");
+    parser.addOptions({listenOption, connectOption, versionOption, traceOption, timeoutOption,
+                       projectionOption, videoConfigOption, sensorsOption, mediaInfoOption, audioOption,
+                       underflowOption, audioOutOption, marginsOption, touchOption,
+                       touchSpaceOption, scriptOption, videoOutOption, holdOption,
+                       toleranceOption, trackOption, trackIntervalOption, trackFileOption,
+                       trackSpeedOption, mapSideOption,
+                       navigationOption, navigationClusterOption, navigationIntervalOption,
+                       navigationExpectOption});
+    parser.process(app);
+
+    // How long a --track run without the track script waits before driving off.
+    const int TRACK_KERB_MS = 5000;
+
+    QTextStream out(stdout);
+    const QStringList listen = parser.value(listenOption).split(':');
+    const QStringList version = parser.value(versionOption).split('.');
+    bool portOk = false, majorOk = false, minorOk = false, timeoutOk = false;
+    const quint16 port = listen.size() == 2 ? listen[1].toUShort(&portOk) : 0;
+    const quint16 major = version.size() == 2 ? version[0].toUShort(&majorOk) : 0;
+    const quint16 minor = version.size() == 2 ? version[1].toUShort(&minorOk) : 0;
+    const int timeoutMs = parser.value(timeoutOption).toInt(&timeoutOk);
+    if (!portOk || !majorOk || !minorOk || !timeoutOk || timeoutMs <= 0) {
+        QTextStream(stderr) << "invalid --listen, --request-version, or --timeout-ms\n";
+        return 1;
+    }
+    const bool projection = parser.isSet(projectionOption);
+    const int tolerance = parser.value(toleranceOption).toInt();
+    const QString script = parser.value(scriptOption);
+    if (!QStringList{"taps", "focus", "stall", "transport", "audio", "track", "navigation",
+                     "guidance", "none"}
+             .contains(script)) {
+        QTextStream(stderr) << "invalid --script\n";
+        return 1;
+    }
+
+    Capabilities caps;
+    caps.sensors = parser.isSet(sensorsOption);
+    caps.sensorsAll = caps.sensors && parser.value(sensorsOption) == "all";
+    if (caps.sensors && !QStringList{"restriction", "all"}.contains(parser.value(sensorsOption))) {
+        QTextStream(stderr) << "invalid --sensors\n";
+        return 1;
+    }
+    // A drive along road geometry (P6.5), read before anything connects so a bad file
+    // fails the run at once rather than after the emulator has booted.
+    std::vector<std::pair<double, double>> trackPath;
+    if (parser.isSet(trackFileOption)) {
+        QFile file(parser.value(trackFileOption));
+        if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            QTextStream(stderr) << "cannot read --track-file\n";
+            return 1;
+        }
+        while (!file.atEnd()) {
+            const QString line = QString::fromUtf8(file.readLine()).trimmed();
+            if (line.isEmpty() || line.startsWith('#'))
+                continue;
+            const QStringList parts = line.split(',');
+            bool latOk = false, lonOk = false;
+            const double lat = parts.size() == 2 ? parts[0].toDouble(&latOk) : 0.0;
+            const double lon = parts.size() == 2 ? parts[1].toDouble(&lonOk) : 0.0;
+            if (!latOk || !lonOk || std::abs(lat) > 90.0 || std::abs(lon) > 180.0) {
+                QTextStream(stderr) << "invalid --track-file line: " << line << "\n";
+                return 1;
+            }
+            trackPath.emplace_back(lat, lon);
+        }
+        if (trackPath.size() < 2) {
+            QTextStream(stderr) << "--track-file needs at least two points\n";
+            return 1;
+        }
+    }
+    const double trackSpeed = parser.value(trackSpeedOption).toDouble();
+    if (!(trackSpeed > 0.0 && trackSpeed < 60.0)) {
+        QTextStream(stderr) << "invalid --track-speed\n";
+        return 1;
+    }
+    if (script == "guidance" && trackPath.empty()) {
+        QTextStream(stderr) << "--script guidance needs --track-file\n";
+        return 1;
+    }
+    caps.track = parser.isSet(trackOption) || script == "track" || !trackPath.empty();
+    if (caps.track) {
+        // The track is LOCATION, CAR_SPEED and GPS, which only the full set advertises.
+        caps.sensors = true;
+        caps.sensorsAll = true;
+    }
+    caps.trackIntervalMs = parser.value(trackIntervalOption).toInt();
+    if (caps.trackIntervalMs <= 0) {
+        QTextStream(stderr) << "invalid --track-interval-ms\n";
+        return 1;
+    }
+    caps.mapOnLeft = parser.value(mapSideOption) == "left";
+    if (!QStringList{"left", "right"}.contains(parser.value(mapSideOption))) {
+        QTextStream(stderr) << "invalid --map-side\n";
+        return 1;
+    }
+    if (script == "track" && !projection) {
+        QTextStream(stderr) << "--script track needs --projection\n";
+        return 1;
+    }
+    caps.mediaInfo = parser.isSet(mediaInfoOption) || script == "transport";
+    caps.audio = parser.isSet(audioOption) || script == "audio";
+    caps.navigation = parser.isSet(navigationOption) || script == "navigation" || script == "guidance";
+    caps.navigationCluster = parser.value(navigationClusterOption) == "start";
+    if (!QStringList{"start", "none"}.contains(parser.value(navigationClusterOption))) {
+        QTextStream(stderr) << "invalid --navigation-cluster\n";
+        return 1;
+    }
+    caps.navigationIntervalMs = parser.value(navigationIntervalOption).toInt();
+    if (caps.navigationIntervalMs <= 0) {
+        QTextStream(stderr) << "invalid --navigation-interval-ms\n";
+        return 1;
+    }
+    const QString navigationExpect = parser.value(navigationExpectOption);
+    if (!QStringList{"auto", "sequence", "silence"}.contains(navigationExpect)) {
+        QTextStream(stderr) << "invalid --navigation-expect\n";
+        return 1;
+    }
+    caps.navigationExpectSequence = navigationExpect == "sequence"
+                                    || (navigationExpect == "auto" && caps.navigationCluster);
+    if (script == "navigation" && !projection) {
+        QTextStream(stderr) << "--script navigation needs --projection\n";
+        return 1;
+    }
+    if (script == "transport" && !projection) {
+        QTextStream(stderr) << "--script transport needs --projection\n";
+        return 1;
+    }
+    if (script == "audio" && !projection) {
+        QTextStream(stderr) << "--script audio needs --projection\n";
+        return 1;
+    }
+    const QStringList margins = parser.value(marginsOption).split('x');
+    if (margins.size() == 2) {
+        caps.marginWidth = margins[0].toInt();
+        caps.marginHeight = margins[1].toInt();
+    }
+    const QStringList videoConfig = parser.value(videoConfigOption).split('x');
+    if (videoConfig.size() == 2) {
+        const int w = videoConfig[0].toInt();
+        const int h = videoConfig[1].toInt();
+        if ((w == 800 && h == 480) || (w == 1280 && h == 720) || (w == 1920 && h == 1080)) {
+            caps.width = w;
+            caps.height = h;
+        } else {
+            QTextStream(stderr) << "invalid --video-config\n";
+            return 2;
+        }
+    }
+    caps.touchWidth = caps.width - caps.marginWidth;
+    caps.touchHeight = caps.height - caps.marginHeight;
+    const QStringList touch = parser.value(touchOption).split('x');
+    if (touch.size() == 2) {
+        caps.touchWidth = touch[0].toInt();
+        caps.touchHeight = touch[1].toInt();
+    }
+    caps.touchSpace = parser.value(touchSpaceOption);
+    if (caps.touchSpace != "frame" && caps.touchSpace != "content"
+        && caps.touchSpace != "advertised") {
+        qCritical("--touch-space must be frame, content, or advertised");
+        return 2;
+    }
+
+    QTcpServer server;
+    QTcpSocket* clientSocket = nullptr;
+    if (parser.isSet(connectOption)) {
+        const QStringList target = parser.value(connectOption).split(':');
+        if (target.size() != 2) {
+            QTextStream(stderr) << "invalid --connect\n";
+            return 1;
+        }
+        clientSocket = new QTcpSocket(&app);
+        clientSocket->connectToHost(target[0], target[1].toUShort());
+        if (!clientSocket->waitForConnected(10000)) {
+            QTextStream(stderr) << "connect failed: " << clientSocket->errorString() << "\n";
+            return 1;
+        }
+    } else if (!server.listen(QHostAddress(listen[0]), port)) {
+        QTextStream(stderr) << "listen failed: " << server.errorString() << "\n";
+        return 1;
+    }
+    out << "receiver=openauto-prodigy protocol library (lab)\n"
+        << "receiver_requested_version=" << major << "." << minor << "\n"
+        << "receiver_projection=" << (projection ? script : QString("off")) << "\n";
+    if (projection) {
+        const Layout l = caps.layout();
+        out << "receiver_video_config=" << caps.width << "x" << caps.height
+            << " margins=" << caps.marginWidth << "x" << caps.marginHeight
+            << " content=" << l.x << "," << l.y << "+" << l.width << "x" << l.height
+            << " touch=" << caps.touchWidth << "x" << caps.touchHeight << "\n";
+    }
+    if (clientSocket) {
+        out << "receiver_connected=" << clientSocket->peerAddress().toString() << ":"
+            << clientSocket->peerPort() << "\n";
+    } else {
+        out << "listening=" << server.serverAddress().toString() << ":" << server.serverPort()
+            << "\n";
+    }
+    out.flush();
+
+    oaa::SessionConfig config;
+    config.protocolMajor = major;
+    config.protocolMinor = minor;
+    addChannels(config, caps);
+    oaa::ProtocolLogger logger;
+    logger.setFormat(oaa::ProtocolLogger::OutputFormat::Jsonl);
+    logger.open(parser.value(traceOption).toStdString());
+
+    Decoder decoder;
+    if (projection && !decoder.open()) {
+        QTextStream(stderr) << "cannot open the H.264 decoder\n";
+        return 1;
+    }
+    QFile videoOut(parser.value(videoOutOption));
+    if (!parser.value(videoOutOption).isEmpty() && !videoOut.open(QIODevice::WriteOnly)) {
+        QTextStream(stderr) << "cannot write --video-out\n";
+        return 1;
+    }
+    QFile audioOut(parser.value(audioOutOption));
+    if (!parser.value(audioOutOption).isEmpty() && !audioOut.open(QIODevice::WriteOnly)) {
+        QTextStream(stderr) << "cannot write --audio-out\n";
+        return 1;
+    }
+
+    // The moving position source (P6.1). It starts parked at the same inland fix the
+    // lab has always reported, so a run begins from the picture the fixed fix produced
+    // and the departure is the only thing that changed.
+    std::unique_ptr<TrackPlayer> trackPlayer;
+    if (caps.track) {
+        trackPlayer = trackPath.empty()
+                          ? std::make_unique<TrackPlayer>(42.4242424, -71.2121212)
+                          : std::make_unique<TrackPlayer>(trackPath, trackSpeed);
+        // The track script releases it when it has a settled picture to measure
+        // against, and the guidance script when the source has a route on the cluster;
+        // every other use of --track has nothing watching, so it pulls away on its own
+        // rather than sitting at the kerb for the whole run in silence.
+        if (script != "track" && script != "guidance") {
+            QTimer::singleShot(TRACK_KERB_MS, &app, [&]() { trackPlayer->depart(); });
+        }
+    }
+
+    oaa::TCPTransport* transport = nullptr;
+    oaa::AASession* session = nullptr;
+    LabVideoHandler* video = nullptr;
+    oaa::hu::InputChannelHandler* input = nullptr;
+    oaa::hu::SensorChannelHandler* sensors = nullptr;
+    LabSensorHandler* labSensors = nullptr;
+    oaa::hu::MediaStatusChannelHandler* media = nullptr;
+    LabNavigationHandler* navigation = nullptr;
+    LabAudioHandler* audio = nullptr;
+    int status = 0;
+    int checks = 0, failures = 0;
+    int taps = 0, keys = 0;
+    // What the source published on the now-playing channel, as the receiver decoded it.
+    int statusMessages = 0, metadataMessages = 0, albumArtBytes = 0;
+    int playbackState = 0;
+    QString sourceApp, trackTitle;
+    // P5.3: what the audio channel did, from the receiver's own side.
+    int audioSession = -1, audioConfigIndex = -1;
+    bool audioStarted = false, audioStopped = false;
+    // P6.2: what the cluster channel was told, decoded by Prodigy's own schemas.
+    QStringList navStates;
+    int navManeuver = -1, navExit = -1;
+    QString navStepDistance, navCurrentRoad;
+    int navStepUnit = -1, navStepValue = 0;
+    qint64 navTimeToStep = -1, navTimeToArrival = -1;
+    int navLanes = 0, navDestinations = 0;
+    bool navEtaString = false;
+    // P6.5: the drive, as the cluster was told it. Each maneuver as it changed (two
+    // like maneuvers in a row read as one, since only a change is seen); the countdown
+    // compared message to message while one maneuver holds; and where the drive was.
+    QList<int> guideManeuvers;
+    int guideFalls = 0, guideRises = 0, guideEpoch = -1;
+    double guideLastMetres = -1.0, guideWorstRise = 0.0;
+    QElapsedTimer guideArrival;
+    QElapsedTimer uptime;
+    uptime.start();
+
+    auto fail = [&](const QString& message) {
+        ++failures;
+        out << "receiver_check_failed=" << message << "\n";
+        out.flush();
+    };
+    auto check = [&](bool ok, const QString& message) {
+        ++checks;
+        if (!ok)
+            fail(message);
+        return ok;
+    };
+
+    auto startSession = [&](QTcpSocket* socket) {
+        transport = new oaa::TCPTransport(&app);
+        transport->setSocket(socket);
+        transport->start();
+        session = new oaa::AASession(transport, config, &app);
+        logger.attach(session->messenger());
+        if (projection) {
+            video = new LabVideoHandler(caps.video, &app);
+            video->setNumVideoConfigs(caps.configs);
+            input = new oaa::hu::InputChannelHandler(caps.input, &app);
+            session->registerChannel(caps.video, video);
+            session->registerChannel(caps.input, input);
+            if (caps.sensorsAll) {
+                labSensors = new LabSensorHandler(trackPlayer.get(), caps.trackIntervalMs, &app);
+                session->registerChannel(oaa::ChannelId::Sensor, labSensors);
+            } else if (caps.sensors) {
+                sensors = new oaa::hu::SensorChannelHandler(&app);
+                session->registerChannel(oaa::ChannelId::Sensor, sensors);
+            }
+            if (caps.audio) {
+                audio = new LabAudioHandler(oaa::ChannelId::MediaAudio, &app);
+                audio->underflowAfter = parser.value(underflowOption).toInt();
+                session->registerChannel(oaa::ChannelId::MediaAudio, audio);
+                QObject::connect(audio, &oaa::hu::AudioChannelHandler::streamStartDetailsReceived,
+                                 &app,
+                                 [&](int32_t sessionId, uint32_t configIndex, int, bool,
+                                     const QString&) {
+                                     audioStarted = true;
+                                     audioSession = sessionId;
+                                     audioConfigIndex = static_cast<int>(configIndex);
+                                     out << "receiver_audio_started=session=" << sessionId
+                                         << " config=" << configIndex << "\n";
+                                     out.flush();
+                                 });
+                QObject::connect(audio, &oaa::hu::AudioChannelHandler::streamStopped, &app,
+                                 [&]() { audioStopped = true; });
+                QObject::connect(audio, &oaa::hu::AudioChannelHandler::audioDataReceived, &app,
+                                 [&](const QByteArray& data, uint64_t) {
+                                     if (audioOut.isOpen())
+                                         audioOut.write(data);
+                                 });
+            }
+            if (caps.navigation) {
+                navigation = new LabNavigationHandler(caps.navigationCluster, &app);
+                session->registerChannel(oaa::ChannelId::Navigation, navigation);
+                QObject::connect(
+                    navigation, &oaa::hu::NavigationChannelHandler::navigationStateSnapshotChanged,
+                    &app, [&](oaa::hu::NavigationState state) {
+                        navStates << QString::number(static_cast<int>(state));
+                        out << "receiver_navigation_state=" << static_cast<int>(state) << "\n";
+                        out.flush();
+                    });
+                QObject::connect(
+                    navigation, &oaa::hu::NavigationChannelHandler::navigationNotificationChanged,
+                    &app, [&](const oaa::hu::NavigationNotificationSnapshot& snapshot) {
+                        navManeuver = snapshot.hasManeuver ? snapshot.maneuverType : -1;
+                        if (snapshot.hasManeuver
+                            && (guideManeuvers.isEmpty() || guideManeuvers.last() != navManeuver))
+                            guideManeuvers << navManeuver;
+                        navLanes = snapshot.lanes.size();
+                        navDestinations = snapshot.destinations.size();
+                        // The road name and the instruction are not printed: they are
+                        // scripted here, and the rule they would establish is not (P6
+                        // plan §9). The maneuver and the counts are the evidence.
+                        out << "receiver_navigation_step=maneuver=" << navManeuver
+                            << " steps=" << snapshot.stepCount << " lanes=" << navLanes
+                            << " destinations=" << navDestinations << "\n";
+                        out.flush();
+                    });
+                QObject::connect(
+                    navigation, &oaa::hu::NavigationChannelHandler::navigationPositionChanged, &app,
+                    [&](const oaa::hu::NavigationPositionSnapshot& snapshot) {
+                        if (snapshot.hasStepDistance) {
+                            navStepDistance = snapshot.stepDistance.displayText;
+                            navStepUnit = snapshot.stepDistance.hasUnit
+                                              ? snapshot.stepDistance.unit
+                                              : -1;
+                            navStepValue = snapshot.stepDistance.value;
+                            // The countdown in metres, from the unit and the value rather
+                            // than the text. A new maneuver or a new state starts a new
+                            // countdown, which may well be longer than the last one.
+                            double metres = -1.0;
+                            switch (navStepUnit) {
+                            case 1: metres = navStepValue; break;
+                            case 2: metres = navStepValue * 1000.0; break;
+                            case 3: metres = navStepValue * 100.0; break;
+                            case 4: metres = navStepValue * 1609.344; break;
+                            case 5: metres = navStepValue * 160.9344; break;
+                            case 6: metres = navStepValue * 0.3048; break;
+                            case 7: metres = navStepValue * 0.9144; break;
+                            default: break;
+                            }
+                            const int epoch = navigation->notifications * 16 + navStates.size();
+                            if (metres >= 0.0 && epoch == guideEpoch && guideLastMetres >= 0.0) {
+                                if (metres < guideLastMetres)
+                                    ++guideFalls;
+                                else if (metres > guideLastMetres) {
+                                    ++guideRises;
+                                    guideWorstRise = std::max(guideWorstRise, metres - guideLastMetres);
+                                }
+                            }
+                            guideEpoch = epoch;
+                            guideLastMetres = metres;
+                        }
+                        navTimeToStep = snapshot.hasTimeToStep ? snapshot.timeToStepSeconds : -1;
+                        navCurrentRoad = snapshot.hasCurrentRoad ? snapshot.currentRoad
+                                                                 : QString();
+                        for (const auto& destination : snapshot.destinationDistances) {
+                            if (destination.hasTimeToArrival)
+                                navTimeToArrival = destination.timeToArrivalSeconds;
+                            if (destination.hasEstimatedTimeOfArrival)
+                                navEtaString = true;
+                        }
+                    });
+            }
+            if (caps.mediaInfo) {
+                media = new oaa::hu::MediaStatusChannelHandler(&app);
+                session->registerChannel(oaa::ChannelId::MediaStatus, media);
+                QObject::connect(media,
+                                 &oaa::hu::MediaStatusChannelHandler::playbackStateChanged, &app,
+                                 [&](int state, const QString& appName) {
+                                     ++statusMessages;
+                                     playbackState = state;
+                                     sourceApp = appName;
+                                     out << "receiver_playback=" << state
+                                         << " source=" << appName << "\n";
+                                     out.flush();
+                                 });
+                QObject::connect(media, &oaa::hu::MediaStatusChannelHandler::metadataChanged, &app,
+                                 [&](const QString& title, const QString& artist,
+                                     const QString& album, const QByteArray& art) {
+                                     ++metadataMessages;
+                                     trackTitle = title;
+                                     albumArtBytes = art.size();
+                                     out << "receiver_metadata=" << title << " — " << artist
+                                         << " — " << album << " art=" << art.size() << "\n";
+                                     out.flush();
+                                 });
+            }
+            QObject::connect(video, &oaa::hu::VideoChannelHandler::videoFrameData, &app,
+                             [&](std::shared_ptr<const QByteArray> data, qint64) {
+                                 if (videoOut.isOpen())
+                                     videoOut.write(*data);
+                                 decoder.decode(*data);
+                             });
+            QObject::connect(video, &oaa::hu::VideoChannelHandler::streamStarted, &app,
+                             [&](int32_t session_id, uint32_t configIndex) {
+                                 out << "receiver_video_started=session=" << session_id
+                                     << " config=" << configIndex << "\n";
+                                 out.flush();
+                             });
+        }
+        QObject::connect(session, &oaa::AASession::stateChanged, &app, [&](oaa::SessionState state) {
+            out << "receiver_state=" << stateName(state) << "\n";
+            out.flush();
+        });
+        QObject::connect(session, &oaa::AASession::channelOpened, &app, [&](uint8_t channel) {
+            out << "receiver_channel_opened=" << channel << "\n";
+            out.flush();
+        });
+        QObject::connect(session, &oaa::AASession::channelOpenRejected, &app, [&](int32_t channel) {
+            out << "receiver_channel_rejected=" << channel << "\n";
+            out.flush();
+        });
+        QObject::connect(session, &oaa::AASession::disconnected, &app, [&](oaa::DisconnectReason reason) {
+            out << "receiver_disconnected=" << reasonName(reason) << "\n";
+            out.flush();
+            QTimer::singleShot(0, &app, [&]() { app.exit(status); });
+        });
+        session->start();
+    };
+
+    if (clientSocket) {
+        startSession(clientSocket);
+    } else {
+        QObject::connect(&server, &QTcpServer::newConnection, &app, [&]() {
+            QTcpSocket* socket = server.nextPendingConnection();
+            if (!socket || session)
+                return;
+            server.close();
+            out << "receiver_peer=" << socket->peerAddress().toString() << ":" << socket->peerPort()
+                << "\n";
+            out.flush();
+            startSession(socket);
+        });
+    }
+
+    // The projection script, driven by a timer so the event loop keeps decoding.
+    int step = 0;
+    int stepFrames = 0;
+    qint64 stepDeadline = 0;
+    Yuv before{};
+    // What the now-playing channel said before the transport script pressed a button.
+    int stepState = 0;
+    QString stepTitle;
+    QTimer scriptTimer;
+    const int holdMs = parser.value(holdOption).toInt();
+    // How long a tapped button has to appear in a decoded picture.
+    const qint64 TAP_DEADLINE_MS = 4000;
+    // Audio buffers to collect before measuring the tone, and the magnitude a real tone
+    // has to beat. The source sends at a quarter of full scale, so anything above a few
+    // percent is signal rather than noise.
+    const int TONE_BUFFERS = 4;
+    const double TONE_FLOOR = 0.05;
+    // One outbound fragment less the message id and timestamp: an audio message larger
+    // than this would fragment and could interleave with a video keyframe.
+    const int AUDIO_FRAGMENT_LIMIT = 16 * 1024 - 10;
+    // P6.2. How long a cluster expecting silence is watched before the silence counts.
+    // Longer than the source's own cluster wait, so a source that gives up and sends
+    // anyway has had time to do it.
+    //
+    // Measured from the first script tick, which is after the first decoded picture, and
+    // **not** from this process starting: the emulator lab launches the receiver and then
+    // spends minutes booting Android, so a window timed from process start was already
+    // satisfied the moment projection began. That reported a silence nobody had watched
+    // for, and it hid whether the source had reached its own cluster deadline at all.
+    const qint64 NAV_SILENCE_MS = 12000;
+    QElapsedTimer navSilence;
+    // P6.1. Where the two panes are, and what counts as one of them having moved.
+    const DashboardPane pane = DashboardPane::of(caps.layout(), caps.mapOnLeft);
+    QByteArray mapBefore, tilesBefore;
+    double trackMark = 0.0;
+    int trackSettleTries = 0;
+    // How often the parked map is sampled while it settles, and how long to wait for it
+    // to go quiet before giving up and driving anyway: a map that never settles is a
+    // failed check, not a reason to collect no evidence at all.
+    const qint64 TRACK_SAMPLE_MS = 1000;
+    const int TRACK_SETTLE_TRIES = 25;
+    // Luma difference that counts as a changed pixel: above the encoder's noise on a
+    // static picture, well below any real change in what is drawn.
+    const int TRACK_LUMA_THRESHOLD = 12;
+    // Fractions of a pane. A map panning by tens of pixels changes most of itself; the
+    // static half changes nothing but encoder noise.
+    const double TRACK_MOVED_MIN = 0.10;
+    const double TRACK_STATIC_MAX = 0.02;
+    // How long a parked vehicle at the end of the guidance drive waits for the source to
+    // say it has arrived.
+    const int GUIDE_ARRIVAL_MS = 15000;
+    // Metres of travel per checked interval: about ten seconds at the track's cruise.
+    const double TRACK_STEP_METRES = 120.0;
+    auto paneLuma = [&](const DashboardPane::Rect& r) {
+        return decoder.luma(r.x, r.y, r.width, r.height);
+    };
+    if (projection && caps.track) {
+        out << "receiver_track_panes=map=" << pane.map.x << "," << pane.map.y << "+"
+            << pane.map.width << "x" << pane.map.height << " tiles=" << pane.tiles.x << ","
+            << pane.tiles.y << "+" << pane.tiles.width << "x" << pane.tiles.height
+            << " map_on_left=" << (caps.mapOnLeft ? "true" : "false")
+            << " interval_ms=" << caps.trackIntervalMs << "\n";
+        out.flush();
+    }
+    if (projection && script != "none") {
+        QObject::connect(&scriptTimer, &QTimer::timeout, &app, [&]() {
+            if (!video || !input || decoder.frames == 0)
+                return; // wait for the first decoded picture
+            const Layout layout = caps.layout();
+            int base = 0;
+            if (script == "focus")
+                base = 100;
+            else if (script == "stall")
+                base = 200;
+            else if (script == "transport")
+                base = 300;
+            else if (script == "audio")
+                base = 400;
+            else if (script == "track")
+                base = 500;
+            else if (script == "navigation")
+                base = 600;
+            else if (script == "guidance")
+                base = 700;
+            switch (step + base) {
+            case 0:
+            case 2:
+            case 4:
+            case 6: {
+                const int index = step / 2;
+                const QPoint center = layout.center(index);
+                const QPoint patch = layout.sample(index);
+                before = decoder.sample(patch.x(), patch.y());
+                const QPoint touchPoint = caps.toTouch(center);
+                const oaa::hu::InputChannelHandler::Pointer pointer{touchPoint.x(), touchPoint.y(), 0};
+                input->sendTouchIndication(1, &pointer, 0, 0, uptime.elapsed() * 1000);
+                input->sendTouchIndication(1, &pointer, 0, 1, uptime.elapsed() * 1000 + 1);
+                ++taps;
+                out << "receiver_tap=" << index << " frame=" << center.x() << "," << center.y()
+                    << " touch=" << touchPoint.x() << "," << touchPoint.y()
+                    << " space=" << caps.touchSpace << "\n";
+                out.flush();
+                stepFrames = decoder.frames;
+                // The source has to draw and encode the change, and the decoder to
+                // deliver it; poll until it appears or this deadline passes.
+                stepDeadline = uptime.elapsed() + TAP_DEADLINE_MS;
+                ++step;
+                break;
+            }
+            case 1:
+            case 3:
+            case 5:
+            case 7: {
+                const int index = step / 2;
+                const QPoint patch = layout.sample(index);
+                const Yuv after = decoder.sample(patch.x(), patch.y());
+                const Yuv want = buttonColor(index);
+                const bool close = std::abs(after.y - want.y) <= tolerance
+                    && std::abs(after.u - want.u) <= tolerance
+                    && std::abs(after.v - want.v) <= tolerance;
+                if (!close && uptime.elapsed() < stepDeadline)
+                    return; // the change has not been decoded yet
+                check(close,
+                      QString("button %1 decoded as %2,%3,%4, expected %5,%6,%7")
+                          .arg(index)
+                          .arg(after.y)
+                          .arg(after.u)
+                          .arg(after.v)
+                          .arg(want.y)
+                          .arg(want.u)
+                          .arg(want.v));
+                check(after.y != before.y || after.u != before.u || after.v != before.v,
+                      QString("button %1 did not change after the tap").arg(index));
+                out << "receiver_tap_result=" << index << " before=" << before.y << "," << before.u
+                    << "," << before.v << " after=" << after.y << "," << after.u << "," << after.v
+                    << "\n";
+                out.flush();
+                ++step;
+                break;
+            }
+            case 8: {
+                // A head-unit button press, then finish.
+                input->sendButtonEvent(84, true, uptime.elapsed() * 1000);
+                input->sendButtonEvent(84, false, uptime.elapsed() * 1000 + 1);
+                ++keys;
+                ++step;
+                stepFrames = decoder.frames;
+                break;
+            }
+            case 100: {
+                // Focus loss: the source must stop sending until focus returns.
+                video->requestVideoFocus(false);
+                stepFrames = decoder.frames;
+                out << "receiver_focus=none\n";
+                out.flush();
+                ++step;
+                break;
+            }
+            case 101: {
+                static int quiet = 0;
+                if (++quiet < 10)
+                    return; // about a second of no projected focus
+                check(decoder.frames <= stepFrames + 2,
+                      QString("%1 pictures arrived after focus was dropped")
+                          .arg(decoder.frames - stepFrames));
+                video->requestVideoFocus(true);
+                stepFrames = decoder.frames;
+                out << "receiver_focus=projected\n";
+                out.flush();
+                ++step;
+                break;
+            }
+            case 102: {
+                if (decoder.frames < stepFrames + 5)
+                    return;
+                check(decoder.errors == 0, "decode errors after focus returned");
+                ++step;
+                break;
+            }
+            case 200: {
+                // Withhold acknowledgements: the source's window fills and it recovers
+                // at an IDR once they are released.
+                video->setStalling(true);
+                stepFrames = decoder.frames;
+                out << "receiver_acks=withheld\n";
+                out.flush();
+                ++step;
+                break;
+            }
+            case 201: {
+                static int stalled = 0;
+                if (++stalled < 20)
+                    return; // about two seconds
+                video->setStalling(false);
+                const int released = video->releaseAcks();
+                out << "receiver_acks=released count=" << released << "\n";
+                out.flush();
+                stepFrames = decoder.frames;
+                ++step;
+                break;
+            }
+            case 202: {
+                if (decoder.frames < stepFrames + 5)
+                    return;
+                check(decoder.errors == 0, "decode errors after the acknowledgement stall");
+                ++step;
+                break;
+            }
+            // P5.1. A transport button is only proved to have arrived if something the
+            // receiver can see changes: the playback state on the now-playing channel and
+            // the swatch in the decoded picture must both follow the press.
+            case 300: {
+                if (statusMessages == 0)
+                    return; // the source has not published yet
+                check(playbackState == 2,
+                      QString("expected PLAYING before the first press, got %1")
+                          .arg(playbackState));
+                before = decoder.sample(layout.transportSample().x(),
+                                        layout.transportSample().y());
+                stepState = playbackState;
+                input->sendButtonEvent(85, true, uptime.elapsed() * 1000); // PLAY_PAUSE
+                input->sendButtonEvent(85, false, uptime.elapsed() * 1000 + 1);
+                ++keys;
+                out << "receiver_transport=play-pause\n";
+                out.flush();
+                stepDeadline = uptime.elapsed() + TAP_DEADLINE_MS;
+                ++step;
+                break;
+            }
+            case 301: {
+                const QPoint patch = layout.transportSample();
+                const Yuv after = decoder.sample(patch.x(), patch.y());
+                const Yuv want = transportColor(playbackState);
+                const bool changed = playbackState != stepState;
+                const bool close = std::abs(after.y - want.y) <= tolerance
+                    && std::abs(after.u - want.u) <= tolerance
+                    && std::abs(after.v - want.v) <= tolerance;
+                if ((!changed || !close) && uptime.elapsed() < stepDeadline)
+                    return;
+                check(changed,
+                      QString("playback state stayed %1 after play-pause").arg(stepState));
+                check(playbackState == 3,
+                      QString("expected PAUSED after play-pause, got %1").arg(playbackState));
+                check(close,
+                      QString("now-playing swatch decoded as %1,%2,%3, expected %4,%5,%6")
+                          .arg(after.y).arg(after.u).arg(after.v)
+                          .arg(want.y).arg(want.u).arg(want.v));
+                check(after.y != before.y || after.u != before.u || after.v != before.v,
+                      "the now-playing swatch did not change after play-pause");
+                out << "receiver_transport_result=play-pause state=" << playbackState << "\n";
+                out.flush();
+                ++step;
+                break;
+            }
+            case 302: {
+                check(metadataMessages > 0, "no metadata before the track change");
+                stepTitle = trackTitle;
+                input->sendButtonEvent(87, true, uptime.elapsed() * 1000); // MEDIA_NEXT
+                input->sendButtonEvent(87, false, uptime.elapsed() * 1000 + 1);
+                ++keys;
+                out << "receiver_transport=next\n";
+                out.flush();
+                stepDeadline = uptime.elapsed() + TAP_DEADLINE_MS;
+                ++step;
+                break;
+            }
+            case 303: {
+                if (trackTitle == stepTitle && uptime.elapsed() < stepDeadline)
+                    return;
+                check(trackTitle != stepTitle,
+                      QString("the track stayed \"%1\" after next").arg(stepTitle));
+                // The P5.1 open risk: album art is unbounded bytes on a 16 KiB-fragment
+                // transport, so this slice must send none.
+                check(albumArtBytes == 0,
+                      QString("%1 bytes of album art were sent").arg(albumArtBytes));
+                out << "receiver_transport_result=next title=" << trackTitle << "\n";
+                out.flush();
+                ++step;
+                break;
+            }
+            // P5.3. Audio is proved to have arrived only if the samples are the ones
+            // the source says it is sending: the receiver measures the two fundamentals
+            // in the PCM it was handed rather than trusting a buffer count.
+            case 400: {
+                if (!audio || audio->buffers < TONE_BUFFERS)
+                    return; // wait for enough audio to measure
+                check(audioStarted, "no audio start indication");
+                check(audioConfigIndex == 0,
+                      QString("audio started at configuration index %1").arg(audioConfigIndex));
+                const QByteArray pcm = audio->latest;
+                const int channels = caps.audioChannels;
+                const double left = toneMagnitude(pcm, channels, 0, caps.audioSampleRate,
+                                                  LAB_TONE_LEFT_HZ);
+                const double leftWrong = toneMagnitude(pcm, channels, 0, caps.audioSampleRate,
+                                                       LAB_TONE_RIGHT_HZ);
+                out << "receiver_audio_tone=left_440=" << left << " left_880=" << leftWrong;
+                check(left > TONE_FLOOR,
+                      QString("440 Hz magnitude in the left channel was %1").arg(left));
+                check(left > leftWrong * 2.0,
+                      QString("the left channel carried 880 Hz (%1) as strongly as 440 Hz (%2)")
+                          .arg(leftWrong).arg(left));
+                if (channels > 1) {
+                    const double right = toneMagnitude(pcm, channels, 1, caps.audioSampleRate,
+                                                       LAB_TONE_RIGHT_HZ);
+                    const double rightWrong = toneMagnitude(pcm, channels, 1,
+                                                            caps.audioSampleRate,
+                                                            LAB_TONE_LEFT_HZ);
+                    out << " right_880=" << right << " right_440=" << rightWrong;
+                    check(right > TONE_FLOOR,
+                          QString("880 Hz magnitude in the right channel was %1").arg(right));
+                    // A swapped pair is the failure this catches: both channels would
+                    // still carry a tone, and only the assignment would be wrong.
+                    check(right > rightWrong * 2.0,
+                          QString("the channels look swapped: right 440 Hz %1 against 880 Hz %2")
+                              .arg(rightWrong).arg(right));
+                }
+                out << "\n";
+                out.flush();
+                ++step;
+                break;
+            }
+            // P6.1. A moving position source, and the one question it exists to ask:
+            // does the projected map follow the vehicle? The answer has to come out of
+            // the decoded picture, because every phone-side counter here would read the
+            // same whether the pane rasterised a new view or re-composited the old
+            // texture. The static half of the dashboard is measured at the same time,
+            // so "the map moved" cannot be satisfied by a picture where everything did.
+            case 500: {
+                // Wait for the parked map to go quiet rather than for a fixed number of
+                // frames. Tiles arrive on VTM worker threads and change the pane on
+                // their own, so a baseline taken while they land would measure the
+                // loading; and "a stationary vehicle stops redrawing" is itself the
+                // claim P5.5 made from counters and never checked in a picture.
+                if (!labSensors || !trackPlayer || uptime.elapsed() < stepDeadline)
+                    return;
+                stepDeadline = uptime.elapsed() + TRACK_SAMPLE_MS;
+                const QByteArray map = paneLuma(pane.map);
+                if (map.isEmpty()) {
+                    check(false, "the map pane is outside the decoded picture");
+                    ++step;
+                    break;
+                }
+                const double change = changedFraction(mapBefore, map, TRACK_LUMA_THRESHOLD);
+                mapBefore = map;
+                ++trackSettleTries;
+                if (change < 0.0)
+                    return; // the first sample has nothing to compare against
+                if (change >= TRACK_STATIC_MAX && trackSettleTries < TRACK_SETTLE_TRIES)
+                    return;
+                out << "receiver_track=parked map_changed=" << change
+                    << " settle_s=" << trackSettleTries << " fixes=" << labSensors->fixes
+                    << " frames=" << decoder.frames << "\n";
+                out.flush();
+                check(change < TRACK_STATIC_MAX,
+                      QString("a parked map was still changing %1 of the pane after %2 s")
+                          .arg(change)
+                          .arg(trackSettleTries));
+                tilesBefore = paneLuma(pane.tiles);
+                trackPlayer->depart();
+                trackMark = trackPlayer->travelled();
+                out << "receiver_track=departed\n";
+                out.flush();
+                ++step;
+                break;
+            }
+            case 501:
+            case 502: {
+                // Two intervals rather than one. A map that redraws once and then goes
+                // quiet is not a hypothetical - it is P5.5's third defect, where tiles
+                // finishing on VTM worker threads never woke the pane again - and a
+                // single before-and-after pair cannot tell it apart from one that keeps
+                // following.
+                if (trackPlayer->travelled() < trackMark + TRACK_STEP_METRES)
+                    return;
+                const QByteArray map = paneLuma(pane.map);
+                const QByteArray tiles = paneLuma(pane.tiles);
+                const double moved = changedFraction(mapBefore, map, TRACK_LUMA_THRESHOLD);
+                const double still = changedFraction(tilesBefore, tiles, TRACK_LUMA_THRESHOLD);
+                out << "receiver_track_moved=" << step << " metres="
+                    << qRound(trackPlayer->travelled() - trackMark)
+                    << " map_changed=" << moved << " tiles_changed=" << still
+                    << " speed_ms=" << trackPlayer->speed()
+                    << " bearing=" << trackPlayer->heading()
+                    << " fixes=" << labSensors->fixes << "\n";
+                out.flush();
+                check(moved > TRACK_MOVED_MIN,
+                      QString("the map pane changed %1 of itself over %2 m of driving")
+                          .arg(moved)
+                          .arg(qRound(trackPlayer->travelled() - trackMark)));
+                check(still >= 0.0 && still < TRACK_STATIC_MAX,
+                      QString("the static tiles changed %1 of themselves").arg(still));
+                check(moved > still * 4.0,
+                      QString("the map (%1) changed no more than the static half (%2)")
+                          .arg(moved)
+                          .arg(still));
+                mapBefore = map;
+                tilesBefore = tiles;
+                trackMark = trackPlayer->travelled();
+                ++step;
+                break;
+            }
+            // P6.2. Two steps, both of them waits: the sequence has to start at all, and
+            // then it has to keep coming at no more than the advertised rate. Neither is
+            // a picture check — the cluster is the head unit's own display and nothing
+            // about it reaches the projected stream — so this is the receiver reading its
+            // own decode of what the source sent.
+            case 600: {
+                if (!navigation)
+                    return;
+                // Expecting silence is still a measurement: watch for long enough that a
+                // source which was going to send would have, then say so.
+                if (!caps.navigationExpectSequence) {
+                    if (!navSilence.isValid())
+                        navSilence.start();
+                    if (navSilence.elapsed() < NAV_SILENCE_MS)
+                        return;
+                    out << "receiver_navigation_silence=observed_ms=" << navSilence.elapsed()
+                        << " states=" << navigation->states
+                        << " notifications=" << navigation->notifications
+                        << " distances=" << navigation->distances << "\n";
+                    out.flush();
+                    step += 2;
+                    break;
+                }
+                if (navigation->states == 0 || navigation->notifications == 0
+                    || navigation->distances == 0)
+                    return;
+                out << "receiver_navigation_active=states=" << navigation->states
+                    << " cluster_announced=" << (navigation->clusterAnnounced ? "true" : "false")
+                    << " maneuver=" << navManeuver << " step_distance=" << navStepDistance
+                    << " unit=" << navStepUnit << " value=" << navStepValue
+                    << " to_step_s=" << navTimeToStep << " to_arrival_s=" << navTimeToArrival
+                    << "\n";
+                out.flush();
+                ++step;
+                break;
+            }
+            case 601: {
+                // Three updates, so there are at least two gaps to take the smallest of.
+                if (!navigation || navigation->updates < 3)
+                    return;
+                out << "receiver_navigation_rate=updates=" << navigation->updates
+                    << " smallest_gap_ms=" << navigation->smallestGapMs
+                    << " advertised_floor_ms=" << caps.navigationIntervalMs << "\n";
+                out.flush();
+                // The head unit's own clock, not the source's account of it. A little
+                // slack for scheduling on a loaded emulator host; the failure this
+                // catches is a source ignoring the floor entirely, which is off by a
+                // factor, not by a few milliseconds.
+                check(navigation->smallestGapMs >= caps.navigationIntervalMs * 9 / 10,
+                      QString("updates arrived %1 ms apart against an advertised floor of %2")
+                          .arg(navigation->smallestGapMs)
+                          .arg(caps.navigationIntervalMs));
+                ++step;
+                break;
+            }
+            // P6.5. The vehicle waits at the kerb until the source has a route on the
+            // cluster - the destination is the lab's to send, and the route is computed
+            // from the parked position - then drives the whole of --track-file, and the
+            // run ends once the source has said the drive arrived or has had its chance.
+            case 700: {
+                if (!navigation || !trackPlayer || !navStates.contains("1"))
+                    return;
+                trackPlayer->depart();
+                out << "receiver_guidance=departed maneuver=" << navManeuver
+                    << " step_distance=" << navStepDistance << " path_m=" << qRound(trackPlayer->pathLength())
+                    << " cruise_ms=" << trackSpeed << "\n";
+                out.flush();
+                ++step;
+                break;
+            }
+            case 701: {
+                if (!trackPlayer->finished())
+                    return;
+                out << "receiver_guidance=stopped travelled_m=" << qRound(trackPlayer->travelled())
+                    << " states=" << navStates.join(',') << "\n";
+                out.flush();
+                guideArrival.start();
+                ++step;
+                break;
+            }
+            case 702: {
+                // Arrival is the source's call: parked at the end, it should say so within
+                // a few fixes. A source that never does is a failure the checks name.
+                if (navStates.last() != "2" && guideArrival.elapsed() < GUIDE_ARRIVAL_MS)
+                    return;
+                ++step;
+                break;
+            }
+            default:
+                scriptTimer.stop();
+                QTimer::singleShot(holdMs, &app, [&]() {
+                    if (session)
+                        session->stop(1);
+                });
+                break;
+            }
+        });
+        scriptTimer.start(100);
+    }
+
+    QTimer::singleShot(timeoutMs, &app, [&]() {
+        out << "receiver_timeout=" << timeoutMs << "\n";
+        out.flush();
+        app.exit(3);
+    });
+    status = app.exec();
+    scriptTimer.stop();
+    if (projection) {
+        check(decoder.frames > 0, "no decoded pictures");
+        check(decoder.errors == 0, QString("%1 decode errors").arg(decoder.errors));
+        if (script == "taps")
+            check(taps == 4 && step >= 9, QString("the tap script stopped at step %1").arg(step));
+        if (script == "transport")
+            check(step >= 4, QString("the transport script stopped at step %1").arg(step));
+        if (script == "audio")
+            check(step >= 1, QString("the audio script stopped at step %1").arg(step));
+        if (script == "track")
+            check(step >= 3, QString("the track script stopped at step %1").arg(step));
+        if (script == "navigation")
+            check(step >= 2, QString("the navigation script stopped at step %1").arg(step));
+        if (script == "guidance" && navigation) {
+            // P6.5, from the receiver's own decode: the source put a route on the cluster,
+            // counted it down as the vehicle drove, said REROUTING when the drive left it,
+            // came back with a new route, and said the drive arrived. Nothing here knows
+            // what the right maneuvers were; that the icons match the road is a question
+            // for a person at a real cluster.
+            check(step >= 3, QString("the guidance script stopped at step %1").arg(step));
+            const int active = navStates.indexOf("1");
+            const int rerouting = navStates.indexOf("3", std::max(active, 0));
+            const int resumed = rerouting < 0 ? -1 : navStates.indexOf("1", rerouting);
+            const int arrived = navStates.lastIndexOf("2");
+            check(active >= 0, "the cluster was never told a route was active");
+            check(rerouting > active, "the drive left the route and the cluster never heard REROUTING");
+            check(resumed > rerouting, "no new route became active after re-routing");
+            check(arrived > resumed && arrived > navStates.lastIndexOf("1"),
+                  QString("the drive ended without the cluster going inactive: states %1")
+                      .arg(navStates.join(',')));
+            check(guideManeuvers.size() >= 3,
+                  QString("only %1 distinct maneuvers reached the cluster").arg(guideManeuvers.size()));
+            check(!guideManeuvers.isEmpty() && guideManeuvers.last() == 39,
+                  "the last maneuver before arriving was not DESTINATION (39)");
+            // Rounding to tenths of a mile can hold a value, never raise it by much.
+            check(guideFalls >= 20, QString("the countdown fell only %1 times").arg(guideFalls));
+            check(guideWorstRise < 50.0,
+                  QString("a countdown rose by %1 m while its maneuver held").arg(guideWorstRise));
+            check(navigation->smallestGapMs >= caps.navigationIntervalMs * 9 / 10,
+                  QString("updates arrived %1 ms apart against an advertised floor of %2")
+                      .arg(navigation->smallestGapMs)
+                      .arg(caps.navigationIntervalMs));
+            QStringList maneuvers;
+            for (int m : guideManeuvers)
+                maneuvers << QString::number(m);
+            out << "receiver_guidance=states=" << navStates.join(',')
+                << " maneuvers=" << maneuvers.join(',') << " countdown_falls=" << guideFalls
+                << " countdown_rises=" << guideRises << " worst_rise_m=" << qRound(guideWorstRise)
+                << " smallest_gap_ms=" << navigation->smallestGapMs
+                << " travelled_m=" << (trackPlayer ? qRound(trackPlayer->travelled()) : 0) << "\n";
+        }
+        if (labSensors) {
+            // P5.2: the receiver's own record of what it was asked for and what it sent,
+            // to be compared against the source's sensor_populated/sensor_silent line.
+            auto joined = [](const QList<int>& values) {
+                QStringList text;
+                for (int value : values)
+                    text << QString::number(value);
+                return text.isEmpty() ? QString("-") : text.join(",");
+            };
+            check(labSensors->requested.size() == std::size(LAB_SENSOR_TYPES),
+                  QString("the source subscribed to %1 of %2 advertised sensors")
+                      .arg(labSensors->requested.size())
+                      .arg(std::size(LAB_SENSOR_TYPES)));
+            out << "receiver_sensors_requested=" << joined(labSensors->requested)
+                << " receiver_sensors_populated=" << joined(labSensors->populated) << "\n";
+            if (trackPlayer) {
+                // What was actually driven, and in which units. The scales are printed
+                // because the source infers them rather than being told: a report that
+                // says only "the map followed" cannot be checked against a source that
+                // read the bearing at the wrong scale and followed something else.
+                check(labSensors->fixes > 0, "the track played no positions");
+                out << "receiver_track=fixes=" << labSensors->fixes
+                    << " speed_events=" << labSensors->slowEvents
+                    << " interval_ms=" << caps.trackIntervalMs
+                    << " travelled_m=" << qRound(trackPlayer->travelled())
+                    << " corners=" << trackPlayer->corners()
+                    << " speed_max_ms=" << trackPlayer->maxSpeed()
+                    << " scales=position:1e7,bearing:1e3,speed:1e3\n";
+            }
+        }
+        if (caps.mediaInfo) {
+            out << "receiver_media_status=" << statusMessages
+                << " receiver_media_metadata=" << metadataMessages
+                << " receiver_media_state=" << playbackState
+                << " receiver_media_album_art=" << albumArtBytes
+                << " receiver_media_source=" << (sourceApp.isEmpty() ? QString("-") : sourceApp)
+                << "\n";
+        }
+        if (navigation) {
+            // What the second reader made of it. The maneuver is a number, the distance
+            // is the source's own text, and neither a road name nor a destination is
+            // printed: this evidence is about whether the cluster was driven, not about
+            // where anybody was going (P6 plan §9).
+            check(navigation->unexpected == 0,
+                  QString("%1 unexpected messages on the cluster channel")
+                      .arg(navigation->unexpected));
+            if (caps.navigationExpectSequence) {
+                check(navigation->states > 0, "the cluster was never told a navigation state");
+                check(navigation->notifications > 0, "no maneuver arrived on the cluster channel");
+                check(navigation->distances > 0, "no distance arrived on the cluster channel");
+                // P6 plan §2: semantic, not pictorial, and no lanes this project could
+                // fill from a real route.
+                check(navLanes == 0, QString("%1 lane groups were sent").arg(navLanes));
+                // The clock format is unrecorded and the source does not know the
+                // vehicle's.
+                check(!navEtaString, "an estimated time of arrival string was sent");
+                check(navTimeToStep >= 0, "no time to the next maneuver was sent");
+            } else {
+                // A head unit that never announced a cluster must be told nothing at all:
+                // the P6 plan §3 sequence waits for the cluster rather than assuming it.
+                check(navigation->states == 0,
+                      QString("%1 navigation states were sent to a cluster that never "
+                              "announced itself")
+                          .arg(navigation->states));
+                check(navigation->notifications == 0 && navigation->distances == 0,
+                      QString("%1 maneuvers and %2 distances were sent to a cluster that "
+                              "never announced itself")
+                          .arg(navigation->notifications)
+                          .arg(navigation->distances));
+            }
+            out << "receiver_navigation=states=" << navStates.join(',')
+                << " notifications=" << navigation->notifications
+                << " distances=" << navigation->distances
+                << " updates=" << navigation->updates
+                << " cluster=" << (navigation->announceCluster() ? "announced" : "none")
+                << " maneuver=" << navManeuver << " lanes=" << navLanes
+                << " destinations=" << navDestinations
+                << " expect=" << (caps.navigationExpectSequence ? "sequence" : "silence")
+                << " unit=" << navStepUnit << " value=" << navStepValue
+                << " to_step_s=" << navTimeToStep << " to_arrival_s=" << navTimeToArrival
+                << " eta_string=" << (navEtaString ? "true" : "false")
+                << " unexpected=" << navigation->unexpected << "\n";
+        }
+        if (audio) {
+            // The window Prodigy advertises for audio is its own MAX_UNACKED, not Ford's;
+            // what matters here is that every buffer was acknowledged and that the
+            // underflow injection, when asked for, went out unanswered.
+            check(audio->buffers > 0, "no audio buffers arrived");
+            check(audio->largest <= AUDIO_FRAGMENT_LIMIT,
+                  QString("an audio buffer of %1 bytes would fragment").arg(audio->largest));
+            out << "receiver_audio_buffers=" << audio->buffers
+                << " receiver_audio_bytes=" << audio->bytes
+                << " receiver_audio_largest=" << audio->largest
+                << " receiver_audio_session=" << audioSession
+                << " receiver_audio_config=" << audioConfigIndex
+                << " receiver_audio_stopped=" << (audioStopped ? "true" : "false")
+                << " receiver_audio_underflows_sent=" << audio->underflowsSent << "\n";
+        }
+        out << "receiver_video_decoded_frames=" << decoder.frames
+            << " receiver_video_configs=" << decoder.configs
+            << " receiver_video_decode_errors=" << decoder.errors
+            << " receiver_video_size=" << decoder.width << "x" << decoder.height
+            << " receiver_taps_sent=" << taps << " receiver_keys_sent=" << keys << "\n";
+        out << "receiver_checks=" << checks << " receiver_check_failures=" << failures << "\n";
+        out.flush();
+    }
+    logger.close();
+    if (videoOut.isOpen())
+        videoOut.close();
+    if (audioOut.isOpen())
+        audioOut.close();
+    if (session)
+        session->finalize();
+    return failures > 0 ? 4 : status;
+}

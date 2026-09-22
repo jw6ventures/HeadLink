@@ -1,0 +1,21 @@
+# Android build pins. Resolved artifacts are checksummed in verification-metadata.xml.
+[versions]
+agp = "9.4.0"
+# AGP 9.4.0 declares this Kotlin Gradle plugin as its runtime dependency (built-in Kotlin).
+kotlin = "2.2.10"
+# VTM, the owned map renderer (P5.5). Pinned to the last release published to Maven
+# Central: 0.26.0 onwards are JitPack-only, which gives no centrally hosted artifact for
+# verification-metadata.xml to pin. See docs/p5-plan.md §5.
+vtm = "0.25.0"
+# Pulled in by vtm-android alone, and the only transitive dependency VTM has.
+androidsvg = "1.4"
+
+[libraries]
+kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
+vtm = { module = "org.mapsforge:vtm", version.ref = "vtm" }
+vtm-android = { module = "org.mapsforge:vtm-android", version.ref = "vtm" }
+vtm-themes = { module = "org.mapsforge:vtm-themes", version.ref = "vtm" }
+androidsvg = { module = "com.caverock:androidsvg", version.ref = "androidsvg" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }

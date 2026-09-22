@@ -1,0 +1,6 @@
+*
+!tools/
+tools/*
+!tools/Containerfile.rust
+!tools/Containerfile.android
+!tools/Containerfile.emulator

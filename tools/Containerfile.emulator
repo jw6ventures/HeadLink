@@ -1,0 +1,33 @@
+# Optional emulator smoke-test environment, layered on the pinned Android image. Not used
+# by tools/check.sh or tools/android-build.sh, and never a substitute for device gates.
+# Build with tools/emulator-image.sh, which downloads and verifies the SDK archives into
+# the cache and mounts them read-only at /sources for this build.
+# Adds the x86_64 Android Rust target, Android Emulator 37.2.9, the AOSP (no Google APIs)
+# API 36 x86_64 system image r02, and the host libraries the headless emulator loads.
+FROM localhost/openauto-android:p0.2
+
+RUN rustup target add --toolchain 1.85.1 x86_64-linux-android
+
+RUN set -e; \
+    echo "703aac00501161e5388e2ca9e3ec8fb5f5b71074b48c35b798d252b0fde81e5a  /sources/emulator-linux_x64-16322952.zip" | sha256sum -c -; \
+    echo "e1b9d9fb665001ef27b16e57d8762a2d54aec6bff617e17506edb8676667b9da  /sources/x86_64-36_r02.zip" | sha256sum -c -; \
+    unzip -q /sources/emulator-linux_x64-16322952.zip -d "$ANDROID_HOME"; \
+    mkdir -p "$ANDROID_HOME/system-images/android-36/default"; \
+    unzip -q /sources/x86_64-36_r02.zip -d "$ANDROID_HOME/system-images/android-36/default"; \
+    chmod -R a+rX "$ANDROID_HOME/emulator" "$ANDROID_HOME/system-images"; \
+    grep -H 'Pkg.Revision' "$ANDROID_HOME/emulator/source.properties" \
+      "$ANDROID_HOME/system-images/android-36/default/x86_64/source.properties"
+
+# Debian packages from a fixed snapshot so the smoke environment does not drift.
+ARG SNAPSHOT=20260915T000000Z
+RUN rm -f /etc/apt/sources.list.d/debian.sources \
+ && printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/%s bookworm main\n' "$SNAPSHOT" > /etc/apt/sources.list \
+ && apt-get -o Acquire::Retries=5 -o Acquire::http::Pipeline-Depth=0 update \
+ && DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
+      libpulse0 libnss3 libxcomposite1 libxcursor1 libxdamage1 libxi6 libxtst6 libasound2 \
+      libgbm1 libdrm2 libxkbfile1 libgl1 libegl1 libxrandr2 libxfixes3 libxkbcommon0 \
+      libdbus-1-3 libbsd0 \
+ && rm -rf /var/lib/apt/lists/*
+
+ENV CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER=/opt/android-sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android33-clang \
+    PATH=/opt/android-sdk/emulator:/opt/android-sdk/platform-tools:$PATH

@@ -1,0 +1,3 @@
+FROM docker.io/library/rust@sha256:bf7d87666c4da6eace19e06d21bc4859c6e2a5c97a21ac273b0e082112753cf0
+RUN rustup component add --toolchain 1.85.1 rustfmt clippy
+ENV RUSTUP_TOOLCHAIN=1.85.1

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Starting compatibility profile (spec §5.2), not a guaranteed identity for every
+     receiver. The app reads this same entry to report filter mismatches, and offers
+     only an explicit per-attempt manual override; no broader automatic claim. -->
+<resources>
+    <usb-accessory
+        manufacturer="Android"
+        model="Android Auto" />
+</resources>

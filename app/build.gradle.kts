@@ -1,0 +1,91 @@
+plugins {
+    alias(libs.plugins.android.application)
+}
+
+// Staged by tools/android-build.sh from the Rust aarch64-linux-android build.
+// Gradle never invokes Cargo, and refuses to package an APK without the library.
+val rustJniLibs: File = rootProject.file("target/android-jniLibs")
+val requiredNativeLibrary: File = rustJniLibs.resolve("arm64-v8a/libaap_jni.so")
+
+android {
+    namespace = "org.openautoandroid.source"
+    compileSdk = 36
+    buildToolsVersion = "36.1.0"
+    ndkVersion = "29.0.14206865"
+
+    defaultConfig {
+        applicationId = "org.openautoandroid.source"
+        minSdk = 33
+        targetSdk = 36
+        versionCode = 21
+        versionName = "0.4.5-lab"
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
+    }
+
+    sourceSets {
+        getByName("main") {
+            jniLibs.directories += rustJniLibs.path
+        }
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    packaging {
+        jniLibs {
+            // Store uncompressed and page-aligned; load directly from the APK.
+            useLegacyPackaging = false
+        }
+    }
+
+    // No Google-encrypted dependency metadata block in the APK.
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
+    }
+
+    lint {
+        warningsAsErrors = true
+        // SDK levels are the spec §5.1 baseline; arm64-v8a is the only target ABI.
+        disable += setOf("OldTargetApi", "GradleDependency", "ChromeOsAbiSupport")
+    }
+}
+
+// P5.5's owned map renderer. VTM core has no dependencies of its own; vtm-android adds
+// only androidsvg, and vtm-http — the one networked module — is deliberately not here, so
+// the map read path stays offline (APP10). The natives jar carries a single 45 KB
+// tessellator for the one target ABI.
+//
+// These are plain JARs, not AARs: their shaders and theme symbols land in the APK as
+// classpath resources rather than in the AssetManager, which is why MapAssets reads them
+// through the classloader instead of using VTM's own AndroidAssets.
+dependencies {
+    implementation(libs.vtm)
+    implementation(libs.vtm.android)
+    implementation(libs.vtm.themes)
+    runtimeOnly(variantOf(libs.vtm.android) { classifier("natives-arm64-v8a") })
+    // P6.3's offline routing engine. Vendored source, not a resolved artifact: BRouter
+    // publishes nothing to Maven Central, so there is no checksummed coordinate for
+    // verification-metadata.xml to pin. Pure Java, no native library, no new ABI.
+    implementation(project(":vendor:brouter"))
+}
+
+val checkRustJniLibs = tasks.register("checkRustJniLibs") {
+    val library = requiredNativeLibrary
+    doLast {
+        check(library.isFile) { "Missing $library; build with tools/android-build.sh" }
+    }
+}
+tasks.named("preBuild") {
+    dependsOn(checkRustJniLibs)
+}

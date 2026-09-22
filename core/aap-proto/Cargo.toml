@@ -1,0 +1,10 @@
+[package]
+name = "aap-proto"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+# Must match tools/proto-gen's prost-build release, which produced src/generated.
+prost = { version = "=0.14.4", default-features = false, features = ["derive", "std"] }

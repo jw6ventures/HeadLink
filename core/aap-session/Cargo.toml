@@ -1,0 +1,19 @@
+[package]
+name = "aap-session"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+aap-proto = { path = "../aap-proto" }
+aap-tls = { path = "../aap-tls" }
+aap-wire = { path = "../aap-wire" }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.189"
+
+[dev-dependencies]
+hu-sim = { path = "../../tools/hu-sim" }
+test-pattern = { path = "../../tools/test-pattern" }
+prost = { version = "=0.14.4", default-features = false, features = ["derive", "std"] }

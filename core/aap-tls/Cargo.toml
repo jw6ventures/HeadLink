@@ -1,0 +1,14 @@
+[package]
+name = "aap-tls"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+# Linked statically against the pinned OpenSSL from tools/openssl-build.sh; openssl-sys's
+# `vendored` feature is not used (its bundled release lags the 3.5 LTS series).
+openssl = "0.10.81"
+openssl-sys = "0.9.117"
+# Only for `ForeignTypeRef::from_ptr` in the alert callback; already required by openssl.
+foreign-types = "0.3.2"

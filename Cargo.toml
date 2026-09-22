@@ -1,0 +1,18 @@
+[workspace]
+members = [
+    "core/aap-wire",
+    "core/aap-proto",
+    "core/aap-tls",
+    "core/aap-session",
+    "core/aap-jni",
+    "tools/source-harness",
+    "tools/hu-sim",
+    "tools/test-pattern",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "GPL-3.0-only"

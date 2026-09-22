@@ -1,0 +1,15 @@
+[package]
+name = "source-harness"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+aap-session = { path = "../../core/aap-session" }
+aap-tls = { path = "../../core/aap-tls" }
+aap-wire = { path = "../../core/aap-wire" }
+test-pattern = { path = "../test-pattern" }
+
+[dev-dependencies]
+hu-sim = { path = "../hu-sim" }

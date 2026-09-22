@@ -1,0 +1,19 @@
+# Controlled lab receiver build environment: OpenAuto Prodigy's protocol library
+# (Qt 6 Core/Network, protobuf, OpenSSL), FFmpeg's H.264 decoder for the projection
+# checks, plus the lab driver in this directory.
+#   podman build -f tools/lab-receiver/Containerfile -t localhost/openauto-lab-receiver:p4 tools/lab-receiver
+# Debian packages come from a fixed snapshot.debian.org timestamp so the toolchain
+# does not drift. Lab tooling only; nothing here is shipped in the APK.
+FROM docker.io/library/debian@sha256:6788062a1b42ac281f053ac876170b79a3eaed5d61383b8ed7eaca6c6965f3b1
+
+ARG SNAPSHOT=20260915T000000Z
+RUN rm -f /etc/apt/sources.list.d/debian.sources \
+ && printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/%s trixie main\ndeb [check-valid-until=no] http://snapshot.debian.org/archive/debian-security/%s trixie-security main\n' "$SNAPSHOT" "$SNAPSHOT" > /etc/apt/sources.list \
+ && apt-get -o Acquire::Retries=5 update \
+ && DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
+      cmake ninja-build g++ pkg-config qt6-base-dev libprotobuf-dev protobuf-compiler libssl-dev openssl \
+      libavcodec-dev libavutil-dev ffmpeg \
+ && rm -rf /var/lib/apt/lists/* \
+ && dpkg-query -W -f='${Package}=${Version}\n' cmake g++ qt6-base-dev libprotobuf-dev protobuf-compiler libssl-dev openssl \
+      libavcodec-dev libavutil-dev ffmpeg \
+      > /etc/lab-receiver-packages.txt

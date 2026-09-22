@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- USB accessory acquisition, connectedDevice foreground service, and session
+     notification (spec §5.2 baseline). TLS, authentication, and discovery add no
+     permission. No INTERNET or other permissions.
+
+     P5.1 adds no <uses-permission>. Head-unit transport buttons reach whatever is
+     playing through AudioManager.dispatchMediaKeyEvent, which declares none. Reporting
+     what is playing needs MediaAccessService below to be enabled by the operator in
+     system Settings: that is a binding the operator makes, not a permission this app can
+     request, and the integration works without it (spec §5.2, APP09). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-feature
+        android:name="android.hardware.usb.accessory"
+        android:required="true" />
+
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- P5.5, the owned map and its dashboard header. Each is separately optional and
+         the feature degrades to "—" without it (APP09); none is requested unless the
+         operator turns that integration on, and there is still no INTERNET permission,
+         so map data stays operator-supplied (APP10).
+
+         ACCESS_NETWORK_STATE is a normal permission and reports the transport type only
+         — wifi, cell or none. ACCESS_FINE_LOCATION is the position *fallback*: the
+         vehicle's own LOCATION is preferred wherever it exists and needs no Android
+         permission at all, so on a head unit that populates it this grant is never the
+         source the map follows. READ_PHONE_STATE is solely the signal-bar count from
+         SignalStrength.getLevel.
+
+         COARSE is declared beside FINE because Android lets the operator grant only the
+         coarse one, and an app that asks for FINE alone gets nothing in that case. The
+         fallback follows whichever was granted: GPS when FINE, the network provider
+         when only COARSE. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+
+    <application
+        android:name=".SourceApplication"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@android:style/Theme.DeviceDefault">
+        <activity
+            android:name=".ConnectionActivity"
+            android:exported="true"
+            android:launchMode="singleTop">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.hardware.usb.action.USB_ACCESSORY_ATTACHED" />
+            </intent-filter>
+            <meta-data
+                android:name="android.hardware.usb.action.USB_ACCESSORY_ATTACHED"
+                android:resource="@xml/accessory_filter" />
+        </activity>
+        <!-- P6.4: destinations shared from another app, OsmAnd above all, which does the
+             offline address search this app does not (P6 plan §5.1). Plain text through
+             the share sheet, and geo: URIs from anything that opens a location. Adds no
+             permission; the route starts from the vehicle's position or, only if the
+             operator has already granted it, the phone's. No window, and no task of its
+             own: it routes, says so in a toast, and leaves the driver where they were. -->
+        <activity
+            android:name=".DestinationActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:label="@string/destination_label"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="geo" />
+            </intent-filter>
+        </activity>
+        <service
+            android:name=".ProjectionService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
+        <!-- Enabled by the operator in Settings, never bound by this app. It implements
+             no callback and reads no notification: MediaSessionManager.getActiveSessions
+             accepts only a notification listener or the signature-level
+             MEDIA_CONTENT_CONTROL, so this is the one route an ordinary app has to read
+             what another application is playing. See MediaAccessService. -->
+        <service
+            android:name=".MediaAccessService"
+            android:exported="false"
+            android:label="@string/media_access_label"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+    </application>
+
+</manifest>
