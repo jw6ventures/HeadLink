@@ -21,6 +21,9 @@ enum class DestinationSource(val label: String) {
 
     /** The emulator lab's debug intent. */
     LAB("lab"),
+
+    /** A tap on the dashboard's favorites tile: a place saved on the connection screen. */
+    FAVORITE("favorite"),
 }
 
 /**

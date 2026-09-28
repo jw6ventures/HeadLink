@@ -239,7 +239,9 @@ Not run: `tools/check.sh` — no Rust changed.
 - **Minification is still off**, and the `Class.forName` keep-rule question from §4.1 is
   unchanged — now with a caller that would hit it.
 
-## 6. Amendments this needs — proposed, not applied
+## 6. Amendments this needs
+
+**Applied 22 September 2026** to `spec.md` and `plan.md` (or to the non-governed file named), with the rest of the queue.
 
 Behind those already queued by P5.5, the P6 plan §9, P6.1 §7 and P6.2 §7.
 

@@ -33,6 +33,11 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+            // Inert while minification is off; see the file for why each rule exists.
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
         }
     }
 

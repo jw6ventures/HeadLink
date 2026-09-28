@@ -88,6 +88,14 @@ class ProjectionPipeline(
     private val mapOrientation: MapOrientation,
     /** Told when the compass bubble changes the orientation, so it can be remembered. */
     private val onMapOrientation: (MapOrientation) -> Unit,
+    /**
+     * Marker colour, day/night, diagnostics and the pause (P7.2, P7.3, P7.6), from the
+     * saved settings, which a lab run reads too: what the dashboard looks like is the
+     * driver's, not the attempt's.
+     */
+    private val choices: DashboardChoices,
+    /** Where ☀/☾, Ⓟ and the palette in use are kept between sessions. */
+    private val saves: DashboardSaves,
     /** Operator-supplied Mapsforge data, drawn as one map; empty runs the pane without. */
     private val mapFiles: List<java.io.File>,
     private val zone: java.time.ZoneId,
@@ -137,6 +145,8 @@ class ProjectionPipeline(
                 speedUnit,
                 mapOrientation,
                 onMapOrientation,
+                choices,
+                saves,
             )
         }
     }
@@ -149,6 +159,7 @@ class ProjectionPipeline(
 
     /** The route the map engine was last given. Scene thread; reset with the renderer. */
     private var shownRoute: Route? = null
+    private var shownAlternatives: List<LiveAlternative>? = null
     private var startedNs = 0L
     private var nextFrameNs = 0L
 
@@ -261,6 +272,12 @@ class ProjectionPipeline(
                 if (route !== shownRoute) {
                     renderer.setRoute(route)
                     shownRoute = route
+                }
+                // Likewise the live alternatives, a list replaced whole on the main thread.
+                val alternatives = LiveAlternatives.shown
+                if (alternatives !== shownAlternatives) {
+                    renderer.setAlternatives(alternatives.map { it.route })
+                    shownAlternatives = alternatives
                 }
                 val snapshot = board.nextFrame(System.currentTimeMillis())
                 renderer.draw(board.layout, snapshot, now - startedNs)
@@ -382,9 +399,8 @@ class ProjectionPipeline(
     fun relayout(updated: VideoStartParams) {
         val box = area(updated)
         scene?.relayout(SceneLayout(box[0], box[1], box[2], box[3]))
-        // The map pane's framebuffer is sized to the old pane, so a moved content
-        // rectangle needs the renderer rebuilt rather than just re-laid-out. Ford has
-        // only ever moved it at a focus change, which already rebuilds.
+        // The dashboard renderer notices the new map pane on its next frame and resizes
+        // the map to match (DashboardRenderer.fitMap).
         dashboard?.relayout(DashboardLayout(box[0], box[1], box[2], box[3], mapOnLeft))
         relayouts++
         // The head unit only ever shows the content rectangle, so the bitrate follows it
@@ -415,8 +431,82 @@ class ProjectionPipeline(
     /** A destination a long press on the projected map picked, once, or null. */
     fun takeMapPick(): Pair<Double, Double>? = dashboard?.takeMapPick()
 
+    /** A saved place a tap on the favorites tile chose, once, or null. */
+    fun takeFavoritePick(): Favorite? = dashboard?.takeFavoritePick()
+
+    /** The live alternatives' bubbles, from the main thread. */
+    fun alternatives(marks: List<AlternativeMark>) {
+        dashboard?.alternatives(marks)
+    }
+
+    /** The live alternative whose bubble was tapped since the last call, once, or null. */
+    fun takeAlternativePick(): Long? = dashboard?.takeAlternativePick()
+
+    /** Whether End route was pressed on the trip panel since the last call (P7.4). */
+    fun takeEndRoute(): Boolean = dashboard?.takeEndRoute() ?: false
+
+    /** The voice toggle's new state if it was pressed since the last call, once; else null (P8.2). */
+    fun takeVoiceToggle(): Boolean? = dashboard?.takeVoiceToggle()
+
+    /** Voice guidance turned on or off from the phone, for the toggle's picture (P8.3). */
+    fun voiceGuidance(on: Boolean) {
+        dashboard?.voiceGuidance(on)
+    }
+
+    /** Whether speech can happen now, for the voice toggle's warning mark (P8.2). */
+    fun speechAvailable(available: Boolean) {
+        dashboard?.speechAvailable(available)
+    }
+
+    /** The player a Resume row chose, once, or null (P7.5). */
+    fun takeResumePick(): Player? = dashboard?.takeResumePick()
+
+    /** How the Resume for [key] ended, for its row's feedback (P7.5). */
+    fun resumeResult(key: String, result: ResumeResult) {
+        dashboard?.resumeResult(key, result)
+    }
+
+    /** The notifications the flex tile lists (P7.8), newest first; replaces the list whole. */
+    fun notifications(list: List<DashNotification>) {
+        dashboard?.notifications(list)
+    }
+
+    /** A notification row tapped to be read aloud, once, or null (P7.8). */
+    fun takeReadAloud(): DashNotification? = dashboard?.takeReadAloud()
+
+    /** The notification being read aloud, whose row stays lit, or null (P8.1). */
+    fun reading(key: String?) {
+        dashboard?.reading(key)
+    }
+
+    /** The call the flex tile's card draws (P7.9). */
+    fun call(state: CallState) {
+        dashboard?.call(state)
+    }
+
+    /** The call card's and keypad's presses since the last call, in order, once (P7.9). */
+    fun takeCallActions(): List<CallAction> = dashboard?.takeCallActions() ?: emptyList()
+
+    /** Whether notification access is held, for the idle media pane's hint (P7.5). */
+    fun mediaAccess(access: Boolean) {
+        dashboard?.mediaAccess(access)
+    }
+
+    /** The saved places the favorites tile lists; replaces the list whole. */
+    fun favorites(list: List<Favorite>) {
+        dashboard?.favorites(list)
+    }
+
+    /** What the turn card and trip panel say about the route (P7.4); null for no route. */
+    fun upcomingTurn(turn: UpcomingTurn?) {
+        dashboard?.upcomingTurn(turn)
+    }
+
     /** The vehicle's own fix while a dashboard projects, or null. */
     fun vehiclePosition(): Pair<Double, Double>? = dashboard?.vehiclePosition()
+
+    /** The speed spoken prompts are timed by while a dashboard projects, or null (P8.2). */
+    fun guidanceSpeed(): Double? = dashboard?.guidanceSpeed()
 
     fun key(keycode: Int, down: Boolean) {
         scene?.key(keycode, down)
@@ -458,6 +548,11 @@ class ProjectionPipeline(
     /** Latest phone battery, network and position fallback. */
     fun phone(snapshot: PhoneSnapshot) {
         dashboard?.phone(snapshot)
+    }
+
+    /** The player apps the idle media pane lists (P7.5). */
+    fun players(list: List<Player>) {
+        dashboard?.players(list)
     }
 
     /** Stops rendering and releases the encoder, EGL, and the renderer thread. */

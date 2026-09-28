@@ -39,6 +39,39 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
 
+    <!-- P7.9: optional full call controls (docs/p7-plan.md §5.8; §9 item 3 as amended in
+         docs/p7-backends-results.md §4.2). signature|appop: declaring it grants nothing,
+         and the permission itself is never granted to this app (it is not platform-signed;
+         pm refuses to grant it). What Telecom honours is the app-op: it binds
+         CallCompanionService below once the operator has allowed that op from a computer,
+         with CallControl.GRANT_COMMAND, which is
+         adb shell appops set [two hyphens]user 0 org.openautoandroid.source MANAGE_ONGOING_CALLS allow
+         (spelled out, because an XML comment cannot hold two hyphens in a row; the user
+         flag names the phone's owner on a multi-user phone; docs/p7-8-9-results.md §3.1), and even then only while a session projects with
+         Call controls on. Without the
+         grant, Call controls fall back to the dialer's call notification (answer, decline,
+         hang up; no mute, no keypad). CALL_COMPANION_APP is not declared: Telecom has not
+         bound on it since Android 11. -->
+    <uses-permission android:name="android.permission.MANAGE_ONGOING_CALLS" />
+
+    <!-- P7.5: the idle media pane lists player apps that can be resumed with no session
+         left, through Android's media resumption (docs/p7-plan.md §5.5). This makes apps
+         exporting a MediaBrowserService visible to this one. It is a package-visibility
+         declaration, not a permission, and names no app (§9 item 3).
+
+         P8.1: the same for text-to-speech engines (docs/p8-plan.md §3). Without it,
+         TextToSpeech finds no engine on targetSdk 30 and later and fails silently. The
+         app uses whichever engine the system default is, and reports its package and
+         whether it holds INTERNET; it adds no permission of its own. -->
+    <queries>
+        <intent>
+            <action android:name="android.media.browse.MediaBrowserService" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+
     <application
         android:name=".SourceApplication"
         android:allowBackup="false"
@@ -46,7 +79,7 @@
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@android:style/Theme.DeviceDefault">
+        android:theme="@style/Theme.OpenAutoAndroid">
         <activity
             android:name=".ConnectionActivity"
             android:exported="true"
@@ -87,15 +120,30 @@
                 <data android:scheme="geo" />
             </intent-filter>
         </activity>
+        <!-- The route preview: a phone map of the route with alternatives to pick from.
+             Its own process, because VTM keeps its settings in statics that the head
+             unit's map sets for a 240 dpi panel; see PreviewActivity. -->
+        <activity
+            android:name=".PreviewActivity"
+            android:exported="false"
+            android:label="@string/preview_title"
+            android:process=":preview" />
         <service
             android:name=".ProjectionService"
             android:exported="false"
             android:foregroundServiceType="connectedDevice" />
-        <!-- Enabled by the operator in Settings, never bound by this app. It implements
-             no callback and reads no notification: MediaSessionManager.getActiveSessions
-             accepts only a notification listener or the signature-level
-             MEDIA_CONTENT_CONTROL, so this is the one route an ordinary app has to read
-             what another application is playing. See MediaAccessService. -->
+        <!-- Enabled by the operator in Settings, never bound by this app.
+             MediaSessionManager.getActiveSessions accepts only a notification listener or
+             the signature-level MEDIA_CONTENT_CONTROL, so this is the one route an
+             ordinary app has to read what another application is playing.
+
+             It reads notifications only when the operator turns a feature on that needs
+             them (P7.8, docs/p7-plan.md §9 item 6): with "Notifications on the dashboard"
+             on and not paused, it reads alerting notifications and keeps them in memory
+             for the session, never stored or reported; with Call controls on and the
+             in-call service below not bound, it reads call notifications for their
+             caller and Answer, Decline and Hang up. With both off it reads none. See
+             MediaAccessService. -->
         <service
             android:name=".MediaAccessService"
             android:exported="false"
@@ -103,6 +151,22 @@
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
             <intent-filter>
                 <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+        <!-- P7.9: optional call controls (docs/p7-plan.md §5.8). Disabled here, and
+             enabled by CallControl only while a session projects with the operator's
+             Call controls setting on; disabled again at the end of the session and on
+             every app start. BIND_INCALL_SERVICE means only Telecom can bind it, and it
+             is exported, as the InCallService documentation requires, for that reason
+             alone. It declares no IN_CALL_SERVICE_UI and no car-mode UI metadata: it
+             draws nothing, and the phone's own dialer stays the call screen. -->
+        <service
+            android:name=".CallCompanionService"
+            android:enabled="false"
+            android:exported="true"
+            android:permission="android.permission.BIND_INCALL_SERVICE">
+            <intent-filter>
+                <action android:name="android.telecom.InCallService" />
             </intent-filter>
         </service>
     </application>

@@ -48,6 +48,9 @@ class DashboardRenderer(
     private var chromeQuad: ByteBuffer? = null
     private var mapQuad: ByteBuffer? = null
 
+    /** The pane [mapQuad] and the map engine were last sized for; see [fitMap]. */
+    private var mapBox: Box? = null
+
     /** The last chrome actually painted, so an unchanged frame skips the upload. */
     private var lastChrome: Dashboard.Snapshot? = null
 
@@ -128,13 +131,8 @@ class DashboardRenderer(
 
         // Full frame, texture origin top-left to match a Canvas bitmap.
         chromeQuad = quad(-1f, -1f, 1f, 1f, flipV = false)
-        // The map pane in clip space. A framebuffer texture has its origin at the
-        // bottom, the opposite of the bitmap, so this one samples flipped.
-        val left = layout.map.x * 2f / width - 1f
-        val right = layout.map.right * 2f / width - 1f
-        val top = 1f - layout.map.y * 2f / height
-        val bottom = 1f - layout.map.bottom * 2f / height
-        mapQuad = quad(left, bottom, right, top, flipV = true)
+        mapQuad = paneQuad(layout.map)
+        mapBox = layout.map
 
         bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         canvas = Canvas(bitmap!!)
@@ -167,11 +165,46 @@ class DashboardRenderer(
         engine?.setRoute(route)
     }
 
+    /** The live alternatives' lines for the next map frame; empty for none. */
+    fun setAlternatives(routes: List<Route>) {
+        engine?.setAlternatives(routes)
+    }
+
+    /**
+     * The map pane in clip space. A framebuffer texture has its origin at the bottom,
+     * the opposite of the bitmap, so this one samples flipped.
+     */
+    private fun paneQuad(pane: Box): ByteBuffer {
+        val left = pane.x * 2f / width - 1f
+        val right = pane.right * 2f / width - 1f
+        val top = 1f - pane.y * 2f / height
+        val bottom = 1f - pane.bottom * 2f / height
+        return quad(left, bottom, right, top, flipV = true)
+    }
+
+    /**
+     * Moves and resizes the map to the pane `layout` has now.
+     *
+     * The head unit can move the content rectangle mid-session, and [Dashboard.relayout]
+     * takes the new layout at once, so the chrome punches the new pane on its next frame.
+     * The map has to follow on the same frame. Otherwise the old-sized map sits inside
+     * the new hole with black showing past it, and panning or zooming never moves the
+     * black, because it is not part of the map.
+     */
+    private fun fitMap(layout: DashboardLayout) {
+        val pane = layout.map
+        if (pane == mapBox) return
+        mapQuad = paneQuad(pane)
+        mapBox = pane
+        engine?.resize(pane.width, pane.height)
+    }
+
     /** Paints one frame and presents it at `presentationNs` (monotonic). */
     fun draw(layout: DashboardLayout, snapshot: Dashboard.Snapshot, presentationNs: Long) {
         val canvas = canvas ?: return
         val bitmap = bitmap ?: return
 
+        fitMap(layout)
         engine?.drawFrame()
 
         // VTM owns global GL state and leaves it wherever its last layer put it: the

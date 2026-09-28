@@ -82,7 +82,7 @@ Useful MVP
 
 APP10
 
-Require no network access for the handshake or projection demonstration.
+Require no network access for the handshake or projection demonstration. From P5.5 on, map and routing data are likewise never fetched by the app; the operator supplies them (§2.2, §5.2).
 
 POC and demo
 
@@ -92,9 +92,11 @@ Voice assistance is deferred, not rejected. A later stage intends an optional vo
 
 2.2 Integration boundaries for later stages
 
-Navigation SHOULD start with a small renderer/routing spike before selecting an engine. MapLibre is a candidate renderer, not a complete offline routing stack. Organic Maps is a reference/candidate, not an assumed embeddable SDK. Engine choice, attribution, offline data distribution, and resource use require a separate decision.
+Navigation SHOULD start with a small renderer/routing spike before selecting an engine. MapLibre is a candidate renderer, not a complete offline routing stack. Organic Maps is a reference/candidate, not an assumed embeddable SDK. Engine choice, attribution, offline data distribution, and resource use require a separate decision. Decided (amended 22 September 2026): the renderer is VTM 0.25.0 from Maven Central over Mapsforge `.map` data (P5.5), and routing is BRouter, vendored as unmodified source over `.rd5` data because it publishes no Maven artifact (P6.3; docs/p6-plan.md §4). Both datasets are supplied by the operator — imported, or picked up from a granted drop folder — and never downloaded by the app.
 
 Media controls and media audio are separate capabilities. An Android MediaSession controller can control an authorized session, but this does not imply access to another app’s PCM output. Notification-listener authorization or another documented route may be needed to enumerate third-party sessions. Route audio owned by this app first; treat arbitrary-player audio capture/routing as a separate platform feasibility gate.
+
+APP08’s projection audio channel is **not** the route for the phone’s general audio output (amended 22 September 2026). Audio the application does not own reaches the vehicle over ordinary Bluetooth A2DP, which is a platform routing decision rather than a projection feature, needs no permission and no code in this project, and was shown on 19 September 2026 to survive a live USB projection session in both connection orders (docs/a2dp-coexistence-procedure.md). The projection audio channel exists for audio this application generates, and is off by default. The arbitrary-player capture gate above is therefore not pursued.
 
 Calls initially remain an independent normal Bluetooth pairing between phone and vehicle. Do not assume that a vehicle will retain Bluetooth call behavior during custom USB projection; test coexistence later. In-call UI and call control require a separately specified permission/role model. Wireless requires a separate Bluetooth/Wi-Fi bootstrap investigation.
 
@@ -299,7 +301,18 @@ Stop on user request, detach, fatal parser/TLS failure, or session deadline. Rec
 
 Request notification permission for normal visibility; denial must have a defined user-visible behavior rather than being confused with USB denial. POC should not request Bluetooth, location, microphone, contacts, notification-listener, accessibility, or MediaProjection privileges. INTERNET is permitted only in a lab harness flavor if needed; the wired demonstration works offline.
 
-Media controls (P5.1) narrow the notification-listener exclusion rather than lifting it. MediaProjection and accessibility stay forbidden outright. The manifest baseline above is unchanged: P5.1 adds no `<uses-permission>`.
+Media controls (P5.1) narrow the notification-listener exclusion rather than lifting it. MediaProjection and accessibility stay forbidden outright. P5.1 adds no `<uses-permission>`.
+
+The owned dashboard (P5.5) moves the manifest baseline from three permissions to seven (amended 22 September 2026). Each addition is separately optional and degrades to a placeholder (`—`) when not granted, per APP09:
+
+<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+<uses-permission android:name="android.permission.READ_PHONE_STATE" />
+
+`ACCESS_NETWORK_STATE` (normal) shows the network type. The two location permissions are the position **fallback** only: the vehicle’s own LOCATION sensor is preferred and needs no permission, and `ACCESS_FINE_LOCATION` is not grantable without `ACCESS_COARSE_LOCATION` beside it, so the fallback follows whichever was granted. `READ_PHONE_STATE` is for signal bars only. There is still no `INTERNET`, and MediaProjection and accessibility stay forbidden.
+
+Navigation data and destinations add no permission. Map and routing files arrive by explicit import or through a folder the operator grants with the Storage Access Framework (P6.3a); the grant is persisted, and nothing outside the granted folder is read. The app is a share target for `text/plain` and `geo:` so that a destination can be sent from OsmAnd or any other application (P6.4); a share carries only what its sender chose to send.
 
 Sending a head-unit transport button to whatever is playing MUST use `AudioManager.dispatchMediaKeyEvent`, which declares no permission and routes through the platform’s own media-button path — the same one a Bluetooth headset button takes. This is not event injection into another application (§4): the app holds no `INJECT_EVENTS`, runs no accessibility service, and does not choose which session receives the key.
 
@@ -609,11 +622,13 @@ This is the smallest useful extension beyond the handshake POC. It exists to sho
 
 Use channel IDs from discovery. Open video N and input M, then add sensor subscription only if the receiver needs it for activation/restrictions. Do not automatically open all advertised audio, Bluetooth, or microphone services.
 
-Beyond the demonstration, a work package may open one further advertised service when something in that package uses it: `media_info` for now-playing (P5.1), and audio for wired output (P5.3). Each MUST be individually selectable, and each MUST be optional in the sense that a refusal or a missing response is recorded and skipped rather than ending the session. `media_info` defaults to on: it adds no Android permission of its own, and without the notification grant the channel carries a stopped, empty state rather than a guess. Audio stays off by default. Anything under §10 redaction — the head-unit position in particular — MUST stay opt-in and off by default, whatever the service it rides on. Bluetooth, microphone, and wifi stay closed. Opening a service this source does not otherwise drive, purely to imitate Android Auto’s session shape, remains a diagnostic option rather than a default.
+Beyond the demonstration, a work package may open one further advertised service when something in that package uses it: `media_info` for now-playing (P5.1), audio for wired output (P5.3), and `navigation` for the vehicle’s instrument cluster (P6.2). Each MUST be individually selectable, and each MUST be optional in the sense that a refusal or a missing response is recorded and skipped rather than ending the session. `media_info` defaults to on: it adds no Android permission of its own, and without the notification grant the channel carries a stopped, empty state rather than a guess. `navigation` also defaults to on (22 September 2026): it adds no Android permission, and a head unit that refuses it affects nothing else. Audio stays off by default. Anything under §10 redaction — the head-unit position in particular — MUST stay opt-in and off by default, whatever the service it rides on. Bluetooth, microphone, and wifi stay closed. Opening a service this source does not otherwise drive, purely to imitate Android Auto’s session shape, remains a diagnostic option rather than a default.
 
-Audio focus is a **control-channel** exchange (AUDIO_FOCUS_REQUEST 0x0012, AUDIO_FOCUS_RESPONSE 0x0013) and is independent of video focus, which is on the video channel. **The response’s required state field is the only one that says whether focus was given.** The vendored schema gives `AudioFocusResponse` a second, optional field named `granted`; that name is wrong. Ford SYNC 4.0 sends it false both when refusing and when granting, and the field is the **`unsolicited`** flag — true for a state the head unit volunteered, false for a reply to a request. It MUST NOT gate the stream; it MAY be used to tell a reply apart from a volunteered state change. More generally, a field in a reverse-engineered schema whose meaning rests on its name rather than on observed behaviour MUST be recorded rather than acted on until behaviour settles it, and a simulator written from the same reading as the source cannot settle it — both sides will be wrong together. A grant MUST precede the audio channel’s start indication: a head unit’s mixer may have no route open until it has granted focus. This source MUST NOT duck its own media — a head unit asking for a duck lowers the media channel in its own mixer, so `LOSS_TRANSIENT_CAN_DUCK` is recorded and the audio keeps flowing at full amplitude. RELEASE MUST be sent when, and only when, a grant is being given up; sending it after a request that was never granted claims a state this source does not hold. A denied, lost, or unanswered focus is recorded and stops the audio without ending the session, and a head unit MAY grant focus later in the session, so a loss MUST NOT be treated as a permanent refusal unless the source has given up asking.
+Audio focus is a **control-channel** exchange (AUDIO_FOCUS_REQUEST 0x0012, AUDIO_FOCUS_RESPONSE 0x0013) and is independent of video focus, which is on the video channel. **The response’s required state field is the only one that says whether focus was given.** The vendored schema gives `AudioFocusResponse` a second, optional field named `granted`; that name is wrong. Ford SYNC 4.0 sends it false both when refusing and when granting, and the field is the **`unsolicited`** flag — true for a state the head unit volunteered, false for a reply to a request. It MUST NOT gate the stream; it MAY be used to tell a reply apart from a volunteered state change. More generally, a field in a reverse-engineered schema whose meaning rests on its name rather than on observed behaviour MUST be recorded rather than acted on until behaviour settles it, and a simulator written from the same reading as the source cannot settle it — both sides will be wrong together. The same holds for a **scale**: a divisor or unit is a property of the head unit and is settled by a run, not by a message, so a single value that happens to fall in range is not a behaviour (P6.1; Ford’s bearing reads at 1e6 only because a drive confirmed it). And a peer’s convenience can become a source’s bug: the lab receiver grants focus by echoing the request, so this source’s own hand-back came back as a grant-shaped response (P6.2). Act on what a head unit answers, **and** on which question it was answering. A grant MUST precede the audio channel’s start indication: a head unit’s mixer may have no route open until it has granted focus. This source MUST NOT duck its own media — a head unit asking for a duck lowers the media channel in its own mixer, so `LOSS_TRANSIENT_CAN_DUCK` is recorded and the audio keeps flowing at full amplitude. RELEASE MUST be sent when, and only when, a grant is being given up; sending it after a request that was never granted claims a state this source does not hold. A denied, lost, or unanswered focus is recorded and stops the audio without ending the session, and a head unit MAY grant focus later in the session, so a loss MUST NOT be treated as a permanent refusal unless the source has given up asking.
 
 Audio adds a constraint the other services do not have: **the phone hard-validates the format before the channel is opened at all.** A head unit may advertise an audio channel this source cannot feed, so an advertised channel is not a usable one. At most one audio channel is driven, selected by codec and audio type rather than by channel number, and only when one of its advertised `AudioConfig` entries is a format the phone can produce — sample rate 48000 or 16000, bit depth 16, one or two channels. A channel that fails that test is recorded as a discovery issue and never opened; nothing is negotiated down and no format is guessed. “Optional” extends to every stage of the audio handshake and not only to the channel open: a refused open, a refused AV setup, a denied or unanswered audio focus request, a closed channel, and a stalled acknowledgement window each stop the audio and leave video and input running.
+
+Navigation focus (P6.2, amended 22 September 2026) is the third focus type, and like audio focus it is a **control-channel** exchange: NAVIGATION_FOCUS_REQUEST 13 and NAVIGATION_FOCUS_RESPONSE 14, not a message on the navigation channel itself. Once the navigation channel is open, the source asks for focus; `0x8001 InstrumentClusterStart` is treated as confirmation when it arrives, and MUST NOT be a precondition. Ford SYNC 4.0 never sends it, in any recorded run, and grants focus within 100 ms of being asked, so a source that waits for the announcement sends nothing to the only cluster this project has. The app’s `navigation_force` option implements this, and on the connection screen it and the navigation box are both **on by default** (22 September 2026); lab runs still set it explicitly. A report MUST distinguish *no cluster was announced* from *the cluster was announced and displayed nothing*. `NavigationFocusResponse` has no `unsolicited` flag, and Ford answers one request with two `PROJECTED` responses; neither is treated as an echo. Updates on the channel MUST NOT be sent faster than the advertised `minimum_interval_ms`. Focus is released at the end of the session, and the channel stays open across destinations.
 
 Baseline source flow:
 
@@ -778,7 +793,9 @@ Use monotonic timestamps for durations and UTC only for report metadata. Default
 
 Audio evidence carries nothing vehicle-identifying and needs no redaction, but it does need reading correctly. `audio_underflows` counts head-unit reports that its mixer ran dry; it is evidence about **this source’s pacing**, not about the vehicle, and it is the only signal in the AV path that distinguishes a stream the receiver could consume from one it could not — video has no equivalent, since a head unit acknowledges every unit whether or not it displays it. The audio focus exchange MUST be reported as a sequence rather than as a final state: a head unit may send an unsolicited state before or after answering a request, so “what the last response said” cannot distinguish a denial from a loss followed by a grant.
 
-Head-unit latitude and longitude are treated the same way as raw frames: opt-in, app-private, and excluded from ordinary shared reports, because a position identifies the vehicle. Without that opt-in a report still records whether a position arrived and its accuracy, altitude, speed, bearing and satellite counts, so the presence and quality of the sensor are evidence without the position being disclosed. Reports MUST record which of the two cases was in force, for the same reason as the now-playing cases (§5.2).
+Head-unit latitude and longitude are treated the same way as raw frames: opt-in, app-private, and excluded from ordinary shared reports, because a position identifies the vehicle. Without that opt-in a report still records whether a position arrived and its accuracy, altitude, speed, bearing and satellite counts, so the presence and quality of the sensor are evidence without the position being disclosed. Reports MUST record which of the two cases was in force, for the same reason as the now-playing cases (§5.2). That opt-in, `sensor_location`, governs **reports** and not the application’s own use: the map cannot follow a redacted fix, so latitude and longitude reach the app whatever it says, and stay app-private either way (P5.5).
+
+A destination is at least as much the operator’s business as a track title or a position (amended 22 September 2026). Navigation evidence therefore carries no destination, no route geometry, no road names and no maneuver instruction text by default, on the same footing as `sensor_location`. This covers every producer: the navigation channel’s `[navigation]` lines (P6.2), `[routing]`, which records totals — distance, time, compute duration, point and maneuver counts — and which 5° data tiles are installed, as the map line names its map file, but no coordinates (P6.3), destination entry, which records only the source of a destination (share, typed, long press) and never its label or coordinates (P6.4), and guidance, whose instruction text goes to the head unit and to no report or event log (P6.5).
 
 Proposed per-session evidence bundle in the implementation project:
 
@@ -847,7 +864,27 @@ G7 audio
 
 App-owned audio is audible through the vehicle speakers over USB, with audio focus acquired and released cleanly.
 
-Wired audio projection works. A head unit that refuses the audio channel, its AV setup, or audio focus is a recorded outcome rather than a failed gate, provided the refusal is in the report, `audio_focus_released` shows no grant was left dangling, and the projected picture was unaffected — the same degraded-pass shape as G6. A refusal leaves the gate unmet rather than passed: it says the integration is unavailable on this head unit, not that wired audio works.
+Wired audio projection works. A head unit that refuses the audio channel, its AV setup, or audio focus is a recorded outcome rather than a failed gate, provided the refusal is in the report, `audio_focus_released` shows no grant was left dangling, and the projected picture was unaffected — the same degraded-pass shape as G6. A refusal leaves the gate unmet rather than passed: it says the integration is unavailable on this head unit, not that wired audio works. G7 is not, and never was, a gate about the phone’s general audio: that is served by Bluetooth A2DP (§2.2). G7 says the wired audio transport works for audio this application owns.
+
+G8 map
+
+An owned map renders, pans and follows vehicle position on the factory display for 60 seconds.
+
+The useful shell is viable. A head unit that projects the dashboard while the map pane reports “no map data” is a recorded outcome rather than a failed gate — the same degraded-pass shape as G6 — but it leaves the gate unmet.
+
+G9 navigation channel
+
+A maneuver sequence from this source appears on the head unit’s own cluster or display, with navigation focus acquired and released cleanly.
+
+Turn-by-turn to the vehicle’s own instruments works. A head unit that opens the channel, accepts the messages and displays nothing is a recorded outcome, provided the silence is in the report and focus was not left dangling; the report must say whether a cluster was announced at all (§8.1). A refusal leaves the gate unmet rather than passed.
+
+G10 navigation
+
+A route computed offline on the phone is followed on the factory display for a drive, with the map following position, correct maneuvers on the cluster, and at least one successful re-route after a deliberate deviation.
+
+Offline navigation works on this setup — APP07 demonstrated rather than argued.
+
+Results on the factory head unit (Ford SYNC 4.0, Pixel 9, GrapheneOS), recorded 22 September 2026: G0 and G1 on the saved reports of 17 September; G2 report 3812ebff; G3 report c2407cff; G4 report da9398a5; G6 and G7 report 7f869585; G9 reports 1f4db62b and ad772b8a; **G8 and G10 by operator observation on a drive on 21 September 2026** — a route followed on the projected map and on the cluster, every turn icon on the cluster making sense for the route, and a deliberate deviation re-routed quickly enough, with both displays following the new route — with that drive’s report not yet filed in the repository. **G5 is open**: the five-minute run and five reconnections have not been done.
 
 G3 is the required handshake POC delivery gate. G5 is the concept-viability demonstration gate. A lab-only G5 is “lab pass, factory unproven.” An implementation dependent on copied proprietary source credentials, a Google runtime, or OS privileges fails the stated concept constraints even if its TLS connection succeeds.
 
@@ -971,17 +1008,35 @@ P5.3 audio out over USB
 
 Multi-stream session refactor; one advertised PCM MEDIA channel, chosen only when the phone can produce its format; audio focus on the control channel with RELEASE on any grant given up; AUDIO_UNDERFLOW accepted and reported; every audio failure non-fatal.
 
-G7 on factory HU.
+G7 on factory HU. **Complete, and superseded as the route for phone audio** (§2.2): no further investment is planned, the capability ships off by default, and A2DP covers the goal P5.3 was reached for.
 
-P5.5 owned map
+P5.4 microphone
 
-Offline vector renderer into the encoder surface, offline routing, on-screen OSM attribution.
+`av_input`, head-unit microphone to the phone.
+
+Deferred with voice assistance (§2.1); not scheduled.
+
+P5.5 owned map and dashboard
+
+Offline vector renderer into the encoder surface, owned dashboard with vehicle and phone status, on-screen OSM attribution.
 
 G8 on factory HU.
 
+P6.0–P6.2 navigation channel
+
+Navigation descriptor parsed and reported; synthetic track player for the lab; the `navigation` channel opened opt-in and non-fatal, navigation focus on the control channel, maneuvers sent no faster than the advertised interval.
+
+G9 on factory HU.
+
+P6.3–P6.5 offline navigation
+
+Vendored BRouter over imported or drop-folder `.rd5` data, routed on its own thread; destinations by share, typed coordinates or long press; the route on the owned map; a guidance loop that follows the route, re-routes on deviation and feeds the cluster.
+
+G10 on factory HU.
+
 P5 shell remainder
 
-Owned dashboard, lifecycle hardening.
+Lifecycle hardening.
 
 Separate MVP acceptance spec after P4 evidence.
 
@@ -994,6 +1049,8 @@ If G1 fails, isolate cable/port, accessory enumeration, filter/permission, user-
 Recommended project license is GPL-3.0-only for a straightforward build that may incorporate GPLv3-only AACS material and GPL-3.0-or-later protocol definitions. Record the exact license of every included dependency, generated schema input, fixture, asset, and reference; source-role reference repositories without an explicit license are not code-copy sources. Preserve notices and publish corresponding source/build instructions for distributed binaries. This is an implementation choice based on the inspected notices, not a legal conclusion about all reverse engineering.
 
 Do not include extracted OEM/Google private keys or proprietary runtime libraries. The project uses “Android Auto compatible” as a technical goal and makes no certification claim. Keep protocol compatibility modules separate from navigation/media integrations so changes in those integrations cannot silently alter handshake behavior. From P5 this is load-bearing rather than advisory: a media or map integration lives behind a hand-off type the session owns (`NowPlayingLink`, `MediaLink`) and reaches the wire only through it, so a platform API an integration uses cannot appear in the handshake path.
+
+Third-party runtime code (amended 22 September 2026). Through P5.3 the APK carried no third-party runtime dependency; P5.5 added VTM, and P6.3 compiled vendored BRouter source into the APK. What replaced that property, and MUST keep holding, is: offline builds stay reproducible (two clean builds give byte-identical release APKs); the ABI count stays one, `arm64-v8a`; AndroidX stays at zero; and `tools/verify-apk.sh` pins the native library set (`libaap_jni.so`, `libvtm-jni.so`) and asserts that `INTERNET` is absent. **Vendored third-party source is held unmodified**, so its provenance stays a diff against a recorded pin rather than a merge; a file of this project’s own placed in a vendored package, compiled from the app tree (`btools.router.VoiceHintReader`), is not a modification of the vendored tree. Release builds are not minified; if that changes, `app/proguard-rules.pro` already keeps what is looked up by name — BRouter’s path models, which a routing profile names as a class, and the JNI bridge’s natives and callback — and was checked against a minified build on 22 September 2026.
 
 14 Implementation handoff checklist
 

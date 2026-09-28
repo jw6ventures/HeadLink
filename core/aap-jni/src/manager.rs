@@ -63,6 +63,9 @@ pub const GUIDANCE_IDLE: i32 = 0;
 pub const GUIDANCE_GUIDING: i32 = 1;
 pub const GUIDANCE_REROUTING: i32 = 2;
 pub const GUIDANCE_ARRIVED: i32 = 3;
+/// The driver ended the route (P7.4): `INACTIVE`, and the cluster handed back until the
+/// next route asks for it again. Idle keeps it.
+pub const GUIDANCE_ENDED: i32 = 4;
 
 /// Longest accepted configuration text.
 pub const CONFIG_LIMIT: usize = 4096;

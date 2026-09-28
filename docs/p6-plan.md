@@ -37,7 +37,18 @@ read yet. **P6.5 is implemented and lab-verified** (21 September 2026): a guidan
 the computed route drives the cluster — countdown, `REROUTING`, a new route, arrival — through
 a lab drive along real streets that misses a turn; the run caught the source breaking the
 head unit's interval after a re-route, which is fixed. See [P6.5 results](p6-5-results.md).
-G10 needs the vehicle.
+**G10 is passed** (21 September 2026, operator observation on a drive; report not yet
+filed): the route was followed on the projected map and on the cluster, every turn icon made
+sense, and a deliberate deviation re-routed quickly enough on both displays. **§9's
+amendments are applied** to `spec.md` and `plan.md` (22 September 2026), together with those
+queued by P5.5 and P6.1–P6.5. **P6.6, added at James's request (23 September 2026): saved
+places** — the first tile under the media pane lists favourites kept on the phone, scrolls
+when they outrun it, and a tap on one routes there; host-tested and rendered in the lab,
+never tapped outside the JVM tests. §5.1 item 5 and §11 record it. **P6.7, also at James's
+request (23 September 2026): street names** — each maneuver names the road it turns onto,
+read from the Mapsforge map because BRouter's data has no names, on the cluster and in a new
+turn line in the dashboard header; host-tested on a real route and lab-verified, not yet seen on the truck.
+§11 records it.
 
 ---
 
@@ -166,7 +177,11 @@ Working hypothesis for the sequence, to be confirmed or destroyed by a run:
 
 1. Open channel 11 after input binding, opt-in and non-fatal, exactly as `OpenMediaInfo`
    and `OpenAudio` are.
-2. Wait for `0x8001 InstrumentClusterStart` rather than assuming the cluster is there.
+2. ~~Wait for `0x8001 InstrumentClusterStart` rather than assuming the cluster is there.~~
+   **Amended (spec §8.1, 22 September 2026):** ask for focus once the channel is open, and
+   treat `InstrumentClusterStart` as confirmation when it comes, never as a precondition.
+   Ford never announces a cluster and grants focus anyway. `navigation_force` implements
+   this, and since 22 September 2026 it and the navigation box are on by default.
 3. Request navigation focus on the control channel (message 13, `NAV_FOCUS_PROJECTED`).
 4. Send `NavigationState(ACTIVE)` and then stream `0x8006`/`0x8007`, never faster than
    the advertised 400 ms.
@@ -271,6 +286,8 @@ it:
   model named as a string inside the `.brf` profile. `isMinifyEnabled = false` today, so
   it works; **turning minification on without keep rules for `btools.router.*Model` breaks
   routing at the first route**, with a `RuntimeException` rather than a build error.
+  *The keep rules now exist and were checked against a minified build
+  (`app/proguard-rules.pro`, 22 September 2026; §10).*
 - **Two `main()` methods ship.** `Rd5DiffTool` (which calls `System.exit(1)`) and
   `StackSampler` are command-line tools living in runtime modules. Unreachable from the
   routing path, and deleting them would be a modification every re-sync would repeat.
@@ -322,7 +339,8 @@ With offline search out of scope (§0), a destination is set by one of:
   world coordinates.
 - **Coordinates**, typed on the phone.
 - **A saved-places list** maintained on the phone, which is where spec §5's "settings and
-  extensive text entry live on the phone" points anyway.
+  extensive text entry live on the phone" points anyway. *Built as P6.6 (23 September
+  2026): the dashboard's first tile lists it.*
 
 That is enough to demonstrate navigation end to end and to pass the gates in §8. It is not
 enough to be pleasant, and the gap should be stated plainly in any summary rather than
@@ -357,7 +375,18 @@ source is not wire (§8.1's rule applies to intents too):
    handles `geo:` and may be the chooser's default.
 3. **Typed coordinates** — exists since P6.3.
 4. **Long-press on the projected map** — as §5 above.
-5. Saved places — deferred; OsmAnd's own favourites, shared, cover it.
+5. ~~Saved places — deferred; OsmAnd's own favourites, shared, cover it.~~ **Built
+   (P6.6, 23 September 2026, at James's request.)** The deferral assumed a favourite
+   would be reached by sharing it from OsmAnd; that is three screens on the phone for a
+   place the driver goes to every day, and the head unit is where the driver is. So:
+   `Favorite` and the `Favorites` store on the phone, edited on the connection screen (add
+   from a name and any location form the destination box takes, prefilled with the
+   current destination; remove by name; 50 at most), listed on the dashboard's first tile
+   under the media pane. Three rows at a time at a fingertip's height, a drag scrolls, a
+   scrollbar says there is more, and a press-and-release on a row is a destination from
+   source `favorite` with the place's name as its label. The list reaches a running
+   dashboard live. Nothing about a place — name or coordinates — goes to the report or the
+   event log; the report counts places, taps and scrolls.
 
 **Refused, with a useful message**: a `geo:0,0?q=<address>` link that carries only
 text. It needs geocoding we do not have, so it says: search it in OsmAnd and share the
@@ -377,7 +406,7 @@ rule `RouteRequest.parse` already follows).
 - **Privacy (spec §10, the §9.6 proposal)** — the label OsmAnd sends is often a street
   address. It may be shown on the phone and must never reach the report or event log. The
   report records only *which source* set the destination (`send`, `view`, `typed`,
-  `map`) and the route totals P6.3 already reports.
+  `map`, and since P6.6 `favorite`) and the route totals P6.3 already reports.
 - **The swapped-sign hint** from P6.3a: a destination outside every installed tile whose
   mirrored longitude *is* installed gets "did you mean −97.66843?".
 
@@ -439,7 +468,9 @@ happens after the cheap vehicle evidence rather than before it.
 | **P6.3** | ~~Routing engine: the §4 decision, `.rd5` + profile import, route computation off the render thread~~ **done; host- and lab-verified — [results](p6-3-results.md)** | — | none; evidence |
 | **P6.3a** | **Added 21 September 2026 at the operator's request.** Drop folder, every installed map drawn as one, multi-tile routing — **done; host- and lab-verified — [results](p6-3a-results.md)** | P6.3 | none |
 | **P6.4** | ~~Destination entry (§5; **addresses via OsmAnd shares, §5.1**) and the route line on the owned map~~ **done; host- and lab-verified — [results](p6-4-results.md)** | P6.3 | none |
-| **P6.5** | ~~Guidance loop, feeding real maneuvers into P6.2's channel~~ **done; host- and lab-verified — [results](p6-5-results.md)** | P6.1–P6.4 | **G10** open (vehicle) |
+| **P6.5** | ~~Guidance loop, feeding real maneuvers into P6.2's channel~~ **done; host- and lab-verified — [results](p6-5-results.md)** | P6.1–P6.4 | **G10 passed** (21 September, operator observation) |
+| **P6.6** | **Added 23 September 2026 at the operator's request.** Saved places (§5.1 item 5): a favourites list kept on the phone, listed on the dashboard's first tile, scrolling, tap to route — **done; host-tested and lab-rendered (§11); never tapped on a vehicle** | P6.4 | none |
+| **P6.7** | **Added 23 September 2026 at the operator's request.** Street names: the road each maneuver turns onto and the road being driven, read from the map, sent to the cluster and shown as the upcoming turn in the dashboard header — **done; host-tested on a real route and lab-verified (§11); not seen on a vehicle** | P6.5 | none |
 
 **P6.2 before P6.3 is deliberate.** It is protocol work with no dependency decision, no
 new dataset and no routing in it, and it answers §2's contradiction — the one question
@@ -453,8 +484,9 @@ a map.
 
 ## 8. Proposed gates
 
-Numbered on the assumption that P5.5's proposed **G8** is accepted; if it is not, these
-shift down by one. Each needs an operator observation on the factory head unit, not
+**Accepted** into spec §11.1 on 22 September 2026, after P5.5's G8. G9 passed on
+21 September (reports `1f4db62b`, `ad772b8a`), and G10 passed the same day by operator
+observation. Each needs an operator observation on the factory head unit, not
 phone-side counters (spec §10).
 
 | Gate | Required evidence | Interpretation |
@@ -464,8 +496,8 @@ phone-side counters (spec §10).
 
 ## 9. Spec and plan amendments this needs — proposed, not applied
 
-`spec.md` and `plan.md` are governed; these are proposals, and they sit **behind** the six
-P5.5 already proposed in [p5-5-results.md](p5-5-results.md) §8, which are still unapplied.
+**Applied 22 September 2026**, all six, along with the six P5.5 proposed in
+[p5-5-results.md](p5-5-results.md) §8. Item 5 is applied to `docs/p5-plan.md` §8.
 
 1. **spec §11.1** — add **G9** and **G10** as above, after P5.5's proposed G8.
 2. **spec §12 / plan.md** — a `P6` section and rows, with every implementation task
@@ -499,7 +531,9 @@ P5.5 already proposed in [p5-5-results.md](p5-5-results.md) §8, which are still
 - ~~**Does Ford send `InstrumentClusterStart` at all?**~~ **Answered: no, never** — in
   either of two runs, on a head unit that opens the channel in 5 ms and grants navigation
   focus 15 ms after being asked. The announcement and the grant are independent here.
-- **Does the icon Ford draws match the maneuver sent?** New, and the obvious next question:
+- ~~**Does the icon Ford draws match the maneuver sent?**~~ **Answered 21 September 2026:
+  yes, as far as a driver can tell.** On the G10 drive the operator found that every turn
+  icon made sense for the route. Original question: New, and the obvious next question:
   `ManeuverType` is `confidence: unverified` upstream, an icon appeared, and nobody checked
   it against what the source had sent. One leg change settles it.
 - **Why does Ford answer one focus request with two responses?** New. Both `PROJECTED`,
@@ -525,11 +559,15 @@ P5.5 already proposed in [p5-5-results.md](p5-5-results.md) §8, which are still
   P5 plan, still unanswered, and now narrowed: two car profiles out of twenty-one.
   `car-vario.brf` is the one packaged (§4.1), chosen because it is the maintained car
   profile, not because it was evaluated.
-- **Does minification ever get turned on?** If it does, `Class.forName` in
-  `RoutingContext.setModel` breaks routing silently at the first route (§4.1). Worth a
-  keep-rule file written *before* it is needed rather than after.
+- ~~**Does minification ever get turned on?**~~ **Pre-empted (22 September 2026).**
+  `app/proguard-rules.pro` keeps every `OsmPathModel` subclass's no-argument constructor,
+  and the JNI bridge's natives and callback. A throwaway minified build kept all three
+  models, all twelve natives and both `onNativeEvent` declarations. It also showed that R8
+  refuses to build at all without a `-dontwarn` for VTM's `javax.annotation` reference.
+  Minification stays off; the file is inert until it is turned on.
 - **How long does a cross-town route take to compute on the phone, and on which thread?**
-  **Half answered** (P6.3): on `aap-route`, a background-priority thread of its own. A
+  **Answered well enough for use** (G10 drive, 21 September): the operator found re-routing
+  on the phone quick enough, though no compute time was recorded. Earlier (P6.3): on `aap-route`, a background-priority thread of its own. A
   19 km Greater Boston route takes 1.0 s on the desktop JVM and 12.9 s on the emulator
   while it projects a moving 1080p map, costing about a tenth of the frame rate and
   dropping nothing. **The phone is still unmeasured**, and that needs no drive — the
@@ -537,10 +575,23 @@ P5.5 already proposed in [p5-5-results.md](p5-5-results.md) §8, which are still
 - ~~**Does a 119 MB `.rd5` import fit the `MapData` path?**~~ **Yes** (P6.3): the same
   staged-and-renamed stream, plus BRouter's own header check against `lookups.dat` so a
   tile from another lookup table is refused at import rather than failing the first route.
+- **Does a favourite row get hit from the driver's seat?** New (P6.6). A row is a third of
+  the tile's list: about 113 px at the 1080p Ford projects, the smallest target on the
+  dashboard after the header. The JVM tests prove the arithmetic and the lab drew it; no
+  finger has pressed one. The first drive with a favourite saved answers this, and also
+  whether a tap that routes while moving is what the driver wanted from the tile at all.
+- **Which line of Ford's cluster card shows which road name?** New (P6.7). The source now
+  sends the road turned onto three ways — in the instruction text ("Turn right onto Main
+  Street"), in `NavigationStep.road_info`, and the road being driven as `current_road` in
+  `0x8007` — because nothing records which of them SYNC 4 draws, or where. G9's scripted
+  run sent all three and the operator saw "the road name"; which one it was is unrecorded.
+  The first drive with a route answers it, and whether a long instruction is cut short.
 - **Does a border between two Mapsforge extracts draw cleanly?** New (P6.3a). Every
   installed map is drawn as one with VTM's de-duplication on, so a drive from one state's
   extract into the next should cross without a seam; the lab's two maps do not touch, so nothing has shown it.
-- **Should a re-route be allowed to start by turning round?** New (P6.5). BRouter's start
+- **Should a re-route be allowed to start by turning round?** New (P6.5). **Lower priority
+  after G10**: the vehicle's re-route "seemed to follow along pretty well"; whether it first
+  routed backwards was not reported. BRouter's start
   direction is passed, but `car-vario` prices a U-turn at ~180 m, so the lab's first re-route
   after a missed turn still went back the way it came and a second followed six seconds
   later ([P6.5 results](p6-5-results.md) §4.2).
@@ -594,6 +645,82 @@ already inside the discovery import closure, so nothing was added to the generat
 P6.0 opened nothing and sent nothing; **P6.2 does both** — see
 [p6-2-results.md](p6-2-results.md) for the channel, the focus exchange, the scripted
 sequence and the fifteen `navigation_*` report lines it added.
+
+**P6.6 — saved places on the dashboard.** Implemented 23 September 2026; no results
+document of its own yet, so what exists is recorded here.
+
+- `Favorite` (pure JVM: name, coordinates, the stored form, the bounds a shared
+  destination is already held to — no `0,0`, no control characters in a name, 60
+  characters, 50 places) and `Favorites` (app-private preferences, main-thread listeners).
+- `DashboardLayout.FAVORITES_TILE` is the first tile under the media pane:
+  `favoritesList`, three rows (`FAVORITE_ROWS`), `hitFavorite`, `favoritesMaxScroll`.
+  `Dashboard` carries the scroll, the pressed row and a one-shot pick; a finger that moves
+  more than a fifth of a row is a scroll and cannot become a tap. `DashboardDrawing` draws
+  the rows clipped to the list, a hairline between them, the pressed row lit, and a
+  scrollbar only when there is more than fits.
+- `ProjectionService` seeds the list when a dashboard starts, forwards every change while
+  it runs, and turns a pick into `Navigation.set(…, DestinationSource.FAVORITE)` — the
+  same path a share takes. The connection screen gains the list, "Add favorite" and
+  "Remove favorite". The lab intent takes `lab_favorites` (`name@lat,lon;…`) in a debug
+  build, and `tools/emulator-lab.sh` passes `LAB_FAVORITES` through.
+- Report: `dashboard_favorites=<n> dashboard_favorite_taps=<n> dashboard_favorite_scrolls=<n>`
+  on the dashboard line, and `routing_destination_source=favorite` when one was used. No
+  name, no coordinate (spec §10).
+- Evidence: `FavoritesTest` (16 checks: stored form, bounds, one bad line dropping only
+  itself) and a favourites section in `DashboardTest` (row geometry at 1080p and at Ford's
+  800x480 content rectangle, tap, lift on another row, scroll, clamp at both ends, a
+  shortened list keeping its last rows, cancel, the report's counts and silence). One lab
+  run with eight seeded places at 1080p (`none` script, 23 September 2026, 47 decoded
+  frames): the tile shows the label, three rows, separators and a scrollbar whose thumb is
+  three-eighths of the track, beside an unchanged map and media pane; the report says
+  `dashboard_favorites=8`. **Not done**: no row has been tapped outside the JVM — the lab
+  receiver has no favourites script — and the vehicle has not seen the tile (§10).
+
+**P6.7 — street names on the maneuvers.** Implemented 23 September 2026; recorded here.
+
+- **Where the names come from.** BRouter's `lookups.dat` has no `name` tag, so a route knows
+  what each maneuver is and never onto what. `StreetNames` (pure JVM, VTM's own reader) opens
+  the same Mapsforge files the dashboard draws, cuts the route into stretches at the start
+  and at every maneuver, samples each stretch every 20 m from 12 m to 200 m past its start,
+  and names it after the road a majority of the samples lie on, within 6 m of its
+  centreline. BRouter's geometry is the OSM nodes themselves, so on-route samples sit on the
+  way; starting 12 m out keeps them off the junction, and the majority rule stops a turn onto
+  an unnamed driveway borrowing the name of the street it leaves. Label: `name`, else `ref`
+  (`US 183 / TX 45`), roads only. It runs on the routing thread after the search
+  (`RoutePlanner`'s `annotate`); anything it throws leaves the route unnamed, never failed.
+- **What carries them.** `Route.roadStarts`/`roadNames`; `RouteFollower`'s `NextStep` gains
+  `onto`, `road` (null while joining) and an `instruction` from `Maneuvers.instruction`:
+  "Turn right onto Main Street", "Keep left to stay on I 95", plain when unnamed, and never
+  a road for the destination. `NativeBridge.submitGuidance` and the JNI signature gain `onto`
+  and `road`; `Guidance::with_roads` puts them in `road_info` and `current_road`, each left
+  off the wire when empty.
+- **The dashboard header** shows the next turn after the speed and compass, in the accent
+  colour and cut to the room before the battery: "0.3 mi  Turn right onto Main Street",
+  "Rerouting…", "You have arrived". The distance is in the speed unit's system, in steps of
+  50 ft/m, then tenths, then whole units, so the chrome repaints when the words change
+  rather than on every fix.
+- **Report**: `routing_named_roads=<named>/<stretches> routing_naming_ms=<ms>`. No name
+  appears in the report, the event log or the lab receiver's output (spec §10); the lab
+  receiver prints `named_steps=` and `current_roads=` counts and fails a guidance run with
+  neither.
+- **Evidence.** `StreetNamesTest`: 45 synthetic checks (labels, the majority and distance
+  rules, a parallel road 15 m off, an unnamed turn, the follower's `onto`/`road`, the
+  instruction wording, header distances in both units, the snapshot's text holding for a
+  10 m change). With `W75_N40.rd5` and `massachusetts.map` on the host JDK, the
+  Lexington-to-Boston route: 15 of 20 stretches named in 164 ms, in the order a driver
+  would read them — local streets in Lexington, Massachusetts Avenue, Mystic Street, High
+  Street, Mystic Valley Parkway, I 93, then State, Court and Tremont Streets. The five
+  unnamed stretches include the motorway ramps, which OSM leaves unnamed. New Rust tests:
+  `a_live_maneuver_carries_the_road_names_it_is_given`, and
+  `a_live_route_puts_its_road_names_on_the_cluster` on the wire. Emulator lab, `guidance`
+  script at 1080p (23 September 2026, `20260923T181846Z`, second attempt; the first died at
+  `adb root` before the app started): `receiver_checks=23 receiver_check_failures=0`,
+  maneuvers `6,8,5,7,5,36,39` as before, `named_steps=47/48 current_roads=174`; the app
+  named every stretch of all three routes (`routing_named_roads=7/7`, then `3/3`) in 386–599
+  ms on the emulator. The header read "1.8 mi  Turn slightly left to stay on Massach…",
+  cut to fit at 1080p; Ford's 800x480 leaves less room still. The header's "scale inferred"
+  mark was then removed at James's request, which gives the turn that room back.
+  **Not done**: the phone's naming time, and anything on the truck (§10).
 
 ## 12. Research status
 

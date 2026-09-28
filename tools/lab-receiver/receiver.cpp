@@ -17,9 +17,25 @@
 // of the dashboard that must stay still. With --script guidance (P6.5) the vehicle waits at
 // the kerb until the source puts a route on the cluster, then drives --track-file - real
 // road geometry that follows the route, misses a turn, and reaches the destination another
-// way - while the receiver records what the cluster is told. That is the independent
-// decode, input, audio, map-motion and guidance evidence for P4, P5.1, P5.3, P6.1 and
-// P6.5; it proves nothing about a factory head unit.
+// way - while the receiver records what the cluster is told. With --script daynight
+// (P7.6) the head unit starts in day, flips its NIGHT_DATA to night, back to day and to
+// night again, and measures the map pane frame by frame across each flip: that it changed
+// theme, how long that took, and whether any picture in between was blank or half-drawn.
+// --night sets what NIGHT_DATA says under any other script (night by default, as before).
+// With --script controls (P7.2, P7.3) it presses the dashboard's zoom bubbles and header
+// icons - +, +, -, the notification pause, day/night - and checks that each press changed
+// the picture it should: the map pane for a zoom, the pause icon, and the header's palette.
+// With --script calls (P7.8, P7.9) it waits for notifications in the flex tile, taps the
+// first row, presses the notification pause twice, then waits for a call's green Answer,
+// presses it, and with --call-controls full presses Mute, Keypad, three keys, Close and
+// Hang up (basic: Hang up alone), checking each press in the picture.
+// With --script speech (P8.1) it waits for notifications in the flex tile and taps the
+// first row three times, a few seconds apart - read it, stop it, read it again - and
+// reports how lit the row still is a few seconds after each tap, after the tap's own
+// flash; the app's report says what each tap did. It listens to nothing.
+// That is the independent decode, input, audio, map-motion, guidance and day/night
+// evidence for P4, P5.1, P5.3, P6.1, P6.5 and P7.6; it proves nothing about a factory
+// head unit.
 #include <QCommandLineParser>
 #include <QCoreApplication>
 #include <QElapsedTimer>
@@ -31,6 +47,7 @@
 #include <QTextStream>
 #include <QTimer>
 
+#include <oaa/Channel/ControlChannel.hpp>
 #include <oaa/HU/Handlers/AudioChannelHandler.hpp>
 #include <oaa/HU/Handlers/InputChannelHandler.hpp>
 #include <oaa/HU/Handlers/MediaStatusChannelHandler.hpp>
@@ -44,6 +61,7 @@
 #include "oaa/av/AVMediaAckIndicationMessage.pb.h"
 #include "oaa/common/StatusEnum.pb.h"
 #include "oaa/control/ChannelDescriptorData.pb.h"
+#include "oaa/navigation/NavigationFocusRequestMessage.pb.h"
 #include "oaa/sensor/SensorEventIndicationMessage.pb.h"
 #include "oaa/sensor/SensorStartRequestMessage.pb.h"
 #include "oaa/sensor/SensorStartResponseMessage.pb.h"
@@ -58,6 +76,7 @@ extern "C" {
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <string>
 #include <utility>
@@ -187,6 +206,44 @@ double changedFraction(const QByteArray& before, const QByteArray& after, int th
     return static_cast<double>(changed) / static_cast<double>(before.size());
 }
 
+/// Every `step`th pixel of every `step`th row of a `width`-wide luma rectangle (P7.6).
+///
+/// The day/night script keeps one of these per decoded picture across a flip, so that
+/// each picture can be compared with the one the flip settled on, which is only known
+/// afterwards. A sixteenth of the pixels is plenty to tell "the old theme", "the new
+/// theme" and "half of one" apart, at a sixteenth of the memory.
+QByteArray thinLuma(const QByteArray& luma, int width, int step)
+{
+    if (luma.isEmpty() || width <= 0 || step <= 0)
+        return QByteArray();
+    const int height = static_cast<int>(luma.size() / width);
+    QByteArray out;
+    out.reserve((width / step + 1) * (height / step + 1));
+    for (int y = 0; y < height; y += step)
+        for (int x = 0; x < width; x += step)
+            out.append(luma[static_cast<qsizetype>(y) * width + x]);
+    return out;
+}
+
+/// Mean and standard deviation of a luma sample. A map pane with roads on it has a
+/// spread of tens of levels; a pane showing nothing but its background has almost none.
+void lumaStats(const QByteArray& luma, double& mean, double& stddev)
+{
+    mean = 0.0;
+    stddev = 0.0;
+    if (luma.isEmpty())
+        return;
+    const auto* p = reinterpret_cast<const unsigned char*>(luma.constData());
+    double sum = 0.0, squares = 0.0;
+    for (qsizetype i = 0; i < luma.size(); ++i) {
+        sum += p[i];
+        squares += static_cast<double>(p[i]) * p[i];
+    }
+    const double n = static_cast<double>(luma.size());
+    mean = sum / n;
+    stddev = std::sqrt(std::max(0.0, squares / n - mean * mean));
+}
+
 /// Two rectangles of the projected dashboard (P5.5), mirroring `DashboardLayout` in
 /// app/src/main/kotlin/org/openautoandroid/source/Dashboard.kt field for field.
 ///
@@ -203,7 +260,29 @@ struct DashboardPane {
     Rect map;
     /// The configurable tile row, which reads "not configured" for the whole session.
     Rect tiles;
+    /// P7.2/P7.3 (the controls script): the centres of the zoom bubbles and the header
+    /// icons, and the boxes whose pictures their presses change.
+    QPoint zoomIn, zoomOut, pauseIcon, dayNightIcon;
+    Rect header, pauseBox;
+    /// P7.4/P7.5 (the endroute script): the favourites tile the trip panel takes over, the
+    /// turn card across the top of the map, the media pane, End route's centre and the
+    /// first player row's centre (laid out with the no-access hint, as in the lab).
+    Rect tripTile, turnCard, media;
+    QPoint endRoute, resumeRow;
+    /// P8.2 (the voice script): the voice toggle at the right end of End route's row, its
+    /// box for the picture check and its centre for the press.
+    Rect voiceBox;
+    QPoint voiceToggle;
+    /// P7.8/P7.9 (the calls script): the flex tile, its first notification row, Answer's
+    /// centre and a patch of its plate away from the word (to see it turn green), the call
+    /// row's buttons with full controls (Mute, Keypad, Hang up) and Hang up alone, and the
+    /// keypad: its box, echo strip, Close and the twelve keys in "123456789*0#" order.
+    Rect flexTile, muteBox, keypad, keypadEcho;
+    QPoint notificationRow, answer, answerPatch, callRow[3], hangUpAlone, keypadClose, keys[12];
 
+    /// Mirrors DashboardLayout (Dashboard.kt): the pane, zoomBubble, headerBattery,
+    /// headerSignal and headerIcon. A change there that is not made here shows up as a
+    /// controls-script press that hits nothing.
     static DashboardPane of(const Layout& content, bool mapOnLeft)
     {
         const int margin = std::max(2, content.width / 96);
@@ -219,6 +298,85 @@ struct DashboardPane {
         pane.map = {mapOnLeft ? leftX : rightX, bodyY + margin, paneWidth, paneHeight / 2};
         pane.tiles = {mapOnLeft ? rightX : leftX, bodyY + margin + rowHeight + margin,
                       paneWidth, rowHeight};
+        const int mapX = mapOnLeft ? leftX : rightX;
+        const int mapBottom = bodyY + margin + paneHeight;
+        const int bubble = std::max(24, std::min(paneWidth, paneHeight) / 8);
+        const int creditTop = mapBottom - margin / 2 - std::max(10, paneHeight / 40);
+        auto zoom = [&](int index) {
+            const int bottom = creditTop - margin - (1 - index) * (bubble + margin);
+            return QPoint(mapX + paneWidth - margin - bubble + bubble / 2, bottom - bubble + bubble / 2);
+        };
+        pane.zoomIn = zoom(0);
+        pane.zoomOut = zoom(1);
+        const int batteryX = content.x + content.width - margin - header * 13 / 10;
+        const int signalX = batteryX - margin - header * 11 / 10;
+        auto icon = [&](int index) {
+            const int right = signalX - margin - (1 - index) * (header + margin);
+            return Rect{right - header, content.y, header, header};
+        };
+        pane.pauseBox = icon(0);
+        pane.pauseIcon = QPoint(pane.pauseBox.x + header / 2, content.y + header / 2);
+        const Rect dayNight = icon(1);
+        pane.dayNightIcon = QPoint(dayNight.x + header / 2, content.y + header / 2);
+        // The header's text side, left of the icons, for the palette check.
+        pane.header = {content.x, content.y, pane.pauseBox.x - margin - content.x, header};
+        // DashboardLayout.media, tiles[0], mediaButton(0), endRoute, turnCard, playerRow.
+        const int originX = mapOnLeft ? rightX : leftX;
+        pane.media = {originX, bodyY + margin, paneWidth, rowHeight};
+        const int tileWidth = (paneWidth - margin) / 2;
+        pane.tripTile = {originX, bodyY + margin + rowHeight + margin, tileWidth, rowHeight};
+        const int buttonTop = pane.media.y + pane.media.height / 2;
+        const int buttonHeight = pane.media.y + pane.media.height - margin - buttonTop;
+        const int endHeight = std::min(buttonHeight, std::max(0, rowHeight - 3 * margin));
+        // P8.2: DashboardLayout.voiceToggle, then endRoute a margin short of it.
+        const int voiceWidth = std::min(endHeight, std::max(0, (tileWidth - 3 * margin) / 3));
+        const int endTop = pane.tripTile.y + rowHeight - margin - endHeight;
+        pane.voiceBox = {pane.tripTile.x + tileWidth - margin - voiceWidth, endTop, voiceWidth, endHeight};
+        pane.voiceToggle = QPoint(pane.voiceBox.x + voiceWidth / 2, endTop + endHeight / 2);
+        const int endRight = voiceWidth > 0 ? pane.voiceBox.x - margin : pane.tripTile.x + tileWidth - margin;
+        const int endWidth = std::max(0, endRight - pane.tripTile.x - margin);
+        pane.endRoute = QPoint(pane.tripTile.x + margin + endWidth / 2, endTop + endHeight / 2);
+        pane.turnCard = {mapX + margin, bodyY + margin + margin, paneWidth - 2 * margin, std::max(24, paneHeight / 5)};
+        const int hintHeight = std::max(10, rowHeight / 10);
+        const int hintY = pane.media.y + rowHeight - margin - hintHeight;
+        const int rowTop = pane.media.y + margin;
+        const int playerRow = (hintY - rowTop - margin) / 2;
+        pane.resumeRow = QPoint(pane.media.x + paneWidth / 2, rowTop + playerRow / 2);
+        // DashboardLayout.flexTile, notificationsList, callName, callDuration, ringButton,
+        // callRowButton, keypad, keypadClose, keypadEcho, keypadKey.
+        pane.flexTile = {originX + tileWidth + margin, pane.tripTile.y, tileWidth, rowHeight};
+        const Rect& flex = pane.flexTile;
+        const int title = rowHeight / 5;
+        const int listTop = flex.y + title;
+        const int listHeight = std::max(0, flex.y + rowHeight - margin - listTop);
+        pane.notificationRow = QPoint(flex.x + flex.width / 2, listTop + listHeight / 2 / 2);
+        const int nameBottom = flex.y + title + rowHeight / 5;
+        const int ringTop = nameBottom + margin;
+        const int ringWidth = std::max(0, (tileWidth - 3 * margin) / 2);
+        const int ringHeight = std::max(0, flex.y + rowHeight - margin - ringTop);
+        pane.answer = QPoint(flex.x + margin + ringWidth / 2, ringTop + ringHeight / 2);
+        pane.answerPatch = QPoint(flex.x + margin + ringWidth / 6, ringTop + ringHeight / 6);
+        const int rowTopCall = nameBottom + rowHeight / 9 + margin;
+        const int rowCallHeight = std::max(0, flex.y + rowHeight - margin - rowTopCall);
+        const int callWidth = std::max(0, (tileWidth - 4 * margin) / 3);
+        for (int i = 0; i < 3; ++i)
+            pane.callRow[i] = QPoint(flex.x + margin + i * (callWidth + margin) + callWidth / 2,
+                                     rowTopCall + rowCallHeight / 2);
+        pane.muteBox = {flex.x + margin, rowTopCall, callWidth, rowCallHeight};
+        pane.hangUpAlone = QPoint(flex.x + flex.width / 2, rowTopCall + rowCallHeight / 2);
+        pane.keypad = {originX, pane.media.y, paneWidth, rowHeight * 2 + margin};
+        const Rect& pad = pane.keypad;
+        const int strip = pad.height / 8;
+        const int closeWidth = pad.width / 4;
+        const int closeX = pad.x + pad.width - margin - closeWidth;
+        pane.keypadClose = QPoint(closeX + closeWidth / 2, pad.y + margin + strip / 2);
+        pane.keypadEcho = {pad.x + margin, pad.y + margin, std::max(0, closeX - margin - pad.x - margin), strip};
+        const int keysTop = pad.y + margin + strip + margin;
+        const int keyWidth = std::max(0, (pad.width - 4 * margin) / 3);
+        const int keyHeight = std::max(0, (pad.y + pad.height - margin - keysTop - 3 * margin) / 4);
+        for (int i = 0; i < 12; ++i)
+            pane.keys[i] = QPoint(pad.x + margin + (i % 3) * (keyWidth + margin) + keyWidth / 2,
+                                  keysTop + (i / 3) * (keyHeight + margin) + keyHeight / 2);
         return pane;
     }
 };
@@ -655,8 +813,11 @@ const int LAB_SENSOR_TYPES[] = {1, 3, 6, 7, 8, 10, 13, 21, 24};
 /// the encode stays independent of the source's generated Rust types.
 class LabSensorHandler : public oaa::IChannelHandler {
 public:
-    LabSensorHandler(TrackPlayer* track, int intervalMs, QObject* parent)
-        : oaa::IChannelHandler(parent), track_(track), intervalMs_(intervalMs)
+    /// `night` is what NIGHT_DATA says when the source subscribes to it; a positive
+    /// `flipMs` sends the opposite that long after the subscription, once (P7.6).
+    LabSensorHandler(TrackPlayer* track, int intervalMs, bool night, int flipMs, QObject* parent)
+        : oaa::IChannelHandler(parent), track_(track), intervalMs_(intervalMs), night_(night),
+          flipMs_(flipMs)
     {
         timer_.setInterval(intervalMs_);
         QObject::connect(&timer_, &QTimer::timeout, this, [this]() { play(); });
@@ -705,7 +866,10 @@ public:
             event.add_parking_brake()->set_parking_brake(true);
             break;
         case 10:
-            event.add_night_mode()->set_is_night(true);
+            event.add_night_mode()->set_is_night(night_);
+            ++nightEvents;
+            if (flipMs_ > 0)
+                QTimer::singleShot(flipMs_, this, [this]() { sendNight(!night_); });
             break;
         case 13:
             event.add_driving_status()->set_status(0);
@@ -724,8 +888,28 @@ public:
                            serialized(event));
     }
 
+    /// A NIGHT_DATA event on its own, as a head unit sends one when its light sensor or
+    /// its headlamp switch changes (P7.6). Nothing if the source never subscribed:
+    /// an event for a sensor nobody asked for is not what a head unit does.
+    bool sendNight(bool night)
+    {
+        night_ = night;
+        if (!open_ || !requested.contains(10))
+            return false;
+        oaa::proto::messages::SensorEventIndication event;
+        event.add_night_mode()->set_is_night(night);
+        ++nightEvents;
+        emit sendRequested(channelId(), oaa::SensorMessageId::SENSOR_EVENT_INDICATION,
+                           serialized(event));
+        return true;
+    }
+
+    bool night() const { return night_; }
+
     QList<int> requested;
     QList<int> populated;
+    /// NIGHT_DATA events sent, the subscription's answer included.
+    int nightEvents = 0;
     /// Position events played by the track, including the parked ones.
     int fixes = 0;
     /// Events carrying speed and satellites but no position.
@@ -808,6 +992,8 @@ private:
 
     TrackPlayer* track_ = nullptr;
     int intervalMs_ = 200;
+    bool night_ = true;
+    int flipMs_ = 0;
     int tick_ = 0;
     QTimer timer_;
     bool open_ = false;
@@ -987,6 +1173,13 @@ struct Capabilities {
     /// Which half of the dashboard the owned map occupies, mirroring the app's own
     /// setting, which defaults to the left.
     bool mapOnLeft = true;
+    /// What NIGHT_DATA says when the source subscribes (P7.6). True by default: it is
+    /// what every lab run before P7.6 sent, and what the Ford sent with its display
+    /// pinned to dark, so existing scripts see exactly the picture they always did.
+    bool night = true;
+    /// With --night flip:<seconds>, one flip to the opposite that long after the
+    /// subscription; 0 for none.
+    int nightFlipMs = 0;
     /// Advertise the now-playing channel. Prodigy's MediaStatusChannelHandler hardcodes
     /// ChannelId::MediaStatus (10), so the descriptor has to use that id.
     bool mediaInfo = false;
@@ -1189,7 +1382,11 @@ int main(int argc, char** argv)
                                         "sends), frame, or advertised.", "name", "content");
     QCommandLineOption scriptOption("script",
                                     "Projection script: taps, focus, stall, transport, audio, "
-                                    "track, or none.", "name", "taps");
+                                    "track, navigation, guidance, daynight, controls, endroute, calls, speech, voice, or none.", "name", "taps");
+    QCommandLineOption callControlsOption("call-controls",
+                                          "For --script calls: full (the Telecom route: Mute, Keypad and "
+                                          "Hang up after Answer) or basic (the call-notification route: "
+                                          "Hang up alone).", "which", "basic");
     QCommandLineOption videoOutOption("video-out", "Write the received Annex B stream here.", "path");
     QCommandLineOption holdOption("hold-ms", "Keep the session after the script.", "ms", "1000");
     QCommandLineOption toleranceOption("tolerance",
@@ -1207,6 +1404,10 @@ int main(int argc, char** argv)
                                        "(P6.5). Implies --track.", "path");
     QCommandLineOption trackSpeedOption("track-speed",
                                         "Cruise speed along --track-file, m/s.", "ms", "15");
+    QCommandLineOption nightOption("night",
+                                   "What NIGHT_DATA says (P7.6): night (the default, as before), "
+                                   "day, or flip:<seconds> - day, then night that long after the "
+                                   "source subscribes. Needs --sensors all.", "mode", "night");
     QCommandLineOption mapSideOption("map-side",
                                      "Which half of the dashboard the owned map occupies, as the "
                                      "app is configured: left or right.", "side", "left");
@@ -1215,7 +1416,7 @@ int main(int argc, char** argv)
                        underflowOption, audioOutOption, marginsOption, touchOption,
                        touchSpaceOption, scriptOption, videoOutOption, holdOption,
                        toleranceOption, trackOption, trackIntervalOption, trackFileOption,
-                       trackSpeedOption, mapSideOption,
+                       trackSpeedOption, mapSideOption, nightOption, callControlsOption,
                        navigationOption, navigationClusterOption, navigationIntervalOption,
                        navigationExpectOption});
     parser.process(app);
@@ -1239,7 +1440,7 @@ int main(int argc, char** argv)
     const int tolerance = parser.value(toleranceOption).toInt();
     const QString script = parser.value(scriptOption);
     if (!QStringList{"taps", "focus", "stall", "transport", "audio", "track", "navigation",
-                     "guidance", "none"}
+                     "guidance", "daynight", "controls", "endroute", "calls", "speech", "voice", "none"}
              .contains(script)) {
         QTextStream(stderr) << "invalid --script\n";
         return 1;
@@ -1285,8 +1486,10 @@ int main(int argc, char** argv)
         QTextStream(stderr) << "invalid --track-speed\n";
         return 1;
     }
-    if (script == "guidance" && trackPath.empty()) {
-        QTextStream(stderr) << "--script guidance needs --track-file\n";
+    // P8.2: the voice script is the guidance drive with the voice toggle pressed on the way.
+    const bool guidanceDrive = script == "guidance" || script == "voice";
+    if (guidanceDrive && trackPath.empty()) {
+        QTextStream(stderr) << "--script " << script << " needs --track-file\n";
         return 1;
     }
     caps.track = parser.isSet(trackOption) || script == "track" || !trackPath.empty();
@@ -1294,6 +1497,68 @@ int main(int argc, char** argv)
         // The track is LOCATION, CAR_SPEED and GPS, which only the full set advertises.
         caps.sensors = true;
         caps.sensorsAll = true;
+    }
+    // P7.6. The daynight script sends every flip itself, from day, so it takes no --night.
+    const QString nightMode = parser.value(nightOption);
+    if (nightMode == "day") {
+        caps.night = false;
+    } else if (nightMode.startsWith("flip:")) {
+        bool secondsOk = false;
+        const double seconds = nightMode.mid(5).toDouble(&secondsOk);
+        if (!secondsOk || !(seconds > 0.0 && seconds <= 3600.0)) {
+            QTextStream(stderr) << "invalid --night flip:<seconds>\n";
+            return 1;
+        }
+        caps.night = false;
+        caps.nightFlipMs = qRound(seconds * 1000.0);
+    } else if (nightMode != "night") {
+        QTextStream(stderr) << "invalid --night\n";
+        return 1;
+    }
+    if (script == "daynight") {
+        if (parser.isSet(nightOption)) {
+            QTextStream(stderr) << "--script daynight sends NIGHT_DATA itself; drop --night\n";
+            return 1;
+        }
+        if (!projection) {
+            QTextStream(stderr) << "--script daynight needs --projection\n";
+            return 1;
+        }
+        caps.night = false;
+        // NIGHT_DATA through the lab's own handler, which can send it again later;
+        // Prodigy's answers the subscription once.
+        caps.sensors = true;
+        caps.sensorsAll = true;
+    }
+    // P7.3. The day/night press is checked by the header turning light, which it does
+    // only from the night the head unit says by default: Automatic at night, then Day.
+    if (script == "controls") {
+        if (parser.isSet(nightOption)) {
+            QTextStream(stderr) << "--script controls needs the default night; drop --night\n";
+            return 1;
+        }
+        if (!projection) {
+            QTextStream(stderr) << "--script controls needs --projection\n";
+            return 1;
+        }
+        if (!caps.sensorsAll) {
+            QTextStream(stderr) << "--script controls needs --sensors all (NIGHT_DATA)\n";
+            return 1;
+        }
+    }
+    // P7.8, P7.9.
+    const bool callsFull = parser.value(callControlsOption) == "full";
+    if (!QStringList{"full", "basic"}.contains(parser.value(callControlsOption))) {
+        QTextStream(stderr) << "invalid --call-controls\n";
+        return 1;
+    }
+    if ((script == "calls" || script == "speech") && !projection) {
+        QTextStream(stderr) << "--script " << script << " needs --projection\n";
+        return 1;
+    }
+    if (nightMode != "night" && !caps.sensorsAll) {
+        QTextStream(stderr) << "--night needs --sensors all\n";
+        return 1;
     }
     caps.trackIntervalMs = parser.value(trackIntervalOption).toInt();
     if (caps.trackIntervalMs <= 0) {
@@ -1311,7 +1576,8 @@ int main(int argc, char** argv)
     }
     caps.mediaInfo = parser.isSet(mediaInfoOption) || script == "transport";
     caps.audio = parser.isSet(audioOption) || script == "audio";
-    caps.navigation = parser.isSet(navigationOption) || script == "navigation" || script == "guidance";
+    caps.navigation = parser.isSet(navigationOption) || script == "navigation" || guidanceDrive
+                      || script == "endroute";
     caps.navigationCluster = parser.value(navigationClusterOption) == "start";
     if (!QStringList{"start", "none"}.contains(parser.value(navigationClusterOption))) {
         QTextStream(stderr) << "invalid --navigation-cluster\n";
@@ -1445,7 +1711,7 @@ int main(int argc, char** argv)
         // against, and the guidance script when the source has a route on the cluster;
         // every other use of --track has nothing watching, so it pulls away on its own
         // rather than sitting at the kerb for the whole run in silence.
-        if (script != "track" && script != "guidance") {
+        if (script != "track" && !guidanceDrive) {
             QTimer::singleShot(TRACK_KERB_MS, &app, [&]() { trackPlayer->depart(); });
         }
     }
@@ -1471,6 +1737,11 @@ int main(int argc, char** argv)
     bool audioStarted = false, audioStopped = false;
     // P6.2: what the cluster channel was told, decoded by Prodigy's own schemas.
     QStringList navStates;
+    // P7.4: every navigation focus request the source made (1 native, 2 projected, 0
+    // unreadable), and how many cluster states had arrived when it came, so a script can
+    // say which route a request belongs to. Prodigy answers each by echoing it; this is
+    // the record of what was asked, which is the evidence.
+    QList<int> navFocusTypes, navFocusAtState;
     int navManeuver = -1, navExit = -1;
     QString navStepDistance, navCurrentRoad;
     int navStepUnit = -1, navStepValue = 0;
@@ -1481,6 +1752,8 @@ int main(int argc, char** argv)
     // like maneuvers in a row read as one, since only a change is seen); the countdown
     // compared message to message while one maneuver holds; and where the drive was.
     QList<int> guideManeuvers;
+    // Counts of what carried a road name, never the names: they say where the drive went.
+    int guideSteps = 0, guideNamedSteps = 0, guideCurrentRoads = 0;
     int guideFalls = 0, guideRises = 0, guideEpoch = -1;
     double guideLastMetres = -1.0, guideWorstRise = 0.0;
     QElapsedTimer guideArrival;
@@ -1499,12 +1772,28 @@ int main(int argc, char** argv)
         return ok;
     };
 
+    // P7.6: run after every decoded picture, once the day/night script has set it.
+    std::function<void()> onPicture;
+
     auto startSession = [&](QTcpSocket* socket) {
         transport = new oaa::TCPTransport(&app);
         transport->setSocket(socket);
         transport->start();
         session = new oaa::AASession(transport, config, &app);
         logger.attach(session->messenger());
+        QObject::connect(session->controlChannel(), &oaa::ControlChannel::navigationFocusRequested, &app,
+                         [&](const QByteArray& payload) {
+                             oaa::proto::messages::NavigationFocusRequest request;
+                             const int type = request.ParseFromArray(payload.constData(), payload.size())
+                                                      && request.has_type()
+                                                  ? static_cast<int>(request.type())
+                                                  : 0;
+                             navFocusTypes << type;
+                             navFocusAtState << navStates.size();
+                             out << "receiver_navigation_focus_request=type=" << type
+                                 << " states=" << navStates.join(',') << "\n";
+                             out.flush();
+                         });
         if (projection) {
             video = new LabVideoHandler(caps.video, &app);
             video->setNumVideoConfigs(caps.configs);
@@ -1512,7 +1801,8 @@ int main(int argc, char** argv)
             session->registerChannel(caps.video, video);
             session->registerChannel(caps.input, input);
             if (caps.sensorsAll) {
-                labSensors = new LabSensorHandler(trackPlayer.get(), caps.trackIntervalMs, &app);
+                labSensors = new LabSensorHandler(trackPlayer.get(), caps.trackIntervalMs,
+                                                  caps.night, caps.nightFlipMs, &app);
                 session->registerChannel(oaa::ChannelId::Sensor, labSensors);
             } else if (caps.sensors) {
                 sensors = new oaa::hu::SensorChannelHandler(&app);
@@ -1558,6 +1848,13 @@ int main(int argc, char** argv)
                         if (snapshot.hasManeuver
                             && (guideManeuvers.isEmpty() || guideManeuvers.last() != navManeuver))
                             guideManeuvers << navManeuver;
+                        if (snapshot.hasManeuver) {
+                            guideSteps++;
+                            // road_info's names. Prodigy files them as "action cues"
+                            // and calls the instruction text the upcoming road.
+                            if (!snapshot.actionCues.isEmpty())
+                                guideNamedSteps++;
+                        }
                         navLanes = snapshot.lanes.size();
                         navDestinations = snapshot.destinations.size();
                         // The road name and the instruction are not printed: they are
@@ -1606,6 +1903,8 @@ int main(int argc, char** argv)
                         navTimeToStep = snapshot.hasTimeToStep ? snapshot.timeToStepSeconds : -1;
                         navCurrentRoad = snapshot.hasCurrentRoad ? snapshot.currentRoad
                                                                  : QString();
+                        if (!navCurrentRoad.isEmpty())
+                            guideCurrentRoads++;
                         for (const auto& destination : snapshot.destinationDistances) {
                             if (destination.hasTimeToArrival)
                                 navTimeToArrival = destination.timeToArrivalSeconds;
@@ -1642,7 +1941,8 @@ int main(int argc, char** argv)
                              [&](std::shared_ptr<const QByteArray> data, qint64) {
                                  if (videoOut.isOpen())
                                      videoOut.write(*data);
-                                 decoder.decode(*data);
+                                 if (decoder.decode(*data) > 0 && onPicture)
+                                     onPicture();
                              });
             QObject::connect(video, &oaa::hu::VideoChannelHandler::streamStarted, &app,
                              [&](int32_t session_id, uint32_t configIndex) {
@@ -1737,6 +2037,11 @@ int main(int argc, char** argv)
     // How long a parked vehicle at the end of the guidance drive waits for the source to
     // say it has arrived.
     const int GUIDE_ARRIVAL_MS = 15000;
+    // P8.2: how much of the voice toggle's box a press must change. On to off loses the
+    // accent speaker's two waves and gains a slash; about a tenth of the box at 1080p.
+    const double VOICE_TOGGLE_MIN = 0.03;
+    // And how little of it may differ once it is back on: the same glyph as before.
+    const double VOICE_TOGGLE_SAME_MAX = 0.02;
     // Metres of travel per checked interval: about ten seconds at the track's cruise.
     const double TRACK_STEP_METRES = 120.0;
     auto paneLuma = [&](const DashboardPane::Rect& r) {
@@ -1750,6 +2055,255 @@ int main(int argc, char** argv)
             << " interval_ms=" << caps.trackIntervalMs << "\n";
         out.flush();
     }
+    // P7.6. One day/night flip as the decoded pictures showed it. The script sends
+    // NIGHT_DATA and this watches every picture that follows, rather than sampling on the
+    // script's 100 ms tick, because the question is precisely what is on screen between
+    // the flag and the finished new theme: the old picture held, a blank pane, or a map
+    // drawn half in one theme and half missing. A tick could step over all three.
+    struct FlipFrame {
+        qint64 ms = 0;
+        QByteArray thin;
+        double stddev = 0.0;
+        double mean = 0.0;
+    };
+    struct FlipWatch {
+        bool active = false;
+        bool done = false;
+        bool toNight = true;
+        int index = 0;
+        QElapsedTimer since;
+        QByteArray before, beforeThin, previous, settled;
+        double beforeMean = 0.0;
+        std::vector<FlipFrame> frames;
+        qint64 firstChangeMs = -1;
+        qint64 lastChangeMs = -1;
+        qint64 settledMs = -1;
+        qint64 maxGapMs = 0;
+        qint64 sentAtVideoMs = 0;
+    } flip;
+    QByteArray dayFirst, nightFirst;
+    qint64 firstPictureMs = -1, lastPictureMs = -1;
+    // Frame-to-frame gaps before the flip, for the median a flip's worst gap is set against.
+    std::vector<qint64> recentGaps;
+    // Pixels kept per thinned picture: every fourth in each direction.
+    const int FLIP_THIN_STEP = 4;
+    // A picture that has left the old one by this much is the new theme arriving.
+    const double FLIP_CHANGED_MIN = 0.30;
+    // Settled: no picture changed from the one before it (beyond TRACK_STATIC_MAX) for
+    // this long. Long enough to include labels, which VTM places after the tiles.
+    const qint64 FLIP_QUIET_MS = 1500;
+    const qint64 FLIP_DEADLINE_MS = 20000;
+    // A picture within this of the old or the settled one is that picture.
+    const double FLIP_SAME_MAX = 0.05;
+    // Further than this from both is a map caught half-drawn.
+    const double FLIP_PARTIAL_MIN = 0.25;
+    // Luma spread below which the pane holds nothing but a background.
+    const double FLIP_BLANK_SD = 4.0;
+    // A theme change repaints the ground everywhere, so most of the pane must change,
+    // and in the right direction: darker for night, lighter for day.
+    const double FLIP_THEME_MIN = 0.50;
+    const double FLIP_LUMA_SHIFT = 40.0;
+    // The second day (and night) against the first: the same picture, or a tile stuck.
+    const double FLIP_REPEAT_MAX = 0.05;
+    const size_t FLIP_MAX_FRAMES = 1200;
+    const qint64 FLIP_GAP_MAX_MS = 1000;
+    if (projection && script == "daynight") {
+        onPicture = [&]() {
+            const qint64 now = uptime.elapsed();
+            if (firstPictureMs < 0)
+                firstPictureMs = now;
+            const qint64 gap = lastPictureMs < 0 ? 0 : now - lastPictureMs;
+            lastPictureMs = now;
+            if (!flip.active) {
+                recentGaps.push_back(gap);
+                if (recentGaps.size() > 150)
+                    recentGaps.erase(recentGaps.begin());
+                return;
+            }
+            flip.maxGapMs = std::max(flip.maxGapMs, gap);
+            const QByteArray map = paneLuma(pane.map);
+            if (map.isEmpty())
+                return;
+            const qint64 t = flip.since.elapsed();
+            FlipFrame frame;
+            frame.ms = t;
+            frame.thin = thinLuma(map, pane.map.width, FLIP_THIN_STEP);
+            lumaStats(map, frame.mean, frame.stddev);
+            if (flip.frames.size() < FLIP_MAX_FRAMES)
+                flip.frames.push_back(frame);
+            const double fromBefore = changedFraction(flip.before, map, TRACK_LUMA_THRESHOLD);
+            const double fromPrevious = changedFraction(flip.previous, map, TRACK_LUMA_THRESHOLD);
+            flip.previous = map;
+            if (flip.firstChangeMs < 0) {
+                if (fromBefore > FLIP_CHANGED_MIN)
+                    flip.firstChangeMs = flip.lastChangeMs = t;
+            } else if (fromPrevious >= TRACK_STATIC_MAX) {
+                flip.lastChangeMs = t;
+            }
+            const bool quiet = flip.firstChangeMs >= 0 && t - flip.lastChangeMs >= FLIP_QUIET_MS;
+            if (quiet || t > FLIP_DEADLINE_MS) {
+                flip.settledMs = quiet ? flip.lastChangeMs : -1;
+                flip.settled = map;
+                flip.active = false;
+                flip.done = true;
+            }
+        };
+    }
+    // Sends the flag and starts watching. The pane as it is now is "before".
+    auto startFlip = [&](bool toNight) {
+        const int index = flip.index + 1;
+        flip = FlipWatch{};
+        flip.index = index;
+        flip.toNight = toNight;
+        flip.before = paneLuma(pane.map);
+        flip.beforeThin = thinLuma(flip.before, pane.map.width, FLIP_THIN_STEP);
+        double spread = 0.0;
+        lumaStats(flip.before, flip.beforeMean, spread);
+        flip.previous = flip.before;
+        flip.sentAtVideoMs = firstPictureMs < 0 ? 0 : uptime.elapsed() - firstPictureMs;
+        flip.since.start();
+        flip.active = true;
+        const bool sent = labSensors && labSensors->sendNight(toNight);
+        check(sent, QString("NIGHT_DATA %1 could not be sent").arg(toNight ? "true" : "false"));
+        out << "receiver_daynight_sent=" << index << " is_night=" << (toNight ? "true" : "false")
+            << " video_s=" << (flip.sentAtVideoMs / 1000.0) << " pane_mean=" << qRound(flip.beforeMean)
+            << "\n";
+        out.flush();
+    };
+    // What the pictures between the flag and the settled theme were, and the checks on
+    // them. The gap figures are the scene's frame delivery around the switch: a scene
+    // thread stalled by the switch shows up as one long gap between pictures.
+    auto finishFlip = [&]() {
+        const QByteArray settledThin = thinLuma(flip.settled, pane.map.width, FLIP_THIN_STEP);
+        int oldFrames = 0, newFrames = 0, between = 0, partial = 0, blank = 0;
+        qint64 lastOldMs = -1, firstNewMs = -1;
+        for (const FlipFrame& f : flip.frames) {
+            if (f.stddev < FLIP_BLANK_SD) {
+                ++blank;
+                continue;
+            }
+            const double fromOld = changedFraction(flip.beforeThin, f.thin, TRACK_LUMA_THRESHOLD);
+            const double fromNew = changedFraction(settledThin, f.thin, TRACK_LUMA_THRESHOLD);
+            if (fromOld >= 0.0 && fromOld < FLIP_SAME_MAX) {
+                ++oldFrames;
+                lastOldMs = f.ms;
+            } else if (fromNew >= 0.0 && fromNew < FLIP_SAME_MAX) {
+                ++newFrames;
+                if (firstNewMs < 0)
+                    firstNewMs = f.ms;
+            } else {
+                const bool half = fromOld > FLIP_PARTIAL_MIN && fromNew > FLIP_PARTIAL_MIN;
+                ++(half ? partial : between);
+                // Each picture that was neither theme, so a failure says what it looked like.
+                out << "receiver_daynight_picture=" << flip.index << " ms=" << f.ms
+                    << " from_old=" << fromOld << " from_settled=" << fromNew
+                    << " mean=" << qRound(f.mean) << " spread=" << qRound(f.stddev)
+                    << (half ? " half-drawn" : "") << "\n";
+            }
+        }
+        double settledMean = 0.0, settledSpread = 0.0;
+        lumaStats(flip.settled, settledMean, settledSpread);
+        const double changed = changedFraction(flip.before, flip.settled, TRACK_LUMA_THRESHOLD);
+        std::vector<qint64> gaps = recentGaps;
+        std::sort(gaps.begin(), gaps.end());
+        const qint64 medianGap = gaps.empty() ? -1 : gaps[gaps.size() / 2];
+        const char* to = flip.toNight ? "night" : "day";
+        out << "receiver_daynight=" << flip.index << " to=" << to
+            << " first_change_ms=" << flip.firstChangeMs << " settled_ms=" << flip.settledMs
+            << " last_old_ms=" << lastOldMs << " first_settled_look_ms=" << firstNewMs
+            << " pictures=" << flip.frames.size() << " old=" << oldFrames << " new=" << newFrames
+            << " between=" << between << " partial=" << partial << " blank=" << blank
+            << " pane_changed=" << changed << " pane_mean=" << qRound(flip.beforeMean) << "->"
+            << qRound(settledMean) << " max_gap_ms=" << flip.maxGapMs
+            << " median_gap_ms_before=" << medianGap << " video_s=" << (flip.sentAtVideoMs / 1000.0)
+            << "\n";
+        out.flush();
+        check(flip.settledMs >= 0,
+              QString("flip %1 to %2 did not settle within %3 ms").arg(flip.index).arg(to).arg(FLIP_DEADLINE_MS));
+        check(changed > FLIP_THEME_MIN,
+              QString("flip %1 to %2 changed only %3 of the map pane").arg(flip.index).arg(to).arg(changed));
+        check(flip.toNight ? settledMean < flip.beforeMean - FLIP_LUMA_SHIFT
+                           : settledMean > flip.beforeMean + FLIP_LUMA_SHIFT,
+              QString("flip %1 to %2 took the pane's mean luma from %3 to %4")
+                  .arg(flip.index).arg(to).arg(flip.beforeMean).arg(settledMean));
+        check(blank == 0, QString("flip %1 to %2 showed %3 blank map pictures").arg(flip.index).arg(to).arg(blank));
+        check(partial == 0,
+              QString("flip %1 to %2 showed %3 half-drawn map pictures").arg(flip.index).arg(to).arg(partial));
+        check(flip.maxGapMs < FLIP_GAP_MAX_MS,
+              QString("flip %1 to %2 stalled the stream for %3 ms").arg(flip.index).arg(to).arg(flip.maxGapMs));
+    };
+    // P7.2, P7.3. The controls script: each press is on a settled picture, and is checked
+    // against the part of the picture it should change. The order is fixed: the report
+    // side (tools/emulator-lab.sh) expects zoom 17, the pause on, and Day.
+    struct ControlPress {
+        const char* name;
+        QPoint at;
+        DashboardPane::Rect watch;
+        double minChanged;
+    };
+    const std::vector<ControlPress> controlPresses = {
+        {"zoom-in", pane.zoomIn, pane.map, TRACK_MOVED_MIN},
+        {"zoom-in", pane.zoomIn, pane.map, TRACK_MOVED_MIN},
+        {"zoom-out", pane.zoomOut, pane.map, TRACK_MOVED_MIN},
+        // Thin grey ring to bold accent ring and letter: a few percent of its target.
+        {"pause", pane.pauseIcon, pane.pauseBox, 0.02},
+        // Night palette to day: the whole header strip, and lighter (checked below).
+        {"day-night", pane.dayNightIcon, pane.header, 0.50},
+    };
+    size_t controlIndex = 0;
+    // P7.4/P7.5. The endroute script: the trip panel and card before End route, and the
+    // cluster's state list when it was pressed, so what followed the press can be read.
+    QByteArray endTileBefore, endCardBefore, endMediaBefore;
+    int endStatesAtPress = -1;
+    double endTileChanged = -1.0, endCardChanged = -1.0, endMediaChanged = -1.0;
+    // P7.4a: where the watch after the first End route ended (states, focus requests), and
+    // the state count at the second press, so each focus request can be placed between
+    // the presses and the routes around them.
+    int endStatesAtWatch = -1, endFocusAtWatch = -1, endStatesAtSecond = -1, endFocusAtSecond = -1;
+    QByteArray controlBefore;
+    // P7.8/P7.9. The calls script: the picture a press is measured against, which key is
+    // next, and what each press changed, for the summary line.
+    QByteArray callsBefore;
+    // P8.1. The speech script: the flex tile before the first tap, unlit.
+    QByteArray speechUnlit;
+    // P8.2. The voice script: the toggle's picture on, then off, and how much each press
+    // changed it; the decoded frame of each state, so its picture can be found in frames/.
+    QByteArray voiceOnLuma, voiceOffLuma;
+    double voiceOffChanged = -1.0, voiceOnChanged = -1.0, voiceBackToOn = -1.0;
+    int voiceOffFrame = -1, voiceOnFrame = -1;
+    int callsKey = 0;
+    QStringList callsResults;
+    const int CALLS_KEYS[3] = {0, 1, 11}; // "1", "2" and "#"
+    // A plate is green when its chroma is well below neutral in both: BT.601 green has
+    // V near 90 and U near 112 in both palettes' Answer, a grey or dark tile has 128.
+    auto answerGreen = [&]() {
+        const Yuv patch = decoder.sample(pane.answerPatch.x(), pane.answerPatch.y());
+        return patch.y >= 0 && patch.v < 110 && patch.u < 124;
+    };
+    auto callsPress = [&](QPoint at, const char* what) {
+        const QPoint touchPoint = caps.toTouch(at);
+        const oaa::hu::InputChannelHandler::Pointer pointer{touchPoint.x(), touchPoint.y(), 0};
+        input->sendTouchIndication(1, &pointer, 0, 0, uptime.elapsed() * 1000);
+        input->sendTouchIndication(1, &pointer, 0, 1, uptime.elapsed() * 1000 + 1);
+        ++taps;
+        out << "receiver_calls=press " << what << " frame=" << at.x() << "," << at.y()
+            << " touch=" << touchPoint.x() << "," << touchPoint.y() << "\n";
+        out.flush();
+    };
+    // Waits for [box] to change by [min] from callsBefore, or for the deadline; then checks
+    // it and moves on. Returns false while still waiting.
+    auto callsChanged = [&](const DashboardPane::Rect& box, double min, const char* what) {
+        const double changed = changedFraction(callsBefore, paneLuma(box), TRACK_LUMA_THRESHOLD);
+        if (changed < min && uptime.elapsed() < stepDeadline)
+            return false;
+        out << "receiver_calls=changed " << what << " " << changed << "\n";
+        out.flush();
+        callsResults << QString("%1=%2").arg(what).arg(changed, 0, 'f', 3);
+        check(changed >= min, QString("%1 changed only %2 of what it should").arg(what).arg(changed));
+        return true;
+    };
+    double controlBeforeMean = 0.0;
+    int controlSettleTries = 0;
     if (projection && script != "none") {
         QObject::connect(&scriptTimer, &QTimer::timeout, &app, [&]() {
             if (!video || !input || decoder.frames == 0)
@@ -1770,6 +2324,18 @@ int main(int argc, char** argv)
                 base = 600;
             else if (script == "guidance")
                 base = 700;
+            else if (script == "daynight")
+                base = 800;
+            else if (script == "controls")
+                base = 900;
+            else if (script == "endroute")
+                base = 1000;
+            else if (script == "calls")
+                base = 1100;
+            else if (script == "speech")
+                base = 1200;
+            else if (script == "voice")
+                base = 1300;
             switch (step + base) {
             case 0:
             case 2:
@@ -2175,6 +2741,528 @@ int main(int argc, char** argv)
                 ++step;
                 break;
             }
+            // P7.6. Day, then night, day and night again, each flip watched picture by
+            // picture (see FlipWatch). The second day and the second night are compared
+            // with the first: a theme switch that left a tile half-themed or empty would
+            // make them differ, and would otherwise pass as "the pane changed".
+            case 800: {
+                // Parked, and settled in the day theme the subscription asked for, before
+                // anything flips; the same wait as the track script's, for the same reason.
+                if (!labSensors || !labSensors->requested.contains(10) || uptime.elapsed() < stepDeadline)
+                    return;
+                stepDeadline = uptime.elapsed() + TRACK_SAMPLE_MS;
+                const QByteArray map = paneLuma(pane.map);
+                if (map.isEmpty()) {
+                    check(false, "the map pane is outside the decoded picture");
+                    step = 4;
+                    break;
+                }
+                const double change = changedFraction(mapBefore, map, TRACK_LUMA_THRESHOLD);
+                mapBefore = map;
+                ++trackSettleTries;
+                if (change < 0.0)
+                    return;
+                if (change >= TRACK_STATIC_MAX && trackSettleTries < TRACK_SETTLE_TRIES)
+                    return;
+                double mean = 0.0, spread = 0.0;
+                lumaStats(map, mean, spread);
+                out << "receiver_daynight=day settle_s=" << trackSettleTries << " map_changed=" << change
+                    << " pane_mean=" << qRound(mean) << " pane_spread=" << qRound(spread)
+                    << " night_events=" << labSensors->nightEvents << "\n";
+                out.flush();
+                check(change < TRACK_STATIC_MAX,
+                      QString("a parked map was still changing %1 of the pane after %2 s")
+                          .arg(change).arg(trackSettleTries));
+                check(spread >= FLIP_BLANK_SD, "the day map pane is blank before any flip");
+                dayFirst = map;
+                startFlip(true);
+                ++step;
+                break;
+            }
+            case 801:
+            case 802:
+            case 803: {
+                if (!flip.done)
+                    return;
+                finishFlip();
+                if (step == 1) {
+                    nightFirst = flip.settled;
+                    startFlip(false);
+                } else if (step == 2) {
+                    const double repeat = changedFraction(dayFirst, flip.settled, TRACK_LUMA_THRESHOLD);
+                    out << "receiver_daynight_repeat=day changed=" << repeat << "\n";
+                    check(repeat >= 0.0 && repeat < FLIP_REPEAT_MAX,
+                          QString("the second day picture differs from the first by %1").arg(repeat));
+                    startFlip(true);
+                } else {
+                    const double repeat = changedFraction(nightFirst, flip.settled, TRACK_LUMA_THRESHOLD);
+                    out << "receiver_daynight_repeat=night changed=" << repeat
+                        << " night_events=" << labSensors->nightEvents << "\n";
+                    check(repeat >= 0.0 && repeat < FLIP_REPEAT_MAX,
+                          QString("the second night picture differs from the first by %1").arg(repeat));
+                }
+                out.flush();
+                ++step;
+                break;
+            }
+            // P7.2, P7.3. Settle, press, watch; once per entry of controlPresses.
+            case 900: {
+                // The parked map has to be still before a press, or a tile arriving late
+                // would pass for the zoom.
+                if (!labSensors || !labSensors->requested.contains(10) || uptime.elapsed() < stepDeadline)
+                    return; // and the head unit has said night, which the last press relies on
+                stepDeadline = uptime.elapsed() + TRACK_SAMPLE_MS;
+                const QByteArray map = paneLuma(pane.map);
+                const double change = changedFraction(mapBefore, map, TRACK_LUMA_THRESHOLD);
+                mapBefore = map;
+                ++controlSettleTries;
+                if (change < 0.0 || (change >= TRACK_STATIC_MAX && controlSettleTries < TRACK_SETTLE_TRIES))
+                    return;
+                const ControlPress& press = controlPresses[controlIndex];
+                controlBefore = paneLuma(press.watch);
+                double spread = 0.0;
+                lumaStats(controlBefore, controlBeforeMean, spread);
+                const QPoint touchPoint = caps.toTouch(press.at);
+                const oaa::hu::InputChannelHandler::Pointer pointer{touchPoint.x(), touchPoint.y(), 0};
+                input->sendTouchIndication(1, &pointer, 0, 0, uptime.elapsed() * 1000);
+                input->sendTouchIndication(1, &pointer, 0, 1, uptime.elapsed() * 1000 + 1);
+                ++taps;
+                out << "receiver_control=" << press.name << " frame=" << press.at.x() << ","
+                    << press.at.y() << " touch=" << touchPoint.x() << "," << touchPoint.y()
+                    << " settle_s=" << controlSettleTries << " map_changed=" << change << "\n";
+                out.flush();
+                controlSettleTries = 0;
+                stepDeadline = uptime.elapsed() + TAP_DEADLINE_MS;
+                ++step;
+                break;
+            }
+            case 901: {
+                const ControlPress& press = controlPresses[controlIndex];
+                const QByteArray after = paneLuma(press.watch);
+                const double changed = changedFraction(controlBefore, after, TRACK_LUMA_THRESHOLD);
+                double mean = 0.0, spread = 0.0;
+                lumaStats(after, mean, spread);
+                const bool lighter = std::string(press.name) != "day-night"
+                    || mean - controlBeforeMean >= FLIP_LUMA_SHIFT;
+                if ((changed < press.minChanged || !lighter) && uptime.elapsed() < stepDeadline)
+                    return;
+                out << "receiver_control_result=" << press.name << " changed=" << changed
+                    << " mean=" << qRound(controlBeforeMean) << "->" << qRound(mean) << "\n";
+                out.flush();
+                check(changed >= press.minChanged,
+                      QString("%1 changed only %2 of what it should").arg(press.name).arg(changed));
+                check(lighter, QString("day/night left the header at luma %1 from %2")
+                                   .arg(qRound(mean)).arg(qRound(controlBeforeMean)));
+                ++controlIndex;
+                mapBefore.clear();
+                stepDeadline = uptime.elapsed() + TRACK_SAMPLE_MS;
+                // Back to settling for the next press, or on past the last one.
+                step = controlIndex < controlPresses.size() ? 0 : 2;
+                break;
+            }
+            // P7.4. Parked with a route on the cluster, End route is pressed on the trip panel:
+            // the cluster must go INACTIVE and hear no route after it, the trip panel must
+            // give the tile back and the turn card leave the map. Then P7.5's first Resume
+            // row is pressed; what it does depends on the emulator's apps, so it is logged
+            // and the app's own counters (tools/emulator-lab.sh) are what is checked.
+            case 1000: {
+                if (!navigation || !navStates.contains("1"))
+                    return; // no route on the cluster yet
+                if (stepDeadline == 0) {
+                    // Three seconds for the panel and the card to be drawn and settle.
+                    stepDeadline = uptime.elapsed() + 3000;
+                    return;
+                }
+                if (uptime.elapsed() < stepDeadline)
+                    return;
+                endTileBefore = paneLuma(pane.tripTile);
+                endCardBefore = paneLuma(pane.turnCard);
+                endStatesAtPress = navStates.size();
+                const QPoint touchPoint = caps.toTouch(pane.endRoute);
+                const oaa::hu::InputChannelHandler::Pointer pointer{touchPoint.x(), touchPoint.y(), 0};
+                input->sendTouchIndication(1, &pointer, 0, 0, uptime.elapsed() * 1000);
+                input->sendTouchIndication(1, &pointer, 0, 1, uptime.elapsed() * 1000 + 1);
+                ++taps;
+                out << "receiver_endroute=pressed frame=" << pane.endRoute.x() << "," << pane.endRoute.y()
+                    << " touch=" << touchPoint.x() << "," << touchPoint.y() << " states=" << navStates.join(',') << "\n";
+                out.flush();
+                stepDeadline = uptime.elapsed() + 2 * TAP_DEADLINE_MS;
+                ++step;
+                break;
+            }
+            case 1001: {
+                endTileChanged = changedFraction(endTileBefore, paneLuma(pane.tripTile), TRACK_LUMA_THRESHOLD);
+                endCardChanged = changedFraction(endCardBefore, paneLuma(pane.turnCard), TRACK_LUMA_THRESHOLD);
+                const bool inactive = navStates.size() > endStatesAtPress && navStates.last() == "2";
+                if ((!inactive || endTileChanged < 0.15 || endCardChanged < 0.5) && uptime.elapsed() < stepDeadline)
+                    return;
+                out << "receiver_endroute=ended states=" << navStates.join(',') << " tile_changed=" << endTileChanged
+                    << " card_changed=" << endCardChanged << "\n";
+                out.flush();
+                // Watch a little longer: nothing may put the route back on the cluster.
+                stepDeadline = uptime.elapsed() + 3000;
+                ++step;
+                break;
+            }
+            case 1002: {
+                if (uptime.elapsed() < stepDeadline)
+                    return;
+                endStatesAtWatch = navStates.size();
+                endFocusAtWatch = navFocusTypes.size();
+                endMediaBefore = paneLuma(pane.media);
+                const QPoint touchPoint = caps.toTouch(pane.resumeRow);
+                const oaa::hu::InputChannelHandler::Pointer pointer{touchPoint.x(), touchPoint.y(), 0};
+                input->sendTouchIndication(1, &pointer, 0, 0, uptime.elapsed() * 1000);
+                input->sendTouchIndication(1, &pointer, 0, 1, uptime.elapsed() * 1000 + 1);
+                ++taps;
+                out << "receiver_endroute=resume frame=" << pane.resumeRow.x() << "," << pane.resumeRow.y() << "\n";
+                out.flush();
+                stepDeadline = uptime.elapsed() + TAP_DEADLINE_MS;
+                ++step;
+                break;
+            }
+            case 1003: {
+                endMediaChanged = changedFraction(endMediaBefore, paneLuma(pane.media), TRACK_LUMA_THRESHOLD);
+                if (endMediaChanged < 0.02 && uptime.elapsed() < stepDeadline)
+                    return;
+                out << "receiver_endroute=resumed media_changed=" << endMediaChanged << "\n";
+                out.flush();
+                // P7.4a: tools/emulator-lab.sh shares the destination again once the app
+                // has noted the press; wait for that route to reach the cluster.
+                stepDeadline = uptime.elapsed() + 60000;
+                ++step;
+                break;
+            }
+            case 1004: {
+                const bool again = navStates.mid(endStatesAtWatch).contains("1");
+                if (!again && uptime.elapsed() < stepDeadline)
+                    return;
+                out << "receiver_endroute=again states=" << navStates.join(',') << "\n";
+                out.flush();
+                // The same three seconds for the panel as before the first press.
+                stepDeadline = uptime.elapsed() + 3000;
+                ++step;
+                break;
+            }
+            case 1005: {
+                if (uptime.elapsed() < stepDeadline)
+                    return;
+                endStatesAtSecond = navStates.size();
+                endFocusAtSecond = navFocusTypes.size();
+                const QPoint touchPoint = caps.toTouch(pane.endRoute);
+                const oaa::hu::InputChannelHandler::Pointer pointer{touchPoint.x(), touchPoint.y(), 0};
+                input->sendTouchIndication(1, &pointer, 0, 0, uptime.elapsed() * 1000);
+                input->sendTouchIndication(1, &pointer, 0, 1, uptime.elapsed() * 1000 + 1);
+                ++taps;
+                out << "receiver_endroute=pressed_again states=" << navStates.join(',') << "\n";
+                out.flush();
+                stepDeadline = uptime.elapsed() + 2 * TAP_DEADLINE_MS;
+                ++step;
+                break;
+            }
+            case 1006: {
+                // INACTIVE, and the hand-back just after it on the control channel.
+                const bool inactive = navStates.size() > endStatesAtSecond && navStates.last() == "2";
+                const bool handedBack = navFocusTypes.mid(endFocusAtSecond).contains(1);
+                if ((!inactive || !handedBack) && uptime.elapsed() < stepDeadline)
+                    return;
+                out << "receiver_endroute=ended_again states=" << navStates.join(',') << "\n";
+                out.flush();
+                ++step;
+                break;
+            }
+            // P7.8. The flex tile fills with the lab player's notifications; the first row is
+            // tapped (the read-aloud stub flashes it); after the phone removes one, the
+            // pause is pressed (the rows go, "Notifications paused") and pressed again (the
+            // shade is re-read and the rows come back).
+            case 1100: {
+                if (stepDeadline == 0) {
+                    stepDeadline = uptime.elapsed() + 4000;
+                    return;
+                }
+                if (uptime.elapsed() < stepDeadline)
+                    return;
+                callsBefore = paneLuma(pane.flexTile);
+                stepDeadline = uptime.elapsed() + 90000;
+                ++step;
+                break;
+            }
+            case 1101:
+                if (!callsChanged(pane.flexTile, 0.05, "notifications-arrived"))
+                    return;
+                stepDeadline = uptime.elapsed() + 2000;
+                ++step;
+                break;
+            case 1102:
+            case 1106:
+            case 1108: {
+                if (uptime.elapsed() < stepDeadline)
+                    return;
+                callsBefore = paneLuma(pane.flexTile);
+                if (step == 2)
+                    callsPress(pane.notificationRow, "notification-row");
+                else
+                    callsPress(pane.pauseIcon, step == 6 ? "pause" : "unpause");
+                stepDeadline = uptime.elapsed() + TAP_DEADLINE_MS;
+                ++step;
+                break;
+            }
+            case 1103:
+                if (!callsChanged(pane.flexTile, 0.005, "row-flash"))
+                    return;
+                // The app side removes one notification once it has noted the tap.
+                stepDeadline = uptime.elapsed() + 8000;
+                step = 6;
+                break;
+            case 1107:
+                if (!callsChanged(pane.flexTile, 0.03, "paused"))
+                    return;
+                stepDeadline = uptime.elapsed() + 3000;
+                ++step;
+                break;
+            case 1109:
+                if (!callsChanged(pane.flexTile, 0.03, "unpaused"))
+                    return;
+                stepDeadline = uptime.elapsed() + 120000;
+                ++step;
+                break;
+            // P7.9. A call rings: wait for Answer to be drawn green, a second more, press it.
+            case 1110: {
+                if (!answerGreen()) {
+                    if (uptime.elapsed() < stepDeadline)
+                        return;
+                    check(false, "no green Answer appeared in the flex tile");
+                    step = 99;
+                    break;
+                }
+                out << "receiver_calls=ringing answer_green=true\n";
+                stepDeadline = uptime.elapsed() + 1000;
+                ++step;
+                break;
+            }
+            case 1111: {
+                if (uptime.elapsed() < stepDeadline)
+                    return;
+                callsBefore = paneLuma(pane.flexTile);
+                callsPress(pane.answer, "answer");
+                stepDeadline = uptime.elapsed() + 8000;
+                ++step;
+                break;
+            }
+            case 1112: {
+                // Answered: the green plate gives way to the in-call row.
+                if (answerGreen() && uptime.elapsed() < stepDeadline)
+                    return;
+                if (!callsChanged(pane.flexTile, 0.10, "answered"))
+                    return;
+                check(!answerGreen(), "Answer was still green after it was pressed");
+                stepDeadline = uptime.elapsed() + 2000;
+                step = callsFull ? 13 : 23;
+                break;
+            }
+            // Full controls: Mute lights, Keypad covers the half the map does not take,
+            // each key shows in the echo strip, Close takes the keypad away.
+            case 1113:
+            case 1115:
+            case 1117:
+            case 1119: {
+                if (uptime.elapsed() < stepDeadline)
+                    return;
+                if (step == 13) {
+                    callsBefore = paneLuma(pane.muteBox);
+                    callsPress(pane.callRow[0], "mute");
+                } else if (step == 15) {
+                    callsBefore = paneLuma(pane.media);
+                    callsPress(pane.callRow[1], "keypad");
+                } else if (step == 17) {
+                    callsBefore = paneLuma(pane.keypadEcho);
+                    callsPress(pane.keys[CALLS_KEYS[callsKey]], callsKey == 2 ? "key-hash" : "key-digit");
+                } else {
+                    callsBefore = paneLuma(pane.media);
+                    callsPress(pane.keypadClose, "close");
+                }
+                stepDeadline = uptime.elapsed() + TAP_DEADLINE_MS + 2000;
+                ++step;
+                break;
+            }
+            case 1114:
+                if (!callsChanged(pane.muteBox, 0.20, "muted"))
+                    return;
+                stepDeadline = uptime.elapsed() + 1500;
+                ++step;
+                break;
+            case 1116:
+                if (!callsChanged(pane.media, 0.30, "keypad-open"))
+                    return;
+                stepDeadline = uptime.elapsed() + 1000;
+                ++step;
+                break;
+            case 1118:
+                // One key in a strip a keypad wide: a thin "1" beside "Muted" is under half a
+                // percent of it, and a static strip changes by nothing at all.
+                if (!callsChanged(pane.keypadEcho, 0.002, "echo"))
+                    return;
+                stepDeadline = uptime.elapsed() + 800;
+                step = ++callsKey < 3 ? 17 : 19;
+                break;
+            case 1120:
+                if (!callsChanged(pane.media, 0.30, "keypad-closed"))
+                    return;
+                stepDeadline = uptime.elapsed() + 1500;
+                step = 23;
+                break;
+            // Hang up: from the row of three, or alone across it on the notification route.
+            case 1123: {
+                if (uptime.elapsed() < stepDeadline)
+                    return;
+                callsBefore = paneLuma(pane.flexTile);
+                callsPress(callsFull ? pane.callRow[2] : pane.hangUpAlone, "hang-up");
+                stepDeadline = uptime.elapsed() + 10000;
+                ++step;
+                break;
+            }
+            case 1124:
+                if (!callsChanged(pane.flexTile, 0.10, "hung-up"))
+                    return;
+                // A little longer, for the frames of the tile after the call.
+                stepDeadline = uptime.elapsed() + 3000;
+                ++step;
+                break;
+            case 1125:
+                if (uptime.elapsed() < stepDeadline)
+                    return;
+                step = 30;
+                break;
+            // P8.1. The flex tile fills; the first row is tapped (read), tapped again (a
+            // second tap stops it) and tapped a third time (read again), each 2.5 s apart.
+            // 2.5 s after a tap the 800 ms flash is over, so a row still lit then is being
+            // read; how lit is reported, not checked, because only the app knows whether an
+            // engine was there to read it. Then 30 s for the last read to finish.
+            case 1200: {
+                if (stepDeadline == 0) {
+                    stepDeadline = uptime.elapsed() + 4000;
+                    return;
+                }
+                if (uptime.elapsed() < stepDeadline)
+                    return;
+                callsBefore = paneLuma(pane.flexTile);
+                stepDeadline = uptime.elapsed() + 90000;
+                ++step;
+                break;
+            }
+            case 1201:
+                // Two rows, not the calls script's three: 0.053 in the first run.
+                if (!callsChanged(pane.flexTile, 0.03, "notifications-arrived"))
+                    return;
+                stepDeadline = uptime.elapsed() + 2000;
+                ++step;
+                break;
+            case 1202:
+            case 1203:
+            case 1204: {
+                if (uptime.elapsed() < stepDeadline)
+                    return;
+                if (step == 2) {
+                    speechUnlit = paneLuma(pane.flexTile);
+                } else {
+                    const double lit = changedFraction(speechUnlit, paneLuma(pane.flexTile), TRACK_LUMA_THRESHOLD);
+                    out << "receiver_speech=lit " << (step == 3 ? "after-read" : "after-stop") << " " << lit << "\n";
+                    callsResults << QString("%1=%2").arg(step == 3 ? "lit-after-read" : "lit-after-stop").arg(lit, 0, 'f', 3);
+                }
+                callsPress(pane.notificationRow, step == 2 ? "read" : step == 3 ? "stop" : "read-again");
+                stepDeadline = uptime.elapsed() + (step == 4 ? 30000 : 2500);
+                ++step;
+                break;
+            }
+            case 1205: {
+                if (uptime.elapsed() < stepDeadline)
+                    return;
+                const double lit = changedFraction(speechUnlit, paneLuma(pane.flexTile), TRACK_LUMA_THRESHOLD);
+                out << "receiver_speech=lit after-wait " << lit << "\n";
+                callsResults << QString("lit-after-wait=%1").arg(lit, 0, 'f', 3);
+                step = 30;
+                break;
+            }
+            // P8.2. The guidance drive (700-702) with the voice toggle pressed twice on the
+            // way: off 15 s after pulling away, then on again 20 s later, before the drive
+            // leaves the route, so the re-route and the arrival are announced with it on.
+            // Each press must change the toggle's picture, and the second must put it back
+            // as it was. What was spoken is the app's report's to say.
+            case 1300: {
+                if (!navigation || !trackPlayer || !navStates.contains("1"))
+                    return;
+                if (stepDeadline == 0) {
+                    // Three seconds for the trip panel to be drawn and settle.
+                    stepDeadline = uptime.elapsed() + 3000;
+                    return;
+                }
+                if (uptime.elapsed() < stepDeadline)
+                    return;
+                voiceOnLuma = paneLuma(pane.voiceBox);
+                voiceOnFrame = decoder.frames;
+                trackPlayer->depart();
+                out << "receiver_voice=departed toggle=" << pane.voiceToggle.x() << "," << pane.voiceToggle.y()
+                    << " box=" << pane.voiceBox.width << "x" << pane.voiceBox.height << " on_frame=" << voiceOnFrame << "\n";
+                out.flush();
+                stepDeadline = uptime.elapsed() + 15000;
+                ++step;
+                break;
+            }
+            case 1301:
+            case 1303: {
+                if (uptime.elapsed() < stepDeadline)
+                    return;
+                const QPoint touchPoint = caps.toTouch(pane.voiceToggle);
+                const oaa::hu::InputChannelHandler::Pointer pointer{touchPoint.x(), touchPoint.y(), 0};
+                input->sendTouchIndication(1, &pointer, 0, 0, uptime.elapsed() * 1000);
+                input->sendTouchIndication(1, &pointer, 0, 1, uptime.elapsed() * 1000 + 1);
+                ++taps;
+                out << "receiver_voice=pressed " << (step == 1 ? "off" : "on") << " touch=" << touchPoint.x() << ","
+                    << touchPoint.y() << " states=" << navStates.join(',') << "\n";
+                out.flush();
+                stepDeadline = uptime.elapsed() + TAP_DEADLINE_MS;
+                ++step;
+                break;
+            }
+            case 1302: {
+                voiceOffChanged = changedFraction(voiceOnLuma, paneLuma(pane.voiceBox), TRACK_LUMA_THRESHOLD);
+                if (voiceOffChanged < VOICE_TOGGLE_MIN && uptime.elapsed() < stepDeadline)
+                    return;
+                voiceOffLuma = paneLuma(pane.voiceBox);
+                voiceOffFrame = decoder.frames;
+                out << "receiver_voice=off changed=" << voiceOffChanged << " frame=" << voiceOffFrame << "\n";
+                out.flush();
+                stepDeadline = uptime.elapsed() + 20000;
+                ++step;
+                break;
+            }
+            case 1304: {
+                voiceOnChanged = changedFraction(voiceOffLuma, paneLuma(pane.voiceBox), TRACK_LUMA_THRESHOLD);
+                if (voiceOnChanged < VOICE_TOGGLE_MIN && uptime.elapsed() < stepDeadline)
+                    return;
+                voiceBackToOn = changedFraction(voiceOnLuma, paneLuma(pane.voiceBox), TRACK_LUMA_THRESHOLD);
+                out << "receiver_voice=on changed=" << voiceOnChanged << " back_to_on=" << voiceBackToOn
+                    << " frame=" << decoder.frames << "\n";
+                out.flush();
+                ++step;
+                break;
+            }
+            case 1305: {
+                if (!trackPlayer->finished())
+                    return;
+                out << "receiver_guidance=stopped travelled_m=" << qRound(trackPlayer->travelled())
+                    << " states=" << navStates.join(',') << "\n";
+                out.flush();
+                guideArrival.start();
+                ++step;
+                break;
+            }
+            case 1306: {
+                if (navStates.last() != "2" && guideArrival.elapsed() < GUIDE_ARRIVAL_MS)
+                    return;
+                ++step;
+                break;
+            }
             default:
                 scriptTimer.stop();
                 QTimer::singleShot(holdMs, &app, [&]() {
@@ -2207,13 +3295,89 @@ int main(int argc, char** argv)
             check(step >= 3, QString("the track script stopped at step %1").arg(step));
         if (script == "navigation")
             check(step >= 2, QString("the navigation script stopped at step %1").arg(step));
-        if (script == "guidance" && navigation) {
+        if (script == "daynight")
+            check(step >= 4, QString("the daynight script stopped at step %1").arg(step));
+        if (script == "controls")
+            check(controlIndex == controlPresses.size(),
+                  QString("the controls script stopped after %1 presses").arg(controlIndex));
+        if (script == "calls") {
+            // P7.8, P7.9, from the receiver's side: every press changed what it should. The
+            // app's report says what each press did to the call.
+            check(step == 30, QString("the calls script stopped at step %1").arg(step));
+            out << "receiver_calls=controls " << (callsFull ? "full" : "basic") << " " << callsResults.join(' ') << "\n";
+        }
+        if (script == "speech") {
+            // P8.1, from the receiver's side: three taps landed. What each did is the app's.
+            check(step == 30, QString("the speech script stopped at step %1").arg(step));
+            out << "receiver_speech=taps " << callsResults.join(' ') << "\n";
+        }
+        if (script == "endroute" && navigation) {
+            // P7.4, from the receiver's side: the press ended the route on the cluster and
+            // on the picture. The app's report says it was End route that did it.
+            check(step >= 7, QString("the endroute script stopped at step %1").arg(step));
+            check(endStatesAtPress > 0 && navStates.mid(0, endStatesAtPress).contains("1"),
+                  "End route was pressed before the cluster had a route");
+            // Up to the end of the watch: the second route comes later, on purpose.
+            const QStringList after = endStatesAtPress < 0 || endStatesAtWatch < endStatesAtPress
+                                          ? QStringList()
+                                          : navStates.mid(endStatesAtPress, endStatesAtWatch - endStatesAtPress);
+            check(!after.isEmpty() && after.first() == "2",
+                  QString("the cluster was not told INACTIVE after End route: states %1").arg(navStates.join(',')));
+            check(!after.contains("1") && !after.contains("3"),
+                  QString("a route came back on the cluster after End route: states %1").arg(navStates.join(',')));
+            check(endTileChanged >= 0.15,
+                  QString("the trip panel's tile changed only %1 after End route").arg(endTileChanged));
+            check(endCardChanged >= 0.5,
+                  QString("the turn card's area changed only %1 after End route").arg(endCardChanged));
+            // P7.4a: the cluster handed back when the route ended, not at the end of the
+            // session; asked for again by the next route before that route reached the
+            // cluster; and handed back again at the second End route. Each request is
+            // placed by how many cluster states had arrived when it came.
+            QStringList focus;
+            for (int i = 0; i < navFocusTypes.size(); ++i)
+                focus << QString("%1@%2").arg(navFocusTypes[i]).arg(navFocusAtState[i]);
+            auto firstRequest = [&](int type, int from, int minState, int maxState) {
+                for (int i = std::max(from, 0); i < navFocusTypes.size(); ++i)
+                    if (navFocusTypes[i] == type && navFocusAtState[i] >= minState && navFocusAtState[i] <= maxState)
+                        return i;
+                return -1;
+            };
+            const int secondActive = endStatesAtWatch < 0 ? -1 : navStates.indexOf("1", endStatesAtWatch);
+            const int handBack = firstRequest(1, 0, endStatesAtPress, std::max(endStatesAtWatch, endStatesAtPress));
+            check(handBack >= 0 && handBack < std::max(endFocusAtWatch, 0),
+                  QString("the cluster was not handed back when End route was pressed: requests %1").arg(focus.join(',')));
+            check(firstRequest(2, handBack + 1, endStatesAtWatch, secondActive) > handBack && handBack >= 0
+                      && secondActive >= 0,
+                  QString("the next route did not ask for the cluster before using it: requests %1 states %2")
+                      .arg(focus.join(','), navStates.join(',')));
+            check(firstRequest(1, std::max(endFocusAtSecond, 0), std::max(endStatesAtSecond, 0), navStates.size()) >= 0
+                      && endStatesAtSecond >= 0,
+                  QString("the cluster was not handed back at the second End route: requests %1").arg(focus.join(',')));
+            out << "receiver_endroute=focus requests=" << focus.join(',') << "\n";
+            out << "receiver_endroute=states=" << navStates.join(',') << " tile_changed=" << endTileChanged
+                << " card_changed=" << endCardChanged << " media_changed=" << endMediaChanged << "\n";
+        }
+        if (script == "voice") {
+            // P8.2, from the receiver's side: both presses landed and each changed the
+            // toggle, the second back to the picture it started from. The drive itself is
+            // checked below as the guidance script's is.
+            check(step >= 7, QString("the voice script stopped at step %1").arg(step));
+            check(voiceOffChanged >= VOICE_TOGGLE_MIN,
+                  QString("the first press changed the toggle only %1").arg(voiceOffChanged));
+            check(voiceOnChanged >= VOICE_TOGGLE_MIN,
+                  QString("the second press changed the toggle only %1").arg(voiceOnChanged));
+            check(voiceBackToOn >= 0.0 && voiceBackToOn <= VOICE_TOGGLE_SAME_MAX,
+                  QString("back on, the toggle differs by %1 from how it started").arg(voiceBackToOn));
+            out << "receiver_voice=toggle off_changed=" << voiceOffChanged << " on_changed=" << voiceOnChanged
+                << " back_to_on=" << voiceBackToOn << " on_frame=" << voiceOnFrame << " off_frame=" << voiceOffFrame << "\n";
+        }
+        if (guidanceDrive && navigation) {
             // P6.5, from the receiver's own decode: the source put a route on the cluster,
             // counted it down as the vehicle drove, said REROUTING when the drive left it,
             // came back with a new route, and said the drive arrived. Nothing here knows
             // what the right maneuvers were; that the icons match the road is a question
             // for a person at a real cluster.
-            check(step >= 3, QString("the guidance script stopped at step %1").arg(step));
+            check(step >= (script == "voice" ? 7 : 3), QString("the guidance drive stopped at step %1").arg(step));
             const int active = navStates.indexOf("1");
             const int rerouting = navStates.indexOf("3", std::max(active, 0));
             const int resumed = rerouting < 0 ? -1 : navStates.indexOf("1", rerouting);
@@ -2236,6 +3400,11 @@ int main(int argc, char** argv)
                   QString("updates arrived %1 ms apart against an advertised floor of %2")
                       .arg(navigation->smallestGapMs)
                       .arg(caps.navigationIntervalMs));
+            // The route is driven over a map with street names on it, so some maneuver
+            // must say which road it turns onto, and some update which road is under the
+            // vehicle; unnamed ramps and the destination say neither.
+            check(guideNamedSteps > 0, "no maneuver named the road it turns onto");
+            check(guideCurrentRoads > 0, "no update named the road being driven");
             QStringList maneuvers;
             for (int m : guideManeuvers)
                 maneuvers << QString::number(m);
@@ -2243,6 +3412,8 @@ int main(int argc, char** argv)
                 << " maneuvers=" << maneuvers.join(',') << " countdown_falls=" << guideFalls
                 << " countdown_rises=" << guideRises << " worst_rise_m=" << qRound(guideWorstRise)
                 << " smallest_gap_ms=" << navigation->smallestGapMs
+                << " named_steps=" << guideNamedSteps << "/" << guideSteps
+                << " current_roads=" << guideCurrentRoads
                 << " travelled_m=" << (trackPlayer ? qRound(trackPlayer->travelled()) : 0) << "\n";
         }
         if (labSensors) {

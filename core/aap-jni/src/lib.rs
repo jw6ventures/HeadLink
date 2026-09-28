@@ -13,10 +13,10 @@ use jni_sys::{
     JavaVM, JNI_ERR, JNI_OK, JNI_VERSION_1_6,
 };
 use manager::{
-    EventKind, Events, Manager, CONFIG_LIMIT, GUIDANCE_ARRIVED, GUIDANCE_GUIDING, GUIDANCE_IDLE,
-    GUIDANCE_REROUTING, NOW_PLAYING_INTERNAL_ERROR, NOW_PLAYING_INVALID, START_CALLBACK_INVALID,
-    START_INTERNAL_ERROR, START_INVALID_CONFIG, START_INVALID_DESCRIPTOR, SUBMIT_INTERNAL_ERROR,
-    SUBMIT_INVALID_BUFFER,
+    EventKind, Events, Manager, CONFIG_LIMIT, GUIDANCE_ARRIVED, GUIDANCE_ENDED, GUIDANCE_GUIDING,
+    GUIDANCE_IDLE, GUIDANCE_REROUTING, NOW_PLAYING_INTERNAL_ERROR, NOW_PLAYING_INVALID,
+    START_CALLBACK_INVALID, START_INTERNAL_ERROR, START_INVALID_CONFIG, START_INVALID_DESCRIPTOR,
+    SUBMIT_INTERNAL_ERROR, SUBMIT_INVALID_BUFFER,
 };
 use std::{
     ffi::{c_void, CStr, CString},
@@ -164,7 +164,7 @@ unsafe fn register(vm: *mut JavaVM) -> jint {
         ),
         (
             c"nativeSubmitGuidance",
-            c"(JIJIILjava/lang/String;DIDI)I",
+            c"(JIJIILjava/lang/String;Ljava/lang/String;Ljava/lang/String;DIDI)I",
             native_submit_guidance as *mut c_void,
         ),
         (
@@ -431,9 +431,9 @@ unsafe extern "system" fn native_submit_now_playing(
 }
 
 /// `NativeBridge.nativeSubmitGuidance(handle, state, step, maneuver, exit, instruction,
-/// stepMetres, stepSeconds, destinationMetres, destinationSeconds)`. Publishes the guidance
-/// loop's state for a route-driven `navigation` channel (P6.5). The maneuver fields are
-/// read only for `GUIDANCE_GUIDING`. Returns 0 (changed), 1 (unchanged), or a negative
+/// onto, road, stepMetres, stepSeconds, destinationMetres, destinationSeconds)`. Publishes
+/// the guidance loop's state for a route-driven `navigation` channel (P6.5). The maneuver
+/// fields, road names included, are read only for `GUIDANCE_GUIDING`. Returns 0 (changed), 1 (unchanged), or a negative
 /// `NOW_PLAYING_*` code. Never blocks on the transport.
 #[allow(clippy::too_many_arguments)]
 unsafe extern "system" fn native_submit_guidance(
@@ -445,6 +445,8 @@ unsafe extern "system" fn native_submit_guidance(
     maneuver: jint,
     exit: jint,
     instruction: jstring,
+    onto: jstring,
+    road: jstring,
     step_metres: f64,
     step_seconds: jint,
     destination_metres: f64,
@@ -454,16 +456,23 @@ unsafe extern "system" fn native_submit_guidance(
         GUIDANCE_IDLE => RouteState::Idle,
         GUIDANCE_REROUTING => RouteState::Rerouting,
         GUIDANCE_ARRIVED => RouteState::Arrived,
-        GUIDANCE_GUIDING if step >= 0 => RouteState::Guiding(Guidance::live(
-            step as usize,
-            maneuver,
-            Some(exit),
-            &read_string(env, instruction).unwrap_or_default(),
-            step_metres,
-            i64::from(step_seconds),
-            destination_metres,
-            i64::from(destination_seconds),
-        )),
+        GUIDANCE_ENDED => RouteState::Ended,
+        GUIDANCE_GUIDING if step >= 0 => RouteState::Guiding(
+            Guidance::live(
+                step as usize,
+                maneuver,
+                Some(exit),
+                &read_string(env, instruction).unwrap_or_default(),
+                step_metres,
+                i64::from(step_seconds),
+                destination_metres,
+                i64::from(destination_seconds),
+            )
+            .with_roads(
+                &read_string(env, onto).unwrap_or_default(),
+                &read_string(env, road).unwrap_or_default(),
+            ),
+        ),
         _ => return NOW_PLAYING_INVALID,
     };
     let result = catch_unwind(AssertUnwindSafe(|| {

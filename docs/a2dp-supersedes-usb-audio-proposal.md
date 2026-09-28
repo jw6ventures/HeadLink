@@ -1,7 +1,8 @@
 # Proposal: A2DP supersedes USB audio as the route for phone audio
 
-**Status: proposed, not applied.** `spec.md` and `plan.md` are governed; nothing below has
-been written to either. Accept, reject, or amend item by item.
+**Status: accepted and applied, 22 September 2026.** James deprioritised USB audio because
+Bluetooth is working fine. §3.1–§3.4 are in `spec.md` §2.2, §11.1 and §12 and in `plan.md`
+§P5.3; §3.5 is in the README.
 
 Raised 19 September 2026 after the [A2DP coexistence runs](a2dp-coexistence-procedure.md)
 A and B both passed.

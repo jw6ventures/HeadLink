@@ -706,7 +706,9 @@ struct MediaChannel {
 /// navigation is projected or native, and native arriving unasked is the loss.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NavFocus {
-    /// Nothing asked for yet: the cluster has not announced itself.
+    /// Nothing asked for yet: the cluster has not announced itself. Also where a live
+    /// route's hand-back leaves it (P7.4, [`NavigationChannel::handed_back`]), so the next
+    /// route asks exactly as the first one did.
     Idle,
     Requested,
     /// `NAV_FOCUS_PROJECTED`: the cluster is showing this source's maneuvers.
@@ -755,6 +757,13 @@ struct NavigationChannel {
     finished: bool,
     /// `NavigationState(INACTIVE)` has been sent, so the teardown is not repeated.
     stopped: bool,
+    /// A live route ended ([`RouteState::Ended`]) and the cluster was handed back with
+    /// `NAV_FOCUS_NATIVE` mid-session (P7.4). Until the next route this source wants
+    /// nothing from the cluster: it does not ask for focus again when the cluster
+    /// announces itself or a wait runs out, and a focus response that arrives meanwhile
+    /// is the head unit's answer to the hand-back, not a refusal. Cleared by the next
+    /// request.
+    handed_back: bool,
 }
 
 impl NavigationChannel {
@@ -1090,6 +1099,15 @@ pub struct ProjectionReport {
     /// exchange, so handing the cluster back is a request for the head unit's own
     /// navigation (P6 plan §3, `ids::NAVIGATION_FOCUS_REQUEST`).
     pub navigation_focus_released: bool,
+    /// Mid-session hand-backs: a live route ended and `NAV_FOCUS_NATIVE` went out then,
+    /// rather than at the end of the session (P7.4). Each later route's request is in
+    /// `navigation_focus_requests` beside the first.
+    pub navigation_focus_handbacks: u64,
+    /// Focus responses that arrived while handed back, and the last one's type. Not
+    /// denials: nothing was being asked for. What a head unit says to a hand-back has
+    /// never been seen from a vehicle, which is why it is recorded rather than dropped.
+    pub navigation_focus_handback_answers: u64,
+    pub navigation_focus_handback_type: Option<i32>,
     /// `NavigationState` messages sent, by state, in the order the states were first
     /// sent.
     pub navigation_states_sent: Vec<(&'static str, u64)>,
@@ -1544,6 +1562,16 @@ impl fmt::Display for ProjectionReport {
             self.navigation_focus_timeout,
             self.navigation_focus_released
         )?;
+        let handback_type = self.navigation_focus_handback_type.map_or("-".into(), |t| {
+            let name = NavigationFocusType::try_from(t).map_or("unknown", |e| e.as_str_name());
+            format!("{t} ({name})")
+        });
+        writeln!(
+            f,
+            "navigation_focus_handbacks={} navigation_focus_handback_answers={} \
+             navigation_focus_handback_type={handback_type}",
+            self.navigation_focus_handbacks, self.navigation_focus_handback_answers
+        )?;
         writeln!(
             f,
             "navigation_states_sent={} navigation_notifications_sent={} \
@@ -1894,6 +1922,7 @@ impl Session {
                 sent_leg_at: None,
                 finished: false,
                 stopped: false,
+                handed_back: false,
             }),
             extra,
             limit_deadline: None,
@@ -3070,6 +3099,12 @@ impl Session {
         if !cluster && !forced {
             return;
         }
+        // Handed back after a route ended (P7.4): the cluster is the head unit's again
+        // until there is a route to put on it. A cluster that announces itself meanwhile,
+        // or a wait that runs out, is no reason to take it back.
+        if nav.handed_back && !matches!(self.guidance.snapshot(), Some(RouteState::Guiding(_))) {
+            return;
+        }
         match focus {
             NavFocus::Idle => self.request_navigation_focus(now),
             NavFocus::Projected => self.start_navigation(now),
@@ -3092,8 +3127,13 @@ impl Session {
         if let Some(nav) = self.projection_mut().navigation.as_mut() {
             nav.focus = NavFocus::Requested;
             nav.deadline = Some(now + wait);
+            nav.handed_back = false;
         }
-        self.projection_report().navigation_focus_requests += 1;
+        // Asked for again after a hand-back (P7.4): held, or about to be, so the
+        // teardown owes the head unit a hand-back again.
+        let report = self.projection_report();
+        report.navigation_focus_requests += 1;
+        report.navigation_focus_released = false;
         let request = NavigationFocusRequest {
             r#type: Some(NavigationFocusType::NavFocusProjected as i32),
         };
@@ -3129,6 +3169,24 @@ impl Session {
             .and_then(|p| p.navigation.as_ref())
             .is_some_and(|n| n.stopped)
         {
+            return;
+        }
+        // Handed back mid-session and not asking (P7.4): whatever arrives is the head
+        // unit's answer to the hand-back — Prodigy's echo of `NAV_FOCUS_NATIVE`, or
+        // whatever a vehicle says — and not a refusal of a request nobody made. Kept, not
+        // obeyed: a `PROJECTED` here does not start anything, because there is no route.
+        if self
+            .projection
+            .as_ref()
+            .and_then(|p| p.navigation.as_ref())
+            .is_some_and(|n| n.handed_back && n.focus == NavFocus::Idle)
+        {
+            let answer = decode::<NavigationFocusResponse>(body)
+                .ok()
+                .and_then(|r| r.r#type);
+            let report = self.projection_report();
+            report.navigation_focus_handback_answers += 1;
+            report.navigation_focus_handback_type = answer;
             return;
         }
         let at = self.elapsed(now);
@@ -3242,6 +3300,9 @@ impl Session {
         }
         let refresh = self.config.projection.navigation_refresh;
         let units = self.config.projection.navigation_units;
+        if self.route_focus(now) {
+            return;
+        }
         let Some(nav) = self.projection.as_ref().and_then(|p| p.navigation.as_ref()) else {
             return;
         };
@@ -3359,7 +3420,9 @@ impl Session {
                 self.send_navigation_state(S::NavStateInactive, now);
                 None
             }
-            Some(RouteState::Idle) | None if guiding => {
+            // Ended is handed back by `route_focus` before this runs; it is here so an
+            // ended route that somehow reaches it still withdraws the state.
+            Some(RouteState::Idle | RouteState::Ended) | None if guiding => {
                 self.send_navigation_state(S::NavStateInactive, now);
                 None
             }
@@ -3462,6 +3525,96 @@ impl Session {
             now,
         ) {
             self.projection_report().navigation_distances_sent += 1;
+        }
+    }
+
+    /// A live route's focus between routes (P7.4): hands the cluster back when the app
+    /// says the route ended, and asks for it again when the next route arrives. Returns
+    /// whether it acted, in which case nothing else is due on this visit.
+    ///
+    /// Runs ahead of [`NavigationChannel::sending`] because both halves happen while the
+    /// sequence is not sending: an ended route may find focus asked for and never granted,
+    /// and after a hand-back the sequence is stopped until focus comes back.
+    ///
+    /// **Edge-triggered on the focus state, not on the published one.** The link keeps
+    /// the last thing published, so `Ended` is seen on every visit until the next route;
+    /// the hand-back puts focus back to idle, and idle with `Ended` is nothing to do.
+    /// A route set so soon after the end that `Ended` was overwritten before this saw it
+    /// keeps the cluster, which is right: the driver has not finished with it.
+    fn route_focus(&mut self, now: Instant) -> bool {
+        if self.config.projection.navigation_source != Source::Route {
+            return false;
+        }
+        let Some(nav) = self.projection.as_ref().and_then(|p| p.navigation.as_ref()) else {
+            return false;
+        };
+        if !nav.open || nav.stopped {
+            return false;
+        }
+        let (focus, handed_back) = (nav.focus, nav.handed_back);
+        match self.guidance.snapshot() {
+            Some(RouteState::Ended) if focus != NavFocus::Idle => {
+                self.hand_back_navigation(now);
+                true
+            }
+            Some(RouteState::Guiding(_)) if handed_back && focus == NavFocus::Idle => {
+                // Exactly the session-start path: ask, wait for the grant (or, forced,
+                // for the wait), and only then `ACTIVE` and the first maneuver.
+                self.navigation_progress(now);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// `INACTIVE` if a route was on the cluster, then `NavigationFocusRequest(
+    /// NAV_FOCUS_NATIVE)`: the same hand-back [`Session::stop_navigation`] sends at the end
+    /// of a session, sent when the driver ends a route instead (P7.4).
+    ///
+    /// Unlike the teardown, the channel is not stopped. Focus goes back to idle and the
+    /// sequence to inactive, so the next route runs the start of the handshake again —
+    /// request, grant, `ACTIVE` — rather than finding a claim this source gave up. The
+    /// interval's deadline is kept, so a quick new route still waits out the head unit's
+    /// floor.
+    ///
+    /// Only for focus actually asked for, for the teardown's reason: a head unit told to
+    /// take back something it never gave is being told about a state this source never
+    /// touched. That `NAV_FOCUS_NATIVE` means "the head unit's own navigation" is a
+    /// reading of the enum (`ids::NAVIGATION_FOCUS_REQUEST`); what SYNC 4 does on hearing
+    /// it mid-session has not been seen.
+    fn hand_back_navigation(&mut self, now: Instant) {
+        let Some(nav) = self.projection.as_ref().and_then(|p| p.navigation.as_ref()) else {
+            return;
+        };
+        let was_active = matches!(
+            nav.wire_state,
+            Some(NavigationStateType::NavStateActive | NavigationStateType::NavStateRerouting)
+        );
+        if was_active {
+            self.send_navigation_state(NavigationStateType::NavStateInactive, now);
+        }
+        if let Some(nav) = self.projection_mut().navigation.as_mut() {
+            nav.focus = NavFocus::Idle;
+            nav.handed_back = true;
+            nav.active = false;
+            nav.started = None;
+            nav.deadline = None;
+            nav.next_send = nav.next_send.filter(|d| *d > now);
+            // The next route's first maneuver is news, whatever its identity.
+            nav.sent_leg = None;
+            nav.sent_leg_at = None;
+        }
+        let release = NavigationFocusRequest {
+            r#type: Some(NavigationFocusType::NavFocusNative as i32),
+        };
+        if self.send(
+            encode_message(ids::NAVIGATION_FOCUS_REQUEST, &release),
+            true,
+            now,
+        ) {
+            let report = self.projection_report();
+            report.navigation_focus_handbacks += 1;
+            report.navigation_focus_released = true;
         }
     }
 

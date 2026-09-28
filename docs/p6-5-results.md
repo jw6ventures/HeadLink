@@ -246,7 +246,9 @@ guidance run drives the same map, routing and destination paths.
 - The phone as the fix source (`guidance_fix_source=phone`) has never run; the lab always
   has a vehicle fix.
 
-## 7. Amendments this proposes — not applied
+## 7. Amendments this proposes
+
+**Applied 22 September 2026** to `spec.md` and `plan.md` (or to the non-governed file named), with the rest of the queue.
 
 1. **P6 plan §7**: P6.5 row to "implemented; host- and lab-verified", G10 still open. §10:
    the `VoiceHint` question answered (§1), and the re-route direction question added.

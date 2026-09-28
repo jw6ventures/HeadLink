@@ -49,6 +49,11 @@ object NativeBridge {
     const val GUIDANCE_GUIDING = 1
     const val GUIDANCE_REROUTING = 2
     const val GUIDANCE_ARRIVED = 3
+    /**
+     * The route was ended (P7.4): `INACTIVE` like [GUIDANCE_IDLE], and then the cluster is
+     * handed back to the head unit's own navigation until the next route asks for it again.
+     */
+    const val GUIDANCE_ENDED = 4
 
     /** Wire values of `PlaybackState`; see core/aap-session/src/now_playing.rs. */
     const val PLAYBACK_UNKNOWN = 0
@@ -190,7 +195,8 @@ object NativeBridge {
      * [step] identifies the maneuver and must never repeat across routes: a new identity
      * is what puts a new notification on the wire. The maneuver fields are read only for
      * [GUIDANCE_GUIDING]; [maneuver] is a raw `ManeuverType` value and [exit] a
-     * roundabout exit, 0 for none. Never throws.
+     * roundabout exit, 0 for none. [onto] is the road the maneuver turns onto and [road]
+     * the one being driven, each empty when unknown. Never throws.
      */
     fun submitGuidance(
         handle: Long,
@@ -199,6 +205,8 @@ object NativeBridge {
         maneuver: Int = 0,
         exit: Int = 0,
         instruction: String = "",
+        onto: String = "",
+        road: String = "",
         stepMetres: Double = 0.0,
         stepSeconds: Int = 0,
         destinationMetres: Double = 0.0,
@@ -206,7 +214,7 @@ object NativeBridge {
     ): Int =
         if (loadError == null) {
             nativeSubmitGuidance(
-                handle, state, step, maneuver, exit, instruction,
+                handle, state, step, maneuver, exit, instruction, onto, road,
                 stepMetres, stepSeconds, destinationMetres, destinationSeconds,
             )
         } else {
@@ -347,6 +355,8 @@ object NativeBridge {
         maneuver: Int,
         exit: Int,
         instruction: String,
+        onto: String,
+        road: String,
         stepMetres: Double,
         stepSeconds: Int,
         destinationMetres: Double,

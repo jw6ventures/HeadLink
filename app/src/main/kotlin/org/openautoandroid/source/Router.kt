@@ -1,5 +1,6 @@
 package org.openautoandroid.source
 
+import btools.router.ProfileCache
 import btools.router.RoutingContext
 import btools.router.RoutingEngine
 import btools.router.RoutingParamCollector
@@ -23,6 +24,17 @@ import kotlin.math.roundToInt
  * U-turn at about 180 m, so it only tips routes whose way ahead is nearly as short as
  * turning round. In the P6.5 lab drive it did not: the first re-route after the missed
  * turn still began by going back, and a second re-route followed six seconds later.
+ *
+ * [options] are the Routing settings in force when the request was made, so a re-route
+ * takes whatever the screen says now.
+ *
+ * [alternative] asks for BRouter's alternative route of that number, 0 being the best.
+ * BRouter finds alternative k by searching k+1 times, each search pricing the roads the
+ * earlier ones used, so the second costs about twice the first and the third three times.
+ * Only the route preview asks for one.
+ *
+ * [viaLat] and [viaLon], both or neither, put one point the route must pass through
+ * between the two ends. The preview's own alternatives are made this way ([AlternativeFinder]).
  */
 class RouteRequest @JvmOverloads constructor(
     val fromLat: Double,
@@ -30,13 +42,23 @@ class RouteRequest @JvmOverloads constructor(
     val toLat: Double,
     val toLon: Double,
     val startBearing: Double? = null,
+    val options: RouteOptions = RouteOptions(),
+    val alternative: Int = 0,
+    val viaLat: Double? = null,
+    val viaLon: Double? = null,
 ) {
     init {
         require(valid(fromLat, fromLon) && valid(toLat, toLon)) { "coordinates out of range" }
+        require(alternative in 0..MAX_ALTERNATIVE) { "alternative out of range" }
+        require((viaLat == null) == (viaLon == null)) { "a via point needs both coordinates" }
+        require(viaLat == null || valid(viaLat, viaLon!!)) { "via point out of range" }
         require(startBearing == null || startBearing.isFinite()) { "bearing out of range" }
     }
 
     companion object {
+        /** BRouter's own limit: `RoutingContext.getAlternativeIdx(0, 3)`. */
+        const val MAX_ALTERNATIVE = 3
+
         private fun valid(lat: Double, lon: Double): Boolean =
             lat.isFinite() && lon.isFinite() && lat in -90.0..90.0 && lon in -180.0..180.0
 
@@ -69,7 +91,7 @@ class RouteRequest @JvmOverloads constructor(
  * [VoiceHintReader] (P6.5) because the vendored tree keeps it package-private. Nothing here
  * guesses a turn from the geometry: BRouter already weighed the roads it did not take.
  */
-class Route(
+class Route @JvmOverloads constructor(
     val latitudes: DoubleArray,
     val longitudes: DoubleArray,
     /** BRouter's track length, metres. */
@@ -92,8 +114,85 @@ class Route(
      * with the vehicle's momentary speed. Empty when not known.
      */
     val pointSeconds: FloatArray = FloatArray(0),
+    /**
+     * Point index where each named stretch of road begins, ascending: the start and every
+     * maneuver. Empty until [StreetNames] has read the map; BRouter's data has no names.
+     */
+    val roadStarts: IntArray = IntArray(0),
+    /** The road each stretch in [roadStarts] drives, or null where the map names none. */
+    val roadNames: Array<String?> = emptyArray(),
+    /**
+     * The top speed the route was timed at, km/h: the one asked for, or lower when BRouter
+     * could not finish at it ([Router.compute]). 0 when not known.
+     */
+    val topSpeedKmh: Int = 0,
+    /**
+     * The point the route was made to pass through, [latitude, longitude], or null: set on
+     * an alternative the preview or the dashboard offered, so re-routes and a restart can
+     * keep to it ([Navigation.via]).
+     */
+    val via: DoubleArray? = null,
 ) {
     val points: Int get() = latitudes.size
+
+    /**
+     * This route with every time multiplied by [factor]: the Routing screen's time
+     * adjustment ([RouteOptions.etaPercent]), applied once, where the route is made, so the
+     * cluster, the trip panel, Home and the prompts' pace all read the same times.
+     */
+    fun withTimeScale(factor: Double): Route {
+        if (factor == 1.0) return this
+        return Route(
+            latitudes, longitudes, distanceM, (seconds * factor).roundToInt(), maneuverIndices, exitNumbers, commands,
+            FloatArray(pointSeconds.size) { (pointSeconds[it] * factor).toFloat() }, roadStarts, roadNames, topSpeedKmh, via,
+        )
+    }
+
+    /** This route with the road names [StreetNames] found. */
+    fun withRoads(starts: IntArray, names: Array<String?>): Route {
+        require(starts.size == names.size) { "one name per stretch" }
+        return Route(
+            latitudes, longitudes, distanceM, seconds, maneuverIndices, exitNumbers, commands,
+            pointSeconds, starts, names, topSpeedKmh, via,
+        )
+    }
+
+    /**
+     * The rest of this route from point [from] on: what is still ahead of the vehicle, as a
+     * route of its own, with times counted from there. Names and maneuvers are kept where
+     * they fall inside it.
+     */
+    fun remainder(from: Int): Route {
+        val start = from.coerceIn(0, points - 2)
+        if (start == 0) return this
+        val count = points - start
+        val keep = maneuverIndices.indices.filter { maneuverIndices[it] >= start }
+        val base = pointSeconds.getOrElse(start) { 0f }
+        val times = if (pointSeconds.size == points) FloatArray(count) { pointSeconds[start + it] - base } else FloatArray(0)
+        val roads = roadStarts.indices.filter { k -> k + 1 >= roadStarts.size || roadStarts[k + 1] > start }
+        val total = if (times.isNotEmpty()) times.last().roundToInt() else (seconds.toLong() * count / points).toInt()
+        var metres = 0.0
+        for (i in start until points - 1) {
+            metres += RouteFollower.distance(latitudes[i], longitudes[i], latitudes[i + 1], longitudes[i + 1])
+        }
+        return Route(
+            latitudes.copyOfRange(start, points), longitudes.copyOfRange(start, points), metres.roundToInt(), total,
+            IntArray(keep.size) { maneuverIndices[keep[it]] - start }, IntArray(keep.size) { exitNumbers[keep[it]] },
+            IntArray(keep.size) { commands[keep[it]] }, times,
+            IntArray(roads.size) { maxOf(0, roadStarts[roads[it]] - start) }, Array(roads.size) { roadNames[roads[it]] },
+            topSpeedKmh, via,
+        )
+    }
+
+    /** The road the stretch containing point [index] drives, or null when unnamed. */
+    fun roadAt(index: Int): String? {
+        var name: String? = null
+        for (k in roadStarts.indices) {
+            if (roadStarts[k] > index) break
+            name = roadNames[k]
+        }
+        return name
+    }
 }
 
 /** How one request ended. Exactly one of [route] and [error] is set. */
@@ -108,6 +207,8 @@ class RouteResult(
     val thread: String,
     /** A newer request arrived first, so this one was abandoned or never started. */
     val superseded: Boolean,
+    /** Wall time of the street-name pass after the search, within [computeMs]. */
+    val namingMs: Long = 0,
 )
 
 class RoutingException(message: String) : Exception(message)
@@ -133,6 +234,31 @@ class Router(
     fun compute(request: RouteRequest, maxRunningMs: Long, started: (RoutingEngine) -> Unit = {}): Route {
         if (!profile.isFile) throw RoutingException("no routing profile at ${profile.name}")
         if (!segments.isDirectory) throw RoutingException("no routing data installed")
+        // BRouter's last pass re-walks the route it found in detail and gives up when that
+        // costs more than 5,000 over the search's own figure. Above the profile's 90 km/h
+        // the kinematic model's two figures drift apart over long trips: Austin to Lubbock
+        // and to Amarillo failed at 113 km/h and above, Austin to Denver at 105, and every
+        // one succeeded at a lower speed. So that failure, and only it, is tried again one
+        // speed lower, down to the profile's own 90, which never failed; the route says
+        // which speed it was timed at.
+        var options = request.options
+        while (true) {
+            try {
+                return computeAt(request, options, maxRunningMs, started)
+            } catch (e: RoutingException) {
+                val lower = RouteOptions.TOP_SPEEDS_KMH.lastOrNull { it < options.topSpeedKmh }
+                if (e.message != RETRACK_FAILED || lower == null) throw e
+                options = options.copy(topSpeedKmh = lower)
+            }
+        }
+    }
+
+    private fun computeAt(
+        request: RouteRequest,
+        options: RouteOptions,
+        maxRunningMs: Long,
+        started: (RoutingEngine) -> Unit,
+    ): Route {
         val context = RoutingContext()
         context.localFunction = profile.absolutePath
         context.memoryclass = memoryClassMb
@@ -142,6 +268,12 @@ class Router(
         // are added for modes 2, 4, 8 and 9 alone — and the command is what [Maneuvers]
         // reads.
         context.turnInstructionMode = TURN_INSTRUCTION_MODE
+        context.alternativeIdx = request.alternative
+        // The Routing settings, as the profile's own parameters. A copy, because BRouter
+        // writes the kinematic model's values back into the map it is given.
+        val parameters = options.profileParameters()
+        forgetProfileOnChange(parameters)
+        context.keyValues = HashMap(parameters)
         // The vehicle's direction of travel, applied to the first step as if the route
         // began 1 km behind it on that heading: turning back then costs what a U-turn
         // costs in the profile, rather than nothing. BRouter only honours it when forced.
@@ -149,9 +281,10 @@ class Router(
             context.startDirection = (((bearing % 360.0) + 360.0) % 360.0).roundToInt() % 360
             context.forceUseStartDirection = true
         }
+        val via = request.viaLat != null && request.viaLon != null
         val waypoints = RoutingParamCollector().readPositions(
-            doubleArrayOf(request.fromLon, request.toLon),
-            doubleArrayOf(request.fromLat, request.toLat),
+            if (via) doubleArrayOf(request.fromLon, request.viaLon!!, request.toLon) else doubleArrayOf(request.fromLon, request.toLon),
+            if (via) doubleArrayOf(request.fromLat, request.viaLat!!, request.toLat) else doubleArrayOf(request.fromLat, request.toLat),
         )
         val engine = RoutingEngine(null, null, segments, waypoints, context)
         // Otherwise a route with no output file is printed to stdout as GPX.
@@ -184,15 +317,38 @@ class Router(
             exits.toIntArray(),
             commands.toIntArray(),
             seconds,
-        )
+            topSpeedKmh = options.topSpeedKmh,
+            via = if (via) doubleArrayOf(request.viaLat!!, request.viaLon!!) else null,
+        ).withTimeScale(options.timeFactor)
     }
 
     companion object {
         /** BRouter's `osmand` style, the one its own parameter collector maps car clients to. */
         const val TURN_INSTRUCTION_MODE = 3
+
+        /** BRouter's message when its final detailed pass cannot follow the route it found. */
+        const val RETRACK_FAILED = "error re-tracking track"
         private const val MICRODEGREES = 1_000_000.0
         private const val LAT_OFFSET = 90_000_000
         private const val LON_OFFSET = 180_000_000
+
+        private var lastParameters: Map<String, String>? = null
+
+        /**
+         * Drops BRouter's parsed profile when the parameters differ from the last route's.
+         *
+         * BRouter caches the parsed profile process-wide, keyed on the file's modification
+         * time plus a *sum* of the parameters' key and value hash codes. A sum cannot tell
+         * `avoid_toll=1 avoid_motorways=0` from `avoid_toll=0 avoid_motorways=1`, so the
+         * second route would silently be computed with the first one's switches. Parsing
+         * again costs a few milliseconds, and only when a setting changed.
+         */
+        @Synchronized
+        private fun forgetProfileOnChange(parameters: Map<String, String>) {
+            if (parameters == lastParameters) return
+            ProfileCache.setSize(1)
+            lastParameters = parameters
+        }
     }
 }
 
@@ -206,11 +362,17 @@ class Router(
  *
  * [done] is called on the routing thread, once per request, including superseded ones.
  */
-class RoutePlanner(
+class RoutePlanner @JvmOverloads constructor(
     private val router: () -> Router,
     private val maxRunningMs: Long = MAX_RUNNING_MS,
     /** Runs first on the routing thread; the app lowers its scheduling priority here. */
     threadSetup: () -> Unit = {},
+    /**
+     * Runs on the routing thread on every route found, before [RoutePlanner.request]'s
+     * callback: the app names its streets here ([StreetNames]). What it throws is dropped
+     * with the route kept as found, because a name is never worth losing a route over.
+     */
+    private val annotate: (Route) -> Route = { it },
 ) : AutoCloseable {
     private val latest = AtomicLong()
 
@@ -233,6 +395,34 @@ class RoutePlanner(
         return sequence
     }
 
+    /**
+     * Background work on the routing thread that gives way to every route: the live
+     * alternatives ([LiveAlternatives]). It runs only if no request arrives before it is
+     * picked up, and any request made while it runs stops its current search and tells it,
+     * through `cancelled`, to stop starting new ones. A re-route therefore waits for at most
+     * the end of one terminated search, never for the alternatives.
+     */
+    fun explore(work: (router: Router, started: (RoutingEngine) -> Unit, cancelled: () -> Boolean) -> Unit) {
+        val at = latest.get()
+        executor.execute {
+            if (latest.get() != at) return@execute
+            try {
+                work(
+                    router(),
+                    { engine ->
+                        running = engine
+                        if (latest.get() != at) engine.terminate()
+                    },
+                    { latest.get() != at },
+                )
+            } catch (e: RuntimeException) {
+                // The alternatives are extras; a failure here costs them and nothing else.
+            } finally {
+                running = null
+            }
+        }
+    }
+
     private fun run(sequence: Long, request: RouteRequest, done: (RouteResult) -> Unit) {
         val thread = Thread.currentThread().name
         if (sequence != latest.get()) {
@@ -246,7 +436,17 @@ class RoutePlanner(
                 // A newer request may have arrived between the check above and now.
                 if (sequence != latest.get()) engine.terminate()
             }
-            RouteResult(sequence, route, null, elapsedMs(start), thread, sequence != latest.get())
+            val naming = System.nanoTime()
+            val named = if (sequence == latest.get()) {
+                try {
+                    annotate(route)
+                } catch (e: RuntimeException) {
+                    route
+                }
+            } else {
+                route
+            }
+            RouteResult(sequence, named, null, elapsedMs(start), thread, sequence != latest.get(), elapsedMs(naming))
         } catch (e: RoutingException) {
             RouteResult(sequence, null, e.message ?: "routing failed", elapsedMs(start), thread, sequence != latest.get())
         } catch (e: RuntimeException) {

@@ -13,12 +13,24 @@ import java.util.concurrent.Executors
 /**
  * Installs report persistence for the whole process, before any activity or service runs,
  * and prepares the source identity so no key is generated while a head unit waits.
+ *
+ * It also turns the optional call controls' in-call service off (P7.9): a process that is
+ * only now starting has no session, so a component still enabled was left on by a crash or
+ * a killed process, and must not let Telecom wake this app for calls between drives.
  */
 class SourceApplication : Application() {
     override fun onCreate() {
         super.onCreate()
+        // The route preview's process ([PreviewActivity]) draws a map and nothing else. It
+        // must not load or create the source identity, write reports, or touch the call
+        // service: those belong to the one process that runs sessions.
+        if (getProcessName().endsWith(PreviewActivity.PROCESS_SUFFIX)) return
         ReportPersistence.install(this)
+        // A destination and route set before the process was last closed (on the phone,
+        // before walking out to the truck) come back, off the main thread.
+        NavigationStore.install(this)
         IdentityWork.ensure(this, replace = false)
+        CallControl.resetAtStartup(this)
     }
 }
 

@@ -46,6 +46,25 @@ object Routing {
     var superseded = 0
         private set
 
+    /** The Routing settings the last request was made with, or null before the first. */
+    var options: RouteOptions? = null
+        private set
+
+    /** The last request itself: what the route preview asks alternatives of. Never reported. */
+    private var lastRequest: RouteRequest? = null
+
+    /**
+     * Names the route on show: changes whenever [line] does. The route preview is handed
+     * it and hands it back with a choice, so a choice made about a route that has since
+     * been replaced (a re-route, a new destination) is refused, not applied.
+     */
+    var token = 0L
+        private set
+
+    /** Alternatives taken from the route preview. */
+    var alternativesChosen = 0
+        private set
+
     /** The newest request's result; superseded ones are counted, never shown. */
     var last: RouteResult? = null
         private set
@@ -59,14 +78,41 @@ object Routing {
     var line: Route? = null
         private set
 
+    /**
+     * The maps street names are read from: the ones the dashboard draws while it projects,
+     * installed by [ProjectionService], else every installed map. Read on the routing thread.
+     */
+    @Volatile
+    var nameMaps: List<File>? = null
+
     fun root(context: Context): File = RoutingData.root(context.applicationContext.filesDir)
 
     fun installed(context: Context): List<File> = RoutingData.installed(RoutingData.segments(root(context)))
 
     /** Starts [request] on the routing thread; the result arrives through [SessionController.note]. */
     fun request(context: Context, request: RouteRequest, from: String, startFrom: String) {
+        val planner = planner(context)
+        requests++
+        origin = from
+        start = startFrom
+        options = request.options
+        lastRequest = request
+        pending = planner.request(request) { result -> main.post { finished(result) } }
+        SessionController.note("route requested from $from (request $pending)")
+    }
+
+    /** Runs [RoutePlanner.explore] work on the routing thread; see there for how it gives way. */
+    fun explore(context: Context, work: (Router, (btools.router.RoutingEngine) -> Unit, () -> Boolean) -> Unit) {
+        planner(context).explore(work)
+    }
+
+    /** The routing thread's planner, made on first use. */
+    private fun planner(context: Context): RoutePlanner {
+        planner?.let { return it }
         val root = root(context)
-        val planner = planner ?: RoutePlanner(
+        // The planner outlives this call, so it keeps the application, never an activity.
+        val app = context.applicationContext
+        return RoutePlanner(
             router = {
                 // On the routing thread: the profile copy is file I/O too.
                 val profile = try {
@@ -82,12 +128,8 @@ object Routing {
             // which keeps it on the phone's little cores: the first build used it, and a
             // 94 km route took 23.9 s warm on the Pixel against 2.3 s on one desktop core.
             threadSetup = { Process.setThreadPriority(THREAD_PRIORITY) },
+            annotate = { route -> StreetNames.name(route, nameMaps ?: MapData.installed(app)) },
         ).also { planner = it }
-        requests++
-        origin = from
-        start = startFrom
-        pending = planner.request(request) { result -> main.post { finished(result) } }
-        SessionController.note("route requested from $from (request $pending)")
     }
 
     private fun finished(result: RouteResult) {
@@ -98,14 +140,23 @@ object Routing {
         pending = 0
         last = result
         line = result.route
+        token++
         result.route?.let { Guide.onRoute(it) } ?: Guide.onRouteFailed()
+        NavigationStore.changed()
         // No coordinates, only totals: the event log is part of the saved report.
         SessionController.note(
             result.route?.let { route ->
                 "route computed in ${result.computeMs} ms on ${result.thread}: ${route.distanceM} m, " +
-                    "${route.seconds} s, ${route.points} points, ${route.maneuverIndices.size} maneuvers"
+                    "${route.seconds} s, ${route.points} points, ${route.maneuverIndices.size} maneuvers" +
+                    lowered(route)
             } ?: "route failed after ${result.computeMs} ms on ${result.thread}: ${result.error}",
         )
+    }
+
+    /** Said when BRouter could not finish at the chosen top speed and the route was timed lower. */
+    private fun lowered(route: Route): String {
+        val asked = options?.topSpeedKmh ?: return ""
+        return if (route.topSpeedKmh in 1 until asked) "; timed at ${route.topSpeedKmh} km/h, as $asked km/h failed" else ""
     }
 
     /**
@@ -116,7 +167,67 @@ object Routing {
         pending = 0
         last = null
         line = null
+        token++
         SessionController.note("route cleared")
+    }
+
+    /**
+     * What the route preview needs to show the route on show and look for others, or null
+     * when there is none (or one is being computed).
+     */
+    fun previewRequest(): PreviewRequest? {
+        if (pending != 0L) return null
+        val route = line ?: return null
+        val request = lastRequest ?: return null
+        return PreviewRequest(
+            token, request.fromLat, request.fromLon, request.toLat, request.toLon, request.startBearing,
+            request.options, route,
+        )
+    }
+
+    /**
+     * Follows [route], an alternative the preview offered, in place of the one on show.
+     * Refused, returning false, when [chosenToken] no longer names the route on show: it
+     * was re-routed, replaced or cleared while the preview was open, and the choice was
+     * made about a route that is gone. A re-route later is BRouter's best route from
+     * wherever the vehicle is, not this alternative: nothing keeps a re-route to it.
+     */
+    fun adopt(route: Route, chosenToken: Long): Boolean {
+        if (chosenToken != token || pending != 0L || line == null) return false
+        val previous = last ?: return false
+        alternativesChosen++
+        last = RouteResult(previous.sequence, route, null, 0, "preview", false)
+        line = route
+        token++
+        Guide.onRoute(route)
+        Navigation.chose(route)
+        SessionController.note(
+            "route alternative chosen in the preview: ${route.distanceM} m, ${route.seconds} s, " +
+                "${route.points} points, ${route.maneuverIndices.size} maneuvers",
+        )
+        return true
+    }
+
+    /**
+     * Puts back the route [NavigationStore] saved before the process was closed, as the
+     * route on show, followed as if just computed. Its request is rebuilt from the route's
+     * own start and the restored destination, so the preview can still look for others.
+     */
+    fun restore(context: Context, route: Route) {
+        val destination = Navigation.destination ?: return
+        val options = AppSettings.load(context).routing
+        Guide.learnPace = options.learnPace
+        lastRequest = RouteRequest(
+            route.latitudes[0], route.longitudes[0], destination.latitude, destination.longitude, null, options,
+            viaLat = Navigation.via?.get(0), viaLon = Navigation.via?.get(1),
+        )
+        this.options = options
+        origin = "restored"
+        start = "saved"
+        last = RouteResult(0, route, null, 0, "restored", false)
+        line = route
+        token++
+        Guide.onRoute(route)
     }
 
     /** One line for the connection screen, which is the operator's own and may say more. */
@@ -153,10 +264,13 @@ object Routing {
         )
         appendLine(
             "routing_requests=$requests routing_origin=$origin routing_start=$start " +
-                "routing_pending=${pending != 0L} routing_superseded=$superseded",
+                "routing_pending=${pending != 0L} routing_superseded=$superseded " +
+                "routing_alternatives_chosen=$alternativesChosen routing_restored=${NavigationStore.restored}",
         )
+        appendLine(options?.report() ?: "routing_options=-")
         append(Navigation.report())
         append(Guide.report())
+        append(LiveAlternatives.report())
         val result = last
         if (result == null) {
             appendLine("routing_result=-")
@@ -171,7 +285,13 @@ object Routing {
             appendLine(
                 "routing_distance_m=${route.distanceM} routing_seconds=${route.seconds} " +
                     "routing_points=${route.points} routing_maneuvers=${route.maneuverIndices.size} " +
-                    "routing_roundabout_exits=${route.exitNumbers.count { it != 0 }}",
+                    "routing_roundabout_exits=${route.exitNumbers.count { it != 0 }} " +
+                "routing_top_speed_used_kmh=${route.topSpeedKmh}",
+            )
+            // How many stretches the map named, never which names: a road name says where.
+            appendLine(
+                "routing_named_roads=${route.roadNames.count { it != null }}/${route.roadStarts.size} " +
+                    "routing_naming_ms=${result.namingMs}",
             )
         } else {
             appendLine("routing_error=${result.error}")

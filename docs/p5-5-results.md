@@ -153,7 +153,9 @@ the default and `scene=demo` restores the old picture.
 - **Nothing tested the day theme with data**, only NEWTRON: the lab sends
   `is_night=true`.
 
-## 8. Spec and plan amendments this needs — proposed, not applied
+## 8. Spec and plan amendments this needs
+
+**Applied 22 September 2026** to `spec.md` and `plan.md` (or to the non-governed file named), with the rest of the queue.
 
 `spec.md` and `plan.md` are governed; these are proposals.
 

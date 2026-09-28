@@ -51,8 +51,15 @@ class ProjectionService : Service() {
         Executors.newSingleThreadExecutor { runnable -> Thread(runnable, "aap-native-control") }
     private var running: Running? = null
     private var detachRegistered = false
-    private var notifiedStage: Stage? = null
+    /** The call phase last noted, so the event log gets a line per change, not per update. */
+    private var lastCallPhase: CallPhase = CallPhase.NONE
+
+    /** The notification's sentence as last posted, so it is re-posted only when it changes. */
+    private var notifiedText: String? = null
     private val renderNotification: () -> Unit = { updateNotification() }
+
+    /** Every change to the saved places reaches the dashboard being projected, if any. */
+    private val favoritesChanged: (List<Favorite>) -> Unit = { list -> running?.pipeline?.favorites(list) }
 
     /** Main-thread record of the one session this service owns. */
     private class Running(val attempt: Attempt, val accessory: UsbAccessory?) {
@@ -67,6 +74,13 @@ class ProjectionService : Service() {
         var audio: AudioSource? = null
         /** Phone battery, network and position fallback for the dashboard (P5.5). */
         var phone: PhoneStatus? = null
+        /** The idle media pane's player apps (P7.5), beside [phone] and for as long. */
+        var players: MediaPlayers? = null
+        /** The flex tile's feeds (P7.8, P7.9), registered with [phone] and removed with it. */
+        var notificationsListener: ((List<DashNotification>) -> Unit)? = null
+        var callListener: ((CallState) -> Unit)? = null
+        /** P8.2: tells the dashboard once a second whether speech can happen, for the toggle. */
+        var speechCheck: Runnable? = null
         /**
          * Latest vehicle position and motion, and the latest restriction.
          *
@@ -164,6 +178,7 @@ class ProjectionService : Service() {
             detachRegistered = true
         }
         SessionController.addListener(renderNotification)
+        Favorites.addListener(favoritesChanged)
         val callback = SessionCallback { eventGeneration, kind, report ->
             // Native session thread: post only. Stale generations are dropped on main.
             main.post { onNativeEvent(session, eventGeneration, kind, report) }
@@ -382,6 +397,66 @@ class ProjectionService : Service() {
                 pipeline.takeMapPick()?.let { (lat, lon) ->
                     Navigation.set(this, Destination(lat, lon), DestinationSource.MAP)
                 }
+                // A tap on the favorites tile is a destination too, with the place's
+                // own name as its label; the note says only that one was tapped.
+                pipeline.takeFavoritePick()?.let { favorite ->
+                    SessionController.note("dashboard favorite tapped")
+                    Navigation.set(this, Destination(favorite.latitude, favorite.longitude, favorite.name), DestinationSource.FAVORITE)
+                }
+                // P7.4: End route on the trip panel is the phone's Clear route, pressed
+                // from the car: the route line, the card and the panel go, and the cluster
+                // is told INACTIVE through Guide.clear(). The note names no destination.
+                // A live alternative's bubble: follow that route instead, as the phone's
+                // preview would. The note says how much longer it was, never where.
+                pipeline.takeAlternativePick()?.let { LiveAlternatives.choose(this, it) }
+                if (pipeline.takeEndRoute()) {
+                    SessionController.note("dashboard end route pressed")
+                    Navigation.clear()
+                }
+                // P8.2: the voice toggle beside End route. Saved at once like day/night, so
+                // the next route and the next session start as it was left; off stops a
+                // prompt being spoken, on says the current step's prompt as confirmation.
+                pipeline.takeVoiceToggle()?.let { on ->
+                    AppSettings.update(this) { it.withVoiceGuidance(on) }
+                    Guide.voiceToggled(on)
+                    pipeline.speechAvailable(Speaker.canSpeak())
+                    // Noted last (P8.3): the note redraws the phone's screen, whose Speak turn
+                    // prompts switch then shows the saved value to a Speaker already told, so
+                    // the phone passes nothing back. On, the confirming prompt is noted first.
+                    SessionController.note("dashboard voice guidance ${if (on) "on" else "off"}")
+                }
+                // P7.8, P8.1: a notification row tapped to be read aloud, or stopped by a
+                // second tap. Speaker notes what it did, never which one or what it said.
+                pipeline.takeReadAloud()?.let { notification -> Speaker.read(notification) }
+                // P7.9: the call card and the keypad, in the order they were pressed (a
+                // keypad tap is a tone start, then its stop). Every control goes through
+                // CallControl from here, on main, never from the render thread; a key's
+                // note is null, so no digit reaches the event log.
+                for (callAction in pipeline.takeCallActions()) {
+                    callAction.note?.let { SessionController.note(it) }
+                    when (callAction.kind) {
+                        CallActionKind.ANSWER -> CallControl.answer()
+                        CallActionKind.DECLINE -> CallControl.decline()
+                        CallActionKind.HANG_UP -> CallControl.hangUp()
+                        CallActionKind.MUTE -> CallControl.setMuted(true)
+                        CallActionKind.UNMUTE -> CallControl.setMuted(false)
+                        CallActionKind.KEY_DOWN -> CallControl.dtmfDown(callAction.key)
+                        CallActionKind.KEY_UP -> CallControl.dtmfUp()
+                    }
+                }
+                // P7.5: a Resume row. The answer comes back on aap-players and is posted,
+                // like everything else the pipeline hears, to main; which app it was is
+                // never noted (Player's KDoc).
+                pipeline.takeResumePick()?.let { player ->
+                    val players = session.players
+                    if (players == null) {
+                        pipeline.resumeResult(player.key, ResumeResult.NOT_FOUND)
+                    } else {
+                        players.resume(player) { result ->
+                            main.post { if (running === session) session.pipeline?.resumeResult(player.key, result) }
+                        }
+                    }
+                }
             }
             NativeBridge.EVENT_KEY -> {
                 val pipeline = session.pipeline ?: return
@@ -394,7 +469,11 @@ class ProjectionService : Service() {
                 session.pipeline?.vehicle(reading)
                 Navigation.onVehicleFix(this)
                 // P6.5: every vehicle fix moves guidance along the route, if there is one.
-                reading.position()?.let { (lat, lon) -> Guide.onFix(this, lat, lon, "vehicle") }
+                // P8.2: with the speed its prompts are timed by, read at the scale the drive
+                // supports when a dashboard is keeping that evidence.
+                reading.position()?.let { (lat, lon) ->
+                    Guide.onFix(this, lat, lon, "vehicle", session.pipeline?.guidanceSpeed() ?: reading.speed())
+                }
             }
             NativeBridge.EVENT_RESTRICTION -> {
                 val restriction = (fields["driving_status"] ?: "-") to (fields["night"] ?: "-")
@@ -426,6 +505,11 @@ class ProjectionService : Service() {
             SessionController.note("video start event was incomplete; no encoder started")
             return
         }
+        // P7.2, P7.3, P7.6: the dashboard's display choices are the driver's, so they are
+        // read from the saved settings even on a lab attempt, whose AttemptSettings come
+        // from its extras. Nothing here reaches the wire.
+        val saved = AppSettings.load(this)
+        val dashboardScene = session.attempt.settings.scene == SessionSettings.SCENE_DASHBOARD
         val pipeline = ProjectionPipeline(
             session.handle, params, session.attempt.sessionUuid, session.attempt.settings.softwareEncoder,
             session.attempt.settings.encoderFps, session.attempt.settings.sceneArea,
@@ -441,16 +525,46 @@ class ProjectionService : Service() {
             session.attempt.settings.speedUnit,
             MapPreferences.orientation(this),
             { MapPreferences.saveOrientation(this, it) },
+            DashboardChoices(
+                markerColour = saved.markerColour,
+                dayNight = saved.dayNight,
+                diagnostics = saved.diagnostics,
+                notificationsPaused = saved.notificationsPaused,
+                rememberedNight = AppSettings.lastNight(this),
+                voiceGuidance = saved.voice.enabled,
+            ),
+            dashboardSaves(),
             MapData.resolveAll(this, session.attempt.settings.mapFile),
             java.time.ZoneId.systemDefault(),
         ) { detail ->
             // Encoder thread: tell the session, which ends with ENCODER_FAILED.
             NativeBridge.videoFailed(session.handle, detail)
         }
+        // What the sensor channel already said about night, before the first frame: it
+        // opens before the video start indication, so NIGHT_DATA has normally arrived by
+        // now, and handing it over after start() themed the map from the fallback and
+        // then switched it, reloading every tile, a moment later (P7.6).
+        session.restriction?.let { pipeline.restriction(it.first, it.second) }
         val failure = pipeline.start()
         session.pipeline = pipeline
         // Where a route starts while this projects: the same fix the map follows.
         Navigation.vehicleFix = { pipeline.vehiclePosition() }
+        // Street names come from the maps being drawn, and the header shows the next turn.
+        Routing.nameMaps = MapData.resolveAll(this, session.attempt.settings.mapFile)
+        Guide.turnListener = { pipeline.upcomingTurn(it) }
+        // The live alternatives' bubbles, starting with any already found.
+        LiveAlternatives.listener = { list ->
+            pipeline.alternatives(list.map { AlternativeMark(it.id, it.labelLat, it.labelLon, it.label) })
+        }
+        LiveAlternatives.listener?.invoke(LiveAlternatives.shown)
+        // P8.3: the phone's Voice guidance switch, shown on the trip panel's toggle.
+        Guide.voiceListener = { on ->
+            SessionController.note("phone voice guidance ${if (on) "on" else "off"}")
+            pipeline.voiceGuidance(on)
+            pipeline.speechAvailable(Speaker.canSpeak())
+        }
+        // The saved places, so the first projected frame lists them.
+        pipeline.favorites(Favorites.list(this))
         // The cluster hears what guidance says from here on, starting with what it
         // already knows (P6.5).
         Guide.attach(session.handle)
@@ -460,8 +574,7 @@ class ProjectionService : Service() {
         }
         // The same for anything the sensor channel already reported: it opens before
         // the video start indication, so these normally arrive before this pipeline
-        // exists and are never resent.
-        session.restriction?.let { pipeline.restriction(it.first, it.second) }
+        // exists and are never resent. (The restriction went in before start().)
         session.vehicle?.let { pipeline.vehicle(it) }
         // A destination set before projecting was waiting for exactly this fix, and a
         // parked vehicle sends no second one to wake it.
@@ -469,7 +582,7 @@ class ProjectionService : Service() {
         // The phone's own contribution to the header. Started with the encoder rather
         // than with the session because nothing draws it until there is a scene, and
         // stopped in stopProjection for the same reason.
-        if (session.attempt.settings.scene == SessionSettings.SCENE_DASHBOARD) {
+        if (dashboardScene) {
             val phone = PhoneStatus(applicationContext) { snapshot ->
                 session.pipeline?.phone(snapshot)
                 // The phone guides only while the vehicle has no fix of its own, the same
@@ -477,13 +590,78 @@ class ProjectionService : Service() {
                 if (session.vehicle?.position() == null) {
                     val lat = snapshot.latitude
                     val lon = snapshot.longitude
-                    if (lat != null && lon != null) Guide.onFix(this, lat, lon, "phone")
+                    if (lat != null && lon != null) {
+                        Guide.onFix(this, lat, lon, "phone", session.pipeline?.guidanceSpeed() ?: snapshot.speedMetresPerSecond)
+                    }
                 }
             }
             session.phone = phone
             phone.start()
+            // P7.5's player list for the idle media pane, running with the dashboard.
+            val players = MediaPlayers(applicationContext) { list ->
+                // aap-players thread: the pipeline is owned on main.
+                main.post { if (running === session) session.pipeline?.players(list) }
+            }
+            session.players = players
+            players.start()
+            // Whether the idle pane should say the phone could list more (P7.5). Media
+            // info, when it runs, updates this with every poll.
+            pipeline.mediaAccess(MediaAccessService.enabled(this))
+            // P7.8, P7.9: the flex tile follows the feed and the call. Registered before
+            // the feed is turned on, so the first read of the shade reaches the tile. Both
+            // may call from main or from whichever thread changed a flag, so both post.
+            val notificationsListener: (List<DashNotification>) -> Unit = { list ->
+                main.post { if (running === session) session.pipeline?.notifications(list) }
+            }
+            val callListener: (CallState) -> Unit = { state ->
+                main.post {
+                    if (running === session) {
+                        // The phase only, for the event log and the lab: never the caller.
+                        if (state.phase != lastCallPhase) {
+                            lastCallPhase = state.phase
+                            SessionController.note("call ${state.phase.name.lowercase()} (${state.source.name.lowercase()})")
+                        }
+                        session.pipeline?.call(state)
+                    }
+                }
+            }
+            lastCallPhase = CallPhase.NONE
+            session.notificationsListener = notificationsListener
+            session.callListener = callListener
+            NotificationFeed.addListener(notificationsListener)
+            CallControl.addListener(callListener)
+            pipeline.notifications(NotificationFeed.items())
+            pipeline.call(CallControl.state)
+            // P7.8: the listener reads notifications only while this is on, and only for
+            // the length of the projection; stopProjection turns it off again.
+            NotificationFeed.exclusions = saved.notificationExclusions
+            NotificationFeed.paused = saved.notificationsPaused
+            NotificationFeed.enabled = saved.notificationsOnDashboard
+            // P8.1: the speech engine, bound for the length of the projection (plan §3)
+            // and released in stopProjection. The row being read stays lit.
+            Speaker.readingListener = { key -> if (running === session) session.pipeline?.reading(key) }
+            Speaker.bind(this, saved)
+            // P8.2: turn prompts, with the saved voice settings (the toggle is Speaker's,
+            // set by bind) in the header's speed unit; and the toggle's warning mark kept
+            // current, since the engine readies and Bluetooth comes and goes on their own.
+            Guide.voiceSettings(saved.voice, session.attempt.settings.speedUnit)
+            val speechCheck = object : Runnable {
+                override fun run() {
+                    if (running !== session) return
+                    session.pipeline?.speechAvailable(Speaker.canSpeak())
+                    main.postDelayed(this, SPEECH_CHECK_MS)
+                }
+            }
+            session.speechCheck = speechCheck
+            speechCheck.run()
+            // P7.9: the in-call component is enabled only while projecting, and only with
+            // the setting on (plan §5.8); releaseIfDone turns it off at the session's end.
+            if (saved.callControls) {
+                val route = CallControl.setEnabled(this, true)
+                SessionController.note("call controls on: ${route.name.lowercase()}")
+            }
         }
-        SessionController.projectionPipelineReport(pipeline.report())
+        SessionController.projectionPipelineReport(projectionReport(session, pipeline))
         if (failure != null) {
             SessionController.note("encoder unavailable: $failure")
             NativeBridge.videoFailed(session.handle, failure)
@@ -523,17 +701,73 @@ class ProjectionService : Service() {
     }
 
     private fun stopProjection(session: Running) {
+        // Speech first, so its report counts what projection's end cut off and shows the
+        // focus grant given back (P8.1, plan §4). Its counts outlive the release.
+        Speaker.readingListener = null
+        Speaker.release()
+        session.speechCheck?.let(main::removeCallbacks)
+        session.speechCheck = null
+        // The phone-side sources' evidence, kept before they are released.
+        val backends = backendsReport(session)
         session.phone?.release()
         session.phone = null
+        session.players?.let { players -> control.execute { players.release() } }
+        session.players = null
+        // Between drives the listener reads nothing (plan §5.8).
+        NotificationFeed.enabled = false
+        session.notificationsListener?.let(NotificationFeed::removeListener)
+        session.notificationsListener = null
+        session.callListener?.let(CallControl::removeListener)
+        session.callListener = null
         stopAudio(session)
         val pipeline = session.pipeline ?: return
         session.pipeline = null
         Navigation.vehicleFix = null
+        Routing.nameMaps = null
+        Guide.turnListener = null
+        LiveAlternatives.listener = null
+        Guide.voiceListener = null
         Guide.detach(session.handle)
         // Keep the app-side evidence before the pipeline is torn down.
-        SessionController.projectionPipelineReport(pipeline.report())
+        SessionController.projectionPipelineReport(pipeline.report() + backends)
         control.execute { pipeline.release() }
     }
+
+    /** The pipeline's section of the report, then the phone-side sources'. */
+    private fun projectionReport(session: Running, pipeline: ProjectionPipeline): String =
+        pipeline.report() + backendsReport(session)
+
+    /**
+     * `key=value` lines from the phone-side sources the dashboard draws from: signal and
+     * battery, the player list, the notification feed, speech (P8.1) and call controls.
+     * Counts and levels only; each source's own report keeps names, text and numbers out
+     * (spec §10). Speech names the engine's package, as plan §9 asks, and nothing said.
+     */
+    private fun backendsReport(session: Running): String = buildString {
+        session.phone?.let { append(it.report()) }
+        session.players?.let { append(it.report()) }
+        append(NotificationFeed.report())
+        append(Speaker.report())
+        append(CallControl.report())
+    }
+
+    /**
+     * Where the dashboard's own choices go (P7.3, P7.6): ☀/☾ and Ⓟ into the saved
+     * settings, one field each, and the palette in use for the next session's first
+     * frame. Posted, so the settings write happens after the dashboard's lock is released
+     * and never under it; each is an in-memory read and an `apply()`, as the compass's
+     * orientation save is.
+     */
+    private fun dashboardSaves(): DashboardSaves = DashboardSaves(
+        dayNight = { mode -> main.post { AppSettings.update(this) { it.copy(dayNight = mode) } } },
+        notificationsPaused = { paused ->
+            main.post {
+                NotificationFeed.paused = paused
+                AppSettings.update(this) { it.copy(notificationsPaused = paused) }
+            }
+        },
+        resolvedNight = { night -> main.post { AppSettings.saveLastNight(this, night) } },
+    )
 
     /**
      * Stop from the notification, the activity, or a detach. After TLS, in the hold or a
@@ -569,6 +803,9 @@ class ProjectionService : Service() {
         session.releaseScheduled = true
         SessionController.stopping(session.attempt, "releasing native session")
         stopProjection(session)
+        // P7.9: the in-call component goes back to disabled with the session, so nothing
+        // binds it between drives.
+        if (CallControl.wanted) CallControl.setEnabled(this, false)
         session.media?.let { media ->
             session.media = null
             // Kept before the handle goes away, like the pipeline's evidence.
@@ -622,6 +859,7 @@ class ProjectionService : Service() {
     private fun stopIfIdle() {
         if (running != null) return
         SessionController.removeListener(renderNotification)
+        Favorites.removeListener(favoritesChanged)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -637,7 +875,16 @@ class ProjectionService : Service() {
                 val labSocket = session.labSocket
                 val pipeline = session.pipeline
                 val media = session.media
+                val players = session.players
+                session.phone?.release()
+                Speaker.readingListener = null
+                Speaker.release()
+                NotificationFeed.enabled = false
+                session.notificationsListener?.let(NotificationFeed::removeListener)
+                session.callListener?.let(CallControl::removeListener)
+                if (CallControl.wanted) CallControl.setEnabled(this, false)
                 control.execute {
+                    players?.release()
                     media?.release()
                     pipeline?.release()
                     NativeBridge.stop(handle)
@@ -666,7 +913,9 @@ class ProjectionService : Service() {
         return Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(getString(R.string.notification_title))
-            .setContentText(getString(R.string.notification_stage, SessionController.stage.name))
+            // The Home card's sentence (P7 plan §6.2), not the stage's enum name. The
+            // destination's label may appear: this notification is the operator's own.
+            .setContentText(notificationText())
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setContentIntent(open)
@@ -679,9 +928,15 @@ class ProjectionService : Service() {
             .build()
     }
 
+    private fun notificationText(): String =
+        StatusText.notification(SessionController.stage, Navigation.destination?.let(Navigation::describe))
+
     private fun updateNotification() {
-        if (running == null || notifiedStage == SessionController.stage) return
-        notifiedStage = SessionController.stage
+        // Keyed on the sentence rather than the stage, since a new destination changes it
+        // too; every note (a route requested or cleared among them) brings this here.
+        val text = notificationText()
+        if (running == null || notifiedText == text) return
+        notifiedText = text
         // Without POST_NOTIFICATIONS the session continues; Stop remains in the activity.
         if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
         getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification())
@@ -693,6 +948,9 @@ class ProjectionService : Service() {
         const val EXTRA_GENERATION = "org.openautoandroid.source.extra.GENERATION"
         private const val CHANNEL_ID = "session"
         private const val NOTIFICATION_ID = 1
+
+        /** How often the voice toggle's warning mark is brought up to date (P8.2). */
+        private const val SPEECH_CHECK_MS = 1_000L
 
         /** How long a graceful stop may take before the session is released anyway. */
         private const val SHUTDOWN_GRACE_MS = 3_000L

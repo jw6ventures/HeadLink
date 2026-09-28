@@ -140,6 +140,10 @@ public final class GuidanceTest {
         check(near(r.getStep().getMetres(), 600, 2) && r.getStep().getSeconds() == 60, "600 m and 60 s to the turn");
         check(near(r.getStep().getDestinationMetres(), 1200, 2) && r.getStep().getDestinationSeconds() == 120,
             "1200 m and 120 s to the destination");
+        // P7.4's trip panel: what comes after the next maneuver, from the same position.
+        check(r.getStep().getLater().size() == 1
+            && r.getStep().getLater().get(0).getManeuver().getType() == Maneuvers.DESTINATION
+            && near(r.getStep().getLater().get(0).getMetres(), 1200, 2), "after the turn, the destination 1200 m on");
         long firstId = r.getStep().getId();
 
         double previous = r.getStep().getMetres();
@@ -160,6 +164,7 @@ public final class GuidanceTest {
         check(r.getStep().getId() != firstId && r.getStep().getManeuver().getType() == Maneuvers.DESTINATION,
             "the turn is passed and the destination is next");
         check(near(r.getStep().getMetres(), 580, 2), "580 m to go: " + r.getStep().getMetres());
+        check(r.getStep().getLater().isEmpty(), "nothing after the destination");
         check(near(r.getAlongM(), 620, 2), "620 m along");
 
         r = at(f, north(575), 120_000);

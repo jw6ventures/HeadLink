@@ -25,11 +25,27 @@ class NextStep(
     /** Unique across routes: a change of this is a change of maneuver on the cluster. */
     val id: Long,
     val maneuver: Maneuver,
+    /** What the driver reads: the maneuver, with the road it turns onto when the map names it. */
+    val instruction: String,
+    /** The road the maneuver turns onto, or null when the map names none. */
+    val onto: String?,
+    /** The road being driven now, or null when unnamed or not yet on the route. */
+    val road: String?,
     val metres: Double,
     val seconds: Int,
     val destinationMetres: Double,
     val destinationSeconds: Int,
+    /**
+     * The next [RouteFollower.LATER_STEPS] maneuvers after this one, in order, for the
+     * dashboard's trip panel (P7.4). Measured from the same position as [metres], so the
+     * panel and the card cannot disagree about where the vehicle is. Never sent on the
+     * wire: the cluster is told one maneuver at a time.
+     */
+    val later: List<LaterStep> = emptyList(),
 )
+
+/** A maneuver past the next one, and the metres along the route from the vehicle to it. */
+class LaterStep(val maneuver: Maneuver, val metres: Double)
 
 /** What one fix said. [step] is null only once arrived. */
 class FollowResult(
@@ -147,23 +163,31 @@ class RouteFollower(val route: Route, private val generation: Long) {
         // While joining, the way to the first maneuver starts with the way to the route.
         val lead = if (state == FollowState.JOINING) snapped.offset else 0.0
         val from = if (state == FollowState.JOINING) 0.0 else progress
-        return FollowResult(state, snapped.offset, from, next(from, lead))
+        return FollowResult(state, snapped.offset, from, next(from, lead, state == FollowState.ON_ROUTE))
     }
 
-    private fun next(from: Double, lead: Double): NextStep {
+    private fun next(from: Double, lead: Double, onRoute: Boolean): NextStep {
         while (cursor < steps.size - 1 && along[steps[cursor].first] <= from) cursor++
         val k = cursor
         val (index, maneuver) = steps[k]
         val now = secondsAt(from)
         val stepM = along[index] - from + lead
         val destinationM = totalM - from + lead
+        val onto = if (maneuver.type == Maneuvers.DESTINATION) null else route.roadAt(index)
         return NextStep(
             id = generation * STEP_ID_STRIDE + k,
             maneuver = maneuver,
+            instruction = Maneuvers.instruction(maneuver, onto, route.roadAt(index - 1)),
+            onto = onto,
+            // Joining or off it, the vehicle is on some road the route does not know.
+            road = if (onRoute) route.roadAt(segmentAt(from)) else null,
             metres = stepM,
             seconds = (secondsAt(along[index]) - now).roundToInt(),
             destinationMetres = destinationM,
             destinationSeconds = (secondsAt(totalM) - now).roundToInt(),
+            later = (k + 1 until minOf(steps.size, k + 1 + LATER_STEPS)).map { j ->
+                LaterStep(steps[j].second, along[steps[j].first] - from + lead)
+            },
         )
     }
 
@@ -179,6 +203,23 @@ class RouteFollower(val route: Route, private val generation: Long) {
     }
 
     /** The segment (its first point) containing [metres] along, clamped to the route. */
+    /** The point index of the segment [metres] along the route falls in. */
+    fun indexAt(metres: Double): Int = segmentAt(metres)
+
+    /** Metres along the route to its point nearest ([latitude], [longitude]). */
+    fun alongNearest(latitude: Double, longitude: Double): Double {
+        var best = 0
+        var nearest = Double.MAX_VALUE
+        for (i in 0 until count) {
+            val d = distance(route.latitudes[i], route.longitudes[i], latitude, longitude)
+            if (d < nearest) {
+                nearest = d
+                best = i
+            }
+        }
+        return along[best]
+    }
+
     private fun segmentAt(metres: Double): Int {
         if (count < 2) return 0
         var lo = 0
@@ -225,6 +266,12 @@ class RouteFollower(val route: Route, private val generation: Long) {
         const val ARRIVE_M = 30.0
         private const val BACK_M = 50.0
         private const val AHEAD_M = 1_000.0
+        /**
+         * Maneuvers past the next one that the trip panel shows (plan §5.4): two, which is
+         * what fits beside each other in a tile at 800x480, and as far ahead as a glance
+         * needs — the rest of the route is on the map.
+         */
+        const val LATER_STEPS = 2
         /** Step identities are `generation * STRIDE + index`, so routes never share one. */
         const val STEP_ID_STRIDE = 1_000_000L
         private const val METRES_PER_DEGREE = 6_371_000.0 * PI / 180.0

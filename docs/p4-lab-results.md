@@ -103,7 +103,8 @@ Every run ended with the receiver's `ffmpeg_exit=0` over the captured Annex B st
 with an added x86_64 library, the receiver in the same loopback-only pod:
 
 - The app opened video channel 3 and input channel 1 (the receiver's advertised IDs),
-  AV setup returned OK with `max_unacked=10`, the receiver's unsolicited PROJECTED focus
+  AV setup returned OK with `max_unacked=10` (the Prodigy lab receiver's value, not Ford's:
+  Ford's video window is 4 and its audio window 40, both measured on the vehicle), the receiver's unsolicited PROJECTED focus
   arrived before any request (so the source sent none), and the start indication went out
   22 ms after discovery.
 - Encoder: `c2.android.avc.encoder` (software, `hardware=false`), baseline, 2,000,000 bps,

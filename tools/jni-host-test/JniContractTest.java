@@ -228,12 +228,19 @@ public final class JniContractTest {
                 == NativeBridge.NOW_PLAYING_INVALID, "a negative position is refused");
         // P6.5: the guidance hand-off has the same contract, and its signature is checked
         // at library load like every other registration.
-        check(BRIDGE.submitGuidance(987654321L, NativeBridge.GUIDANCE_GUIDING, 1L, 8, 0, "Turn right",
-                100.0, 10, 200.0, 20) == NativeBridge.NOW_PLAYING_UNKNOWN_HANDLE,
+        check(BRIDGE.submitGuidance(987654321L, NativeBridge.GUIDANCE_GUIDING, 1L, 8, 0, "Turn right onto Main Street",
+                "Main Street", "Elm Avenue", 100.0, 10, 200.0, 20) == NativeBridge.NOW_PLAYING_UNKNOWN_HANDLE,
                 "submitGuidance on an unknown handle is refused");
-        check(BRIDGE.submitGuidance(987654321L, 99, 0L, 0, 0, "", 0.0, 0, 0.0, 0)
+        check(BRIDGE.submitGuidance(987654321L, 99, 0L, 0, 0, "", "", "", 0.0, 0, 0.0, 0)
                 == NativeBridge.NOW_PLAYING_INVALID, "an undefined guidance state is refused");
-        check(BRIDGE.submitGuidance(987654321L, NativeBridge.GUIDANCE_GUIDING, -1L, 8, 0, "", 0.0, 0, 0.0, 0)
+        // P7.4: ended is a state the native side knows, so it reaches the handle lookup
+        // rather than being refused as undefined, like idle beside it.
+        check(NativeBridge.GUIDANCE_ENDED == 4, "GUIDANCE_ENDED is 4, as in the native manager");
+        check(BRIDGE.submitGuidance(987654321L, NativeBridge.GUIDANCE_ENDED, 0L, 0, 0, "", "", "", 0.0, 0, 0.0, 0)
+                == NativeBridge.NOW_PLAYING_UNKNOWN_HANDLE, "an ended route is a defined guidance state");
+        check(BRIDGE.submitGuidance(987654321L, NativeBridge.GUIDANCE_IDLE, 0L, 0, 0, "", "", "", 0.0, 0, 0.0, 0)
+                == NativeBridge.NOW_PLAYING_UNKNOWN_HANDLE, "idle is a defined guidance state");
+        check(BRIDGE.submitGuidance(987654321L, NativeBridge.GUIDANCE_GUIDING, -1L, 8, 0, "", "", "", 0.0, 0, 0.0, 0)
                 == NativeBridge.NOW_PLAYING_INVALID, "a negative maneuver identity is refused");
     }
 

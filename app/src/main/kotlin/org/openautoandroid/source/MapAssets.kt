@@ -31,7 +31,8 @@ object MapAssets : AssetAdapter() {
      * by VTM still resolves.
      *
      * Widened from VTM's `protected` so [MapEngine] can load the project's own render
-     * theme by exactly the same rules VTM loads its shaders by, rather than a second
+     * themes (`oaa/dashboard-dark.xml` and, since P7.6, `oaa/dashboard-light.xml`) by
+     * exactly the same rules VTM loads its shaders by, rather than a second
      * path-resolution scheme that could drift from this one.
      */
     public override fun openFileAsStream(file: String): InputStream? {

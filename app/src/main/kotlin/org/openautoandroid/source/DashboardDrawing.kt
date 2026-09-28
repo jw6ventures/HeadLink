@@ -6,6 +6,7 @@ import android.graphics.Path
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.graphics.RectF
+import android.graphics.Typeface
 
 /**
  * Paints the dashboard chrome — header, tiles, media controls, and the map pane's
@@ -26,8 +27,9 @@ object DashboardDrawing {
         snapshot: Dashboard.Snapshot,
         art: android.graphics.Bitmap? = null,
     ) {
-        val night = snapshot.restriction.contains("night=true")
-        val palette = if (night) Palette.NIGHT else Palette.DAY
+        // The resolved palette (P7.6), not the head unit's word: ☀/☾ may be holding
+        // day or night, and the map was themed from this same value.
+        val palette = DashboardPalette.of(snapshot.night)
 
         canvas.drawColor(palette.background, PorterDuff.Mode.SRC)
         paint.style = Paint.Style.FILL
@@ -35,6 +37,8 @@ object DashboardDrawing {
         drawHeader(canvas, paint, layout, snapshot, palette)
         drawMedia(canvas, paint, layout, snapshot, palette, art)
         drawTiles(canvas, paint, layout, snapshot, palette)
+        // P7.9: over the media pane and both tiles, and not the map, which stays in view.
+        if (snapshot.keypadOpen) drawKeypad(canvas, paint, layout, snapshot, palette)
 
         // Punched last so nothing drawn above can bleed into the pane, and so the map
         // texture underneath is what the head unit actually sees there.
@@ -45,13 +49,17 @@ object DashboardDrawing {
         drawMapOverlay(canvas, paint, layout, snapshot, palette)
     }
 
-    /** Clock on the left, vehicle motion in the middle, phone status on the right. */
+    /**
+     * Clock, speed and compass from the left; the two header icons, the signal and the
+     * battery from the right (P7.3, plan §5.1). The debug line under them is drawn only
+     * with Diagnostics on.
+     */
     private fun drawHeader(
         canvas: Canvas,
         paint: Paint,
         layout: DashboardLayout,
         snapshot: Dashboard.Snapshot,
-        palette: Palette,
+        palette: DashboardPalette,
     ) {
         paint.color = palette.header
         canvas.drawRect(
@@ -61,7 +69,10 @@ object DashboardDrawing {
 
         val big = layout.header * 0.52f
         val small = layout.header * 0.24f
-        val baseline = layout.y + layout.header * 0.62f
+        // With no debug line under it, the one line of text sits in the middle of the
+        // header rather than leaving a gap where the second line used to be.
+        val baseline = layout.y + layout.header * (if (snapshot.diagnostics) 0.62f else 0.68f)
+        val textRight = layout.headerTextRight.toFloat()
         var cursor = (layout.x + layout.margin).toFloat()
 
         paint.color = palette.text
@@ -78,6 +89,8 @@ object DashboardDrawing {
         canvas.drawText(speed, cursor, baseline, paint)
         cursor += paint.measureText(speed) + layout.margin * 2
 
+        // The needle, the point and the bearing are kept whatever else leaves the header
+        // (James, plan §1 item 9): the one way to check the map's arrow at a glance.
         val bearing = snapshot.bearing
         if (bearing != null) {
             drawCompass(canvas, paint, cursor + big * 0.4f, baseline - big * 0.3f, big * 0.4f, bearing, palette)
@@ -89,60 +102,277 @@ object DashboardDrawing {
             cursor += paint.measureText(text) + layout.margin * 2
         }
 
-        // The mark that says a drawn number rests on an inferred scale rather than a
-        // measured one. It is deliberately in the header rather than a report: the run
-        // that settles it is a drive, and the driver is the one who can see it.
-        if (snapshot.unvalidated) {
+        // The upcoming turn used to fill the rest of this line; since P7.4 it is on the
+        // turn card over the map, and the room it leaves stays empty (plan §5.1).
+
+        if (snapshot.diagnostics) {
+            // The evidence a drive has to record, behind the Diagnostics switch (plan
+            // §5.1, §6.1). "scale inferred" is back here, off the everyday header, for
+            // any shown value whose divisor no drive has confirmed.
+            paint.color = palette.dim
             paint.textSize = small
-            paint.color = palette.warning
-            canvas.drawText(UNVALIDATED, cursor, baseline, paint)
-            cursor += paint.measureText(UNVALIDATED) + layout.margin * 2
+            val left = (layout.x + layout.margin).toFloat()
+            val line = "gear ${snapshot.vehicle.gearName()}  ${snapshot.restriction}  " +
+                "sats ${snapshot.vehicle.satellitesUsed ?: "-"}/${snapshot.vehicle.satelliteCount ?: "-"}  " +
+                (if (snapshot.scaleInferred) "scale inferred  " else "") +
+                "src ${snapshot.source.label}"
+            canvas.drawText(fit(paint, line, textRight - left), left, baseline + small * 1.15f, paint)
         }
 
-        paint.color = palette.dim
-        paint.textSize = small
-        val second = baseline + small * 1.15f
-        val left = (layout.x + layout.margin).toFloat()
-        canvas.drawText(
-            "gear ${snapshot.vehicle.gearName()}  ${snapshot.restriction}  " +
-                "sats ${snapshot.vehicle.satellitesUsed ?: "-"}/${snapshot.vehicle.satelliteCount ?: "-"}",
-            left, second, paint,
-        )
-
-        drawPhoneStatus(canvas, paint, layout, snapshot, palette, baseline, second)
+        drawHeaderIcons(canvas, paint, layout, snapshot, palette)
+        drawSignal(canvas, paint, layout, snapshot, palette)
+        drawBattery(canvas, paint, layout, snapshot, palette)
     }
 
-    /** Right-aligned: position source, signal, battery. */
-    private fun drawPhoneStatus(
+    /**
+     * Ⓟ and ☀/☾, each centred in its header-height target, with the pressed one lit the
+     * way a pressed tile is.
+     */
+    private fun drawHeaderIcons(
         canvas: Canvas,
         paint: Paint,
         layout: DashboardLayout,
         snapshot: Dashboard.Snapshot,
-        palette: Palette,
-        baseline: Float,
-        second: Float,
+        palette: DashboardPalette,
     ) {
-        val right = (layout.x + layout.width - layout.margin).toFloat()
-        val small = layout.header * 0.24f
-        paint.textSize = small
-
-        val battery = snapshot.phone.batteryPercent
-        val batteryText = if (battery < 0) "—%" else "$battery%"
-        val charge = if (snapshot.phone.charging) "+" else ""
-        val line = "$charge$batteryText"
-        paint.color = when {
-            battery in 0..15 && !snapshot.phone.charging -> palette.warning
-            else -> palette.text
+        DashboardLayout.HEADER_ACTIONS.forEachIndexed { index, action ->
+            val box = layout.headerIcon(index)
+            var ground = palette.header
+            if (snapshot.pressedHeaderIcon == action) {
+                ground = palette.tilePressed
+                paint.color = ground
+                val inset = layout.margin / 2f
+                canvas.drawRoundRect(
+                    box.x + inset, box.y + inset, box.right - inset, box.bottom - inset,
+                    CORNER, CORNER, paint,
+                )
+            }
+            val cx = box.centerX.toFloat()
+            val cy = box.centerY.toFloat()
+            val radius = box.height * 0.28f
+            when (action) {
+                "pause" -> drawPause(canvas, paint, cx, cy, radius, snapshot.notificationsPaused, palette)
+                else -> drawDayNight(
+                    canvas, paint, cx, cy, radius, snapshot.night,
+                    snapshot.dayNight == DayNightMode.AUTO, ground, palette,
+                )
+            }
         }
-        paint.textSize = layout.header * 0.34f
-        canvas.drawText(line, right - paint.measureText(line), baseline, paint)
+    }
 
-        paint.textSize = small
-        paint.color = palette.dim
+    /**
+     * Ⓟ, the notification pause (plan §5.8): a thin grey ring while notifications are
+     * allowed, and bold in the accent colour while they are held back, because a pause
+     * left on is the mistake to make visible.
+     */
+    private fun drawPause(
+        canvas: Canvas,
+        paint: Paint,
+        cx: Float,
+        cy: Float,
+        radius: Float,
+        paused: Boolean,
+        palette: DashboardPalette,
+    ) {
+        paint.color = if (paused) palette.accent else palette.dim
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = if (paused) maxOf(2f, radius / 4.5f) else maxOf(1f, radius / 12f)
+        canvas.drawCircle(cx, cy, radius, paint)
+        paint.style = Paint.Style.FILL
+        val typeface = paint.typeface
+        paint.typeface = if (paused) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+        paint.textAlign = Paint.Align.CENTER
+        paint.textSize = radius * 1.25f
+        canvas.drawText("P", cx, cy + paint.textSize * 0.36f, paint)
+        paint.textAlign = Paint.Align.LEFT
+        paint.typeface = typeface
+    }
+
+    /**
+     * ☀ or ☾ for the palette actually in use, drawn rather than set in a font so it
+     * cannot fall back to a missing glyph, with a small "A" while Automatic chose it.
+     */
+    private fun drawDayNight(
+        canvas: Canvas,
+        paint: Paint,
+        cx: Float,
+        cy: Float,
+        radius: Float,
+        night: Boolean,
+        automatic: Boolean,
+        ground: Int,
+        palette: DashboardPalette,
+    ) {
+        paint.style = Paint.Style.FILL
+        paint.color = palette.text
+        if (night) {
+            // A crescent: a disc with an offset disc of the ground colour over it.
+            canvas.drawCircle(cx, cy, radius * 0.8f, paint)
+            paint.color = ground
+            canvas.drawCircle(cx + radius * 0.38f, cy - radius * 0.28f, radius * 0.68f, paint)
+        } else {
+            canvas.drawCircle(cx, cy, radius * 0.42f, paint)
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = maxOf(1.5f, radius / 7f)
+            paint.strokeCap = Paint.Cap.ROUND
+            for (ray in 0 until 8) {
+                val angle = Math.toRadians(ray * 45.0)
+                val sin = Math.sin(angle).toFloat()
+                val cos = Math.cos(angle).toFloat()
+                canvas.drawLine(
+                    cx + sin * radius * 0.62f, cy - cos * radius * 0.62f,
+                    cx + sin * radius * 0.92f, cy - cos * radius * 0.92f, paint,
+                )
+            }
+            paint.strokeCap = Paint.Cap.BUTT
+            paint.style = Paint.Style.FILL
+        }
+        if (automatic) {
+            val typeface = paint.typeface
+            paint.typeface = Typeface.DEFAULT_BOLD
+            paint.color = palette.accent
+            paint.textSize = radius * 0.72f
+            paint.textAlign = Paint.Align.CENTER
+            canvas.drawText("A", cx + radius * 0.95f, cy + radius * 1.05f, paint)
+            paint.textAlign = Paint.Align.LEFT
+            paint.typeface = typeface
+        }
+    }
+
+    /**
+     * Four bars for the primary SIM and its network type beside them, `wifi` instead
+     * while the phone is on wifi, and under the bars one row of four dots for each other
+     * SIM (plan §5.2). Unlit bars and dots are drawn faint rather than left out, so four
+     * bars always read as a scale; a row of hollow rings is a SIM with no service, and a
+     * missing row is no SIM at all.
+     */
+    private fun drawSignal(
+        canvas: Canvas,
+        paint: Paint,
+        layout: DashboardLayout,
+        snapshot: Dashboard.Snapshot,
+        palette: DashboardPalette,
+    ) {
+        val box = layout.headerSignal
+        val h = layout.header.toFloat()
+        val barsWidth = h * 0.42f
+        val gap = barsWidth / 14f
+        val barWidth = (barsWidth - 3 * gap) / 4f
+        val bottom = box.y + h * 0.55f
+        val tallest = h * 0.36f
+        val faint = (palette.dim and 0x00FFFFFF) or 0x59000000
         val bars = snapshot.phone.signalBars
-        val signal = if (bars < 0) "—" else "▂▄▆█".take(maxOf(1, bars))
-        val status = "src ${snapshot.source.label}  ${snapshot.phone.network} $signal"
-        canvas.drawText(status, right - paint.measureText(status), second, paint)
+        paint.style = Paint.Style.FILL
+        for (bar in 0 until 4) {
+            val left = box.x + bar * (barWidth + gap)
+            paint.color = if (bars > bar) palette.text else faint
+            canvas.drawRect(left, bottom - tallest * (bar + 1) / 4f, left + barWidth, bottom, paint)
+        }
+
+        val label = when {
+            snapshot.phone.network == "wifi" -> "wifi"
+            bars < 0 -> "—"
+            snapshot.phone.cellNetworkType == "-" -> ""
+            else -> snapshot.phone.cellNetworkType
+        }
+        paint.color = palette.dim
+        paint.textSize = h * 0.24f
+        val labelX = box.x + barsWidth + h * 0.06f
+        canvas.drawText(fit(paint, label, box.right - labelX), labelX, bottom, paint)
+
+        val dot = h * 0.034f
+        snapshot.phone.secondarySignalBars.take(SimSignal.MAX_SECONDARY).forEachIndexed { row, level ->
+            val y = box.y + h * (0.68f + row * 0.1f)
+            for (index in 0 until 4) {
+                val x = box.x + barsWidth * (index + 0.5f) / 4f
+                when {
+                    level < 0 -> {
+                        paint.style = Paint.Style.STROKE
+                        paint.strokeWidth = maxOf(1f, dot / 3f)
+                        paint.color = palette.dim
+                        canvas.drawCircle(x, y, dot, paint)
+                        paint.style = Paint.Style.FILL
+                    }
+                    else -> {
+                        paint.color = if (level > index) palette.text else faint
+                        canvas.drawCircle(x, y, dot, paint)
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * A battery glyph that fills with the level, a bolt over it while charging, and the
+     * percentage. The warning colour at 15% or less when not charging, as before P7.3.
+     */
+    private fun drawBattery(
+        canvas: Canvas,
+        paint: Paint,
+        layout: DashboardLayout,
+        snapshot: Dashboard.Snapshot,
+        palette: DashboardPalette,
+    ) {
+        val box = layout.headerBattery
+        val h = layout.header.toFloat()
+        val level = snapshot.phone.batteryPercent
+        val charging = snapshot.phone.charging
+        val colour = if (level in 0..15 && !charging) palette.warning else palette.text
+
+        val bodyWidth = h * 0.42f
+        val bodyHeight = h * 0.22f
+        val left = box.x.toFloat()
+        val cy = box.y + h * 0.45f
+        val top = cy - bodyHeight / 2f
+        val stroke = maxOf(1.5f, h / 50f)
+        paint.color = colour
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = stroke
+        canvas.drawRoundRect(
+            left + stroke / 2f, top, left + bodyWidth, top + bodyHeight, stroke * 1.5f, stroke * 1.5f, paint,
+        )
+        paint.style = Paint.Style.FILL
+        // The terminal nub, so the glyph reads as a battery and not a box.
+        val nub = bodyHeight * 0.45f
+        canvas.drawRect(left + bodyWidth, cy - nub / 2f, left + bodyWidth + h * 0.04f, cy + nub / 2f, paint)
+        if (level >= 0) {
+            val inset = stroke * 1.8f
+            val inner = bodyWidth - stroke / 2f - 2 * inset
+            canvas.drawRect(
+                left + stroke / 2f + inset, top + inset,
+                left + stroke / 2f + inset + inner * level.coerceIn(0, 100) / 100f, top + bodyHeight - inset, paint,
+            )
+        }
+        if (charging) {
+            // In the accent colour with an edge of the header's, so it shows over a full
+            // glyph and an empty one alike.
+            val bx = left + bodyWidth / 2f
+            val s = bodyHeight * 0.62f
+            val bolt = Path().apply {
+                moveTo(bx + s * 0.15f, cy - s)
+                lineTo(bx - s * 0.45f, cy + s * 0.12f)
+                lineTo(bx - s * 0.02f, cy + s * 0.12f)
+                lineTo(bx - s * 0.15f, cy + s)
+                lineTo(bx + s * 0.45f, cy - s * 0.12f)
+                lineTo(bx + s * 0.02f, cy - s * 0.12f)
+                close()
+            }
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = stroke
+            paint.strokeJoin = Paint.Join.ROUND
+            paint.color = palette.header
+            canvas.drawPath(bolt, paint)
+            paint.style = Paint.Style.FILL
+            paint.strokeJoin = Paint.Join.MITER
+            paint.color = palette.accent
+            canvas.drawPath(bolt, paint)
+        }
+
+        val text = if (level < 0) "—%" else "$level%"
+        paint.color = colour
+        paint.textSize = h * 0.28f
+        val textX = left + bodyWidth + h * 0.1f
+        canvas.drawText(fit(paint, text, box.right - textX), textX, box.y + h * 0.55f, paint)
     }
 
     /** A filled needle pointing along the bearing, north being up. */
@@ -153,7 +383,7 @@ object DashboardDrawing {
         cy: Float,
         radius: Float,
         bearing: Double,
-        palette: Palette,
+        palette: DashboardPalette,
     ) {
         paint.color = palette.dim
         paint.style = Paint.Style.STROKE
@@ -183,32 +413,601 @@ object DashboardDrawing {
         paint: Paint,
         layout: DashboardLayout,
         snapshot: Dashboard.Snapshot,
-        palette: Palette,
+        palette: DashboardPalette,
     ) {
         layout.tiles.forEachIndexed { index, tile ->
-            paint.color = if (snapshot.pressedTile == index) palette.tilePressed else palette.tile
+            // The favorites tile is a list, not a button: its rows light up, not the tile.
+            // Nor is the trip panel that takes its place; End route lights up on its own.
+            // Nor the flex tile since P7.8: its rows and call buttons light on their own.
+            val pressed = snapshot.pressedTile == index && index != DashboardLayout.FAVORITES_TILE &&
+                index != DashboardLayout.FLEX_TILE
+            paint.color = if (pressed) palette.tilePressed else palette.tile
             canvas.drawRoundRect(rect(tile), CORNER, CORNER, paint)
+            val trip = snapshot.trip
+            if (index == DashboardLayout.FAVORITES_TILE && trip != null) {
+                // P7.4: a trip takes the favourites' tile, label and all, for as long as
+                // the route exists (plan §5.4).
+                drawTrip(canvas, paint, layout, trip, palette)
+                return@forEachIndexed
+            }
+            when (index) {
+                DashboardLayout.FAVORITES_TILE -> {
+                    drawTileLabel(canvas, paint, layout, tile, DashboardLayout.TILE_LABELS[index], palette)
+                    drawFavorites(canvas, paint, layout, snapshot, palette)
+                }
+                else -> {
+                    // The flex tile's label follows what it shows; "Muted" is bold in the
+                    // warning colour, because a forgotten mute is the mistake to catch.
+                    val muted = snapshot.flex == FlexSource.CALL && snapshot.call.muted
+                    drawTileLabel(canvas, paint, layout, tile, snapshot.flexLabel, palette, muted)
+                    drawFlexTile(canvas, paint, layout, snapshot, palette)
+                }
+            }
+        }
+    }
+
+    private fun drawTileLabel(
+        canvas: Canvas,
+        paint: Paint,
+        layout: DashboardLayout,
+        tile: Box,
+        label: String,
+        palette: DashboardPalette,
+        alert: Boolean = false,
+    ) {
+        val typeface = paint.typeface
+        paint.color = if (alert) palette.warning else palette.dim
+        paint.textSize = tile.height / 12f * (if (alert) 1.25f else 1f)
+        if (alert) paint.typeface = Typeface.DEFAULT_BOLD
+        canvas.drawText(label, (tile.x + layout.margin).toFloat(), (tile.y + tile.height / 9f) + tile.height / 24f, paint)
+        paint.typeface = typeface
+    }
+
+    /**
+     * The flex tile's content under its label (P7.8, P7.9, plan §5.8): whichever source has
+     * something to say, a call first, then notifications, else a quiet line. Never "not
+     * configured": the tile always has a job, even when the answer is "nothing new".
+     */
+    private fun drawFlexTile(
+        canvas: Canvas,
+        paint: Paint,
+        layout: DashboardLayout,
+        snapshot: Dashboard.Snapshot,
+        palette: DashboardPalette,
+    ) {
+        when (snapshot.flex) {
+            FlexSource.CALL -> drawCallCard(canvas, paint, layout, snapshot, palette)
+            FlexSource.NOTIFICATIONS -> drawNotifications(canvas, paint, layout, snapshot, palette)
+            FlexSource.EMPTY -> {
+                val list = layout.notificationsList
+                if (list.width <= 0 || list.height <= 0) return
+                val text = if (snapshot.notificationsPaused) FlexRules.PAUSED else FlexRules.NO_NOTIFICATIONS
+                // Sized as the empty favourites are, so the two tiles' quiet states match,
+                // and brought down if the real text would still overrun.
+                paint.color = palette.dim
+                paint.textSize = layout.emptyFavoritesTextSize
+                val width = paint.measureText(text)
+                if (width > list.width) paint.textSize = paint.textSize * list.width / width * 0.95f
+                paint.textAlign = Paint.Align.CENTER
+                canvas.drawText(text, list.centerX.toFloat(), list.centerY + paint.textSize * 0.36f, paint)
+                paint.textAlign = Paint.Align.LEFT
+            }
+        }
+    }
+
+    /**
+     * The notifications, newest first, one row each (plan §5.8): the sender or title,
+     * large, across the row; under it, small, the app's name dimmed and one line of the
+     * text. The full text is not drawn: at a glance from the seat, who and which app is
+     * what a driver needs, and the rest is what reading aloud is for.
+     *
+     * The rows scroll and light exactly as the favourites do ([drawList]); a tapped row
+     * stays lit for [Dashboard.READ_FLASH_MS], so the tap is seen to land, and then for as
+     * long as it is being read aloud (P8.1).
+     */
+    private fun drawNotifications(
+        canvas: Canvas,
+        paint: Paint,
+        layout: DashboardLayout,
+        snapshot: Dashboard.Snapshot,
+        palette: DashboardPalette,
+    ) {
+        val list = layout.notificationsList
+        if (list.width <= 0 || list.height <= 0) return
+        val rows = snapshot.notifications
+        val rowHeight = layout.notificationRowHeight
+        val lit = snapshot.flashNotification?.let { key -> rows.indexOfFirst { it.key == key } }?.takeIf { it >= 0 }
+        drawList(
+            canvas, paint, layout, list, rowHeight, rows.size, snapshot.notificationsScroll,
+            snapshot.pressedNotification, lit, palette,
+        ) { index, row, textWidth ->
+            val item = rows[index]
+            val x = (row.x + layout.margin).toFloat()
+            val typeface = paint.typeface
+            // Line 1: who, bold and large, across the whole row. The app's name used to
+            // share this line and a 455 px tile then read "Lab Play… Sender…", both cut.
+            paint.typeface = Typeface.DEFAULT_BOLD
+            paint.color = palette.text
+            paint.textSize = rowHeight * 0.28f
+            canvas.drawText(fit(paint, item.title, textWidth), x, row.y + rowHeight * 0.42f, paint)
+            paint.typeface = typeface
+            // Line 2, small: "App · text", the app dimmed, then the text, cut at the end.
+            // The app's name is left out when the row already fell back to it as the title.
+            paint.textSize = rowHeight * 0.2f
+            val baseline = row.y + rowHeight * 0.8f
+            var cursor = x
+            val app = if (item.title == item.appLabel) "" else item.appLabel
+            if (app.isNotEmpty()) {
+                paint.color = palette.dim
+                val prefix = fit(paint, if (item.text.isEmpty()) app else "$app · ", textWidth * 0.6f)
+                canvas.drawText(prefix, cursor, baseline, paint)
+                cursor += paint.measureText(prefix)
+            }
+            if (item.text.isNotEmpty()) {
+                paint.color = palette.text
+                canvas.drawText(fit(paint, item.text, x + textWidth - cursor), cursor, baseline, paint)
+            }
+        }
+    }
+
+    /**
+     * The call card (P7.9, plan §5.8): the caller large under the label, and under that
+     * either Answer and Decline side by side, green and red, each half the tile and the
+     * whole height left; or, connected, the running time and a row of Mute (lit while
+     * muted), Keypad and Hang up. Mute and Keypad are left out where they cannot work, on
+     * the notification route; a call that is dialling or on hold has Hang up alone.
+     */
+    private fun drawCallCard(
+        canvas: Canvas,
+        paint: Paint,
+        layout: DashboardLayout,
+        snapshot: Dashboard.Snapshot,
+        palette: DashboardPalette,
+    ) {
+        val call = snapshot.call
+        val name = layout.callName
+        if (name.width <= 0 || name.height <= 0) return
+        val typeface = paint.typeface
+        // The caller is drawn here and nowhere else: never logged, never in the report.
+        paint.typeface = Typeface.DEFAULT_BOLD
+        paint.color = palette.text
+        paint.textSize = name.height * 0.55f
+        canvas.drawText(fit(paint, call.caller, name.width.toFloat()), name.x.toFloat(), name.y + name.height * 0.7f, paint)
+        paint.typeface = typeface
+        val duration = snapshot.callDuration
+        if (duration != null && snapshot.callActions != FlexRules.RING_ACTIONS) {
+            val box = layout.callDuration
             paint.color = palette.dim
-            paint.textSize = tile.height / 12f
-            canvas.drawText(
-                DashboardLayout.TILE_LABELS.getOrElse(index) { "tile ${index + 1}" },
-                (tile.x + layout.margin).toFloat(),
-                (tile.y + tile.height / 9f) + tile.height / 24f,
+            paint.textSize = box.height * 0.75f
+            canvas.drawText(fit(paint, duration, box.width.toFloat()), box.x.toFloat(), box.y + box.height * 0.8f, paint)
+        }
+        snapshot.callActions.forEachIndexed { index, action ->
+            val box = layout.callActionBox(snapshot.callActions, index)
+            if (box.width <= 0 || box.height <= 0) return@forEachIndexed
+            val pressed = snapshot.pressedCallAction == action
+            when (action) {
+                "answer" -> drawCallButton(canvas, paint, layout, box, "Answer", palette.answer, palette.onAction, pressed, palette)
+                "decline" -> drawCallButton(canvas, paint, layout, box, "Decline", palette.decline, palette.onAction, pressed, palette)
+                "hang-up" -> drawCallButton(canvas, paint, layout, box, "Hang up", palette.decline, palette.onAction, pressed, palette)
+                // Lit while muted in the warning colour, which also colours the "Muted"
+                // label, so the two read together.
+                "mute" -> if (call.muted) {
+                    drawCallButton(canvas, paint, layout, box, "Mute", palette.warning, palette.tile, pressed, palette)
+                } else {
+                    drawCallButton(canvas, paint, layout, box, "Mute", palette.button, palette.text, pressed, palette)
+                }
+                "keypad" -> drawCallButton(canvas, paint, layout, box, "Keypad", palette.button, palette.text, pressed, palette)
+            }
+        }
+    }
+
+    /**
+     * One call or keypad button: a filled plate with its word centred, bold, brought down
+     * to fit rather than cut. Pressed, it gets a thick rim in the text colour instead of a
+     * change of fill, so green stays green and red stays red under a finger.
+     */
+    private fun drawCallButton(
+        canvas: Canvas,
+        paint: Paint,
+        layout: DashboardLayout,
+        box: Box,
+        label: String,
+        fill: Int,
+        ink: Int,
+        pressed: Boolean,
+        palette: DashboardPalette,
+        textScale: Float = 0.26f,
+    ) {
+        paint.style = Paint.Style.FILL
+        paint.color = fill
+        canvas.drawRoundRect(rect(box), CORNER, CORNER, paint)
+        if (pressed) {
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = maxOf(3f, box.height / 20f)
+            paint.color = palette.text
+            val inset = paint.strokeWidth / 2f
+            canvas.drawRoundRect(
+                box.x + inset, box.y + inset, box.right - inset, box.bottom - inset, CORNER, CORNER, paint,
+            )
+            paint.style = Paint.Style.FILL
+        }
+        val typeface = paint.typeface
+        paint.typeface = Typeface.DEFAULT_BOLD
+        paint.color = ink
+        paint.textSize = minOf(box.height, box.width) * textScale
+        val room = box.width - layout.margin.toFloat()
+        val width = paint.measureText(label)
+        if (width > room) paint.textSize = paint.textSize * room / width * 0.95f
+        paint.textAlign = Paint.Align.CENTER
+        canvas.drawText(fit(paint, label, room), box.centerX.toFloat(), box.centerY + paint.textSize * 0.36f, paint)
+        paint.textAlign = Paint.Align.LEFT
+        paint.typeface = typeface
+    }
+
+    /**
+     * The keypad (P7.9, plan §5.8), over the media pane and both tiles: the echo strip of
+     * this call's keys with Close at its right, then 1–9, *, 0 and # in the telephone's
+     * order. On a solid plate with a rim, like the turn card, so it reads as a pop-up over
+     * the dashboard rather than as a new layout of it.
+     *
+     * **The echo is drawn and held nowhere else** (plan §5.8): keypad digits are often
+     * PINs, so they are never logged or reported. The strip shows the latest keys when
+     * there are more than fit.
+     */
+    private fun drawKeypad(
+        canvas: Canvas,
+        paint: Paint,
+        layout: DashboardLayout,
+        snapshot: Dashboard.Snapshot,
+        palette: DashboardPalette,
+    ) {
+        val pad = layout.keypad
+        if (pad.width <= 0 || pad.height <= 0) return
+        paint.style = Paint.Style.FILL
+        paint.color = palette.tile
+        canvas.drawRoundRect(rect(pad), CORNER, CORNER, paint)
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = maxOf(1f, pad.height / 300f)
+        paint.color = palette.bubbleRim
+        canvas.drawRoundRect(rect(pad), CORNER, CORNER, paint)
+        paint.style = Paint.Style.FILL
+
+        val echo = layout.keypadEcho
+        if (echo.width > 0 && echo.height > 0) {
+            paint.color = palette.background
+            canvas.drawRoundRect(rect(echo), CORNER, CORNER, paint)
+            val typeface = paint.typeface
+            paint.typeface = Typeface.MONOSPACE
+            paint.textSize = echo.height * 0.55f
+            val room = echo.width - 2f * layout.margin
+            val digits = snapshot.keypadEcho
+            // The keypad hides the tile that says "Muted", and a forgotten mute is the
+            // mistake to catch (plan §5.8), so the strip says it too while it is on.
+            var left = echo.x + layout.margin.toFloat()
+            if (snapshot.call.muted) {
+                paint.typeface = Typeface.DEFAULT_BOLD
+                paint.color = palette.warning
+                val muted = fit(paint, "Muted", room / 2f)
+                canvas.drawText(muted, left, echo.y + echo.height * 0.68f, paint)
+                left += paint.measureText(muted) + layout.margin
+                paint.typeface = Typeface.MONOSPACE
+            }
+            if (digits.isEmpty()) {
+                paint.color = palette.dim
+                paint.typeface = typeface
+                if (!snapshot.call.muted) {
+                    canvas.drawText(fit(paint, "Keypad", room), left, echo.y + echo.height * 0.68f, paint)
+                }
+            } else {
+                // The latest keys, right-aligned: the one just pressed is always in view.
+                paint.color = palette.text
+                val space = echo.right - layout.margin - left
+                var shown = digits
+                while (shown.length > 1 && paint.measureText(shown) > space) shown = shown.substring(1)
+                paint.textAlign = Paint.Align.RIGHT
+                canvas.drawText(shown, echo.right - layout.margin.toFloat(), echo.y + echo.height * 0.72f, paint)
+                paint.textAlign = Paint.Align.LEFT
+            }
+            paint.typeface = typeface
+        }
+        drawCallButton(
+            canvas, paint, layout, layout.keypadClose, "Close", palette.button, palette.text,
+            snapshot.pressedKeypadClose, palette, 0.4f,
+        )
+        FlexRules.KEYPAD_KEYS.forEachIndexed { index, key ->
+            val box = layout.keypadKey(index)
+            if (box.width <= 0 || box.height <= 0) return@forEachIndexed
+            // Lit in the accent while held, as the media buttons are: the tone is playing.
+            val pressed = snapshot.pressedKey == index
+            paint.color = if (pressed) palette.accent else palette.button
+            canvas.drawRoundRect(rect(box), CORNER, CORNER, paint)
+            val typeface = paint.typeface
+            paint.typeface = Typeface.DEFAULT_BOLD
+            paint.color = palette.text
+            paint.textSize = box.height * 0.45f
+            paint.textAlign = Paint.Align.CENTER
+            canvas.drawText(key.toString(), box.centerX.toFloat(), box.centerY + paint.textSize * 0.36f, paint)
+            paint.textAlign = Paint.Align.LEFT
+            paint.typeface = typeface
+        }
+    }
+
+    /**
+     * The trip panel (P7.4, plan §5.4): arrival time big at the top left with the time and
+     * distance remaining right-aligned beside it, the two maneuvers after the next one
+     * small underneath, and End route across the bottom.
+     *
+     * Figures guidance cannot vouch for — re-routing, or a route with no fix on it yet —
+     * are drawn as a dash rather than left as they were: a stale arrival time is worse
+     * than none. End route is drawn in every state, because it is the one way to cancel a
+     * route from the car.
+     */
+    private fun drawTrip(
+        canvas: Canvas,
+        paint: Paint,
+        layout: DashboardLayout,
+        trip: TripPanel,
+        palette: DashboardPalette,
+    ) {
+        val summary = layout.tripSummary
+        if (summary.height > 0) {
+            val h = summary.height.toFloat()
+            val left = summary.x.toFloat()
+            paint.color = palette.dim
+            paint.textSize = h * 0.22f
+            val caption = when {
+                trip.arrived -> "trip"
+                trip.rerouting -> "rerouting…"
+                else -> "arrive"
+            }
+            canvas.drawText(fit(paint, caption, summary.width.toFloat()), left, summary.y + h * 0.26f, paint)
+            val typeface = paint.typeface
+            paint.typeface = Typeface.DEFAULT_BOLD
+            paint.color = palette.text
+            paint.textSize = h * 0.52f
+            val big = if (trip.arrived) "Arrived" else trip.arrival ?: "—"
+            val bigText = fit(paint, big, summary.width.toFloat())
+            canvas.drawText(bigText, left, summary.y + h * 0.86f, paint)
+            val bigRight = left + paint.measureText(bigText)
+            paint.typeface = typeface
+            if (!trip.arrived) {
+                // Right-aligned, so the two remaining figures line up under each other
+                // whatever their widths, and stay clear of the arrival time.
+                val room = summary.right - bigRight - layout.margin
+                paint.textSize = h * 0.3f
+                paint.textAlign = Paint.Align.RIGHT
+                paint.color = palette.text
+                canvas.drawText(fit(paint, trip.remaining ?: "—", room), summary.right.toFloat(), summary.y + h * 0.44f, paint)
+                paint.color = palette.dim
+                canvas.drawText(fit(paint, trip.distance ?: "", room), summary.right.toFloat(), summary.y + h * 0.86f, paint)
+                paint.textAlign = Paint.Align.LEFT
+            }
+        }
+
+        trip.later.take(RouteFollower.LATER_STEPS).forEachIndexed { index, step ->
+            val cell = layout.tripLater(index)
+            if (cell.height <= 0 || cell.width <= 0) return@forEachIndexed
+            // At 800x480 a cell is about 83 px wide: the icon takes a third, so the distance
+            // beside it is never cut short.
+            val side = minOf(cell.height * 3 / 4, cell.width / 3)
+            val icon = Box(cell.x, cell.y + (cell.height - side) / 2, side, side)
+            drawManeuver(canvas, paint, Maneuvers.glyph(step.maneuver, step.exit), icon, palette.text, palette.dim, palette.tile)
+            paint.color = palette.text
+            paint.textSize = cell.height * 0.36f
+            val textX = icon.right + layout.margin / 2f
+            canvas.drawText(fit(paint, step.distance, cell.right - textX), textX, cell.y + cell.height * 0.64f, paint)
+        }
+
+        val button = layout.endRoute
+        if (button.height > 0) {
+            paint.color = if (trip.endPressed) palette.accent else palette.button
+            canvas.drawRoundRect(rect(button), CORNER, CORNER, paint)
+            val typeface = paint.typeface
+            paint.typeface = Typeface.DEFAULT_BOLD
+            paint.color = palette.text
+            // Since P8.2 the button shares its row with the voice toggle, so the words are
+            // sized to its width as well as its height: about 4.5 em in bold, 5 allowed.
+            paint.textSize = minOf(button.height * 0.28f, (button.width - 2f * layout.margin) / 5f)
+            val text = fit(paint, "End route", button.width - 2f * layout.margin)
+            paint.textAlign = Paint.Align.CENTER
+            canvas.drawText(text, button.centerX.toFloat(), button.centerY + paint.textSize * 0.36f, paint)
+            paint.textAlign = Paint.Align.LEFT
+            paint.typeface = typeface
+        }
+        drawVoiceToggle(canvas, paint, layout.voiceToggle, trip, palette)
+    }
+
+    /**
+     * The voice-guidance toggle (P8.2, P8 plan §6): a speaker drawn from strokes, as the
+     * maneuver icons are. On, it is lit in the accent with two sound waves; off, it is dim
+     * and slashed. Whenever speech cannot happen — no engine, or no Bluetooth output — a
+     * small warning triangle sits at its top right whichever way it is set, so "why is it
+     * silent" is answered from the driver's seat.
+     */
+    private fun drawVoiceToggle(canvas: Canvas, paint: Paint, box: Box, trip: TripPanel, palette: DashboardPalette) {
+        if (box.width <= 0 || box.height <= 0) return
+        paint.style = Paint.Style.FILL
+        paint.color = if (trip.voicePressed) palette.accent else palette.button
+        canvas.drawRoundRect(rect(box), CORNER, CORNER, paint)
+        val s = minOf(box.width, box.height) * 0.8f
+        val cx = box.centerX.toFloat()
+        val cy = box.centerY.toFloat()
+        val colour = when {
+            trip.voicePressed -> palette.text
+            trip.voiceOn -> palette.accent
+            else -> palette.dim
+        }
+        // The speaker: a small box and the cone opening to the right of it.
+        val left = cx - s * 0.36f
+        val neck = left + s * 0.16f
+        val mouth = left + s * 0.38f
+        paint.color = colour
+        canvas.drawRect(left, cy - s * 0.11f, neck, cy + s * 0.11f, paint)
+        canvas.drawPath(
+            Path().apply {
+                moveTo(neck, cy - s * 0.11f)
+                lineTo(mouth, cy - s * 0.3f)
+                lineTo(mouth, cy + s * 0.3f)
+                lineTo(neck, cy + s * 0.11f)
+                close()
+            },
+            paint,
+        )
+        paint.style = Paint.Style.STROKE
+        paint.strokeCap = Paint.Cap.ROUND
+        paint.strokeWidth = maxOf(1.5f, s * 0.07f)
+        if (trip.voiceOn) {
+            for (r in floatArrayOf(s * 0.17f, s * 0.32f)) {
+                canvas.drawArc(RectF(mouth - r, cy - r, mouth + r, cy + r), -45f, 90f, false, paint)
+            }
+        } else {
+            // The slash, corner to corner across the speaker, in the text colour so it
+            // reads over the dim speaker and the lit press alike.
+            paint.color = palette.text
+            canvas.drawLine(cx - s * 0.4f, cy - s * 0.4f, cx + s * 0.4f, cy + s * 0.4f, paint)
+        }
+        paint.style = Paint.Style.FILL
+        if (trip.voiceWarning) {
+            val t = s * 0.36f
+            val right = box.right - maxOf(2f, box.width * 0.06f)
+            val top = box.y + maxOf(2f, box.height * 0.05f)
+            paint.color = palette.warning
+            canvas.drawPath(
+                Path().apply {
+                    moveTo(right - t / 2f, top)
+                    lineTo(right, top + t * 0.87f)
+                    lineTo(right - t, top + t * 0.87f)
+                    close()
+                },
                 paint,
             )
-            // Named and empty on purpose: the slot exists, nothing is assigned to it
-            // yet, and an operator should be able to see that from the seat rather
-            // than wonder whether a feature has failed.
+            paint.color = palette.button
+            paint.strokeWidth = maxOf(1f, t * 0.12f)
+            paint.style = Paint.Style.STROKE
+            canvas.drawLine(right - t / 2f, top + t * 0.3f, right - t / 2f, top + t * 0.58f, paint)
+            paint.style = Paint.Style.FILL
+            canvas.drawCircle(right - t / 2f, top + t * 0.72f, maxOf(0.75f, t * 0.06f), paint)
+        }
+    }
+
+    /**
+     * The saved places, one a row, with the pressed one lit and a scrollbar along the
+     * right edge whenever there are more rows than fit.
+     *
+     * Clipped to the list box: a list scrolled part-way has a row straddling each edge,
+     * and drawing those in full would put text over the tile's label above and its
+     * rounded corner below. An empty list says how to fill it, so a tile with nothing in
+     * it reads as unconfigured rather than broken.
+     */
+    private fun drawFavorites(
+        canvas: Canvas,
+        paint: Paint,
+        layout: DashboardLayout,
+        snapshot: Dashboard.Snapshot,
+        palette: DashboardPalette,
+    ) {
+        val list = layout.favoritesList
+        if (list.width <= 0 || list.height <= 0) return
+        val favorites = snapshot.favorites
+        if (favorites.isEmpty()) {
+            // Two centred lines, sized to fit rather than cut off (plan §5.7): the layout's
+            // size is an estimate, so the real text is measured and the size brought down
+            // further if either line would still overrun.
             paint.color = palette.dim
-            paint.textSize = tile.height / 14f
-            val text = "not configured"
+            paint.textSize = layout.emptyFavoritesTextSize
+            val widest = DashboardLayout.EMPTY_FAVORITES.maxOf { paint.measureText(it) }
+            if (widest > list.width) paint.textSize = paint.textSize * list.width / widest
+            paint.textAlign = Paint.Align.CENTER
+            val gap = paint.textSize * 1.3f
+            DashboardLayout.EMPTY_FAVORITES.forEachIndexed { line, text ->
+                val y = list.centerY + (line - (DashboardLayout.EMPTY_FAVORITES.size - 1) / 2f) * gap + paint.textSize * 0.36f
+                canvas.drawText(text, list.centerX.toFloat(), y, paint)
+            }
+            paint.textAlign = Paint.Align.LEFT
+            return
+        }
+
+        val rowHeight = layout.favoriteRowHeight
+        paint.textSize = rowHeight * 0.4f
+        drawList(
+            canvas, paint, layout, list, rowHeight, favorites.size, snapshot.favoritesScroll,
+            snapshot.pressedFavorite, null, palette,
+        ) { index, row, textWidth ->
+            paint.color = palette.text
             canvas.drawText(
-                text,
-                tile.centerX - paint.measureText(text) / 2f,
-                tile.centerY.toFloat(),
+                fit(paint, favorites[index].name, textWidth),
+                (row.x + layout.margin).toFloat(),
+                row.y + rowHeight * 0.64f,
                 paint,
             )
         }
+    }
+
+    /**
+     * A scrolling list of rows in [list] (the favourites since P6.6, the notifications
+     * since P7.8): [drawRow] draws each row that touches the box, given the width its text
+     * may take; this draws the pressed or [lit] row's highlight, the hairlines between
+     * rows, and the scrollbar along the right edge whenever there are more rows than fit.
+     *
+     * Clipped to the list box: a list scrolled part-way has a row straddling each edge,
+     * and drawing those in full would put text over the tile's label above and its
+     * rounded corner below.
+     */
+    private fun drawList(
+        canvas: Canvas,
+        paint: Paint,
+        layout: DashboardLayout,
+        list: Box,
+        rowHeight: Int,
+        count: Int,
+        scroll: Int,
+        pressed: Int,
+        lit: Int?,
+        palette: DashboardPalette,
+        drawRow: (index: Int, row: Box, textWidth: Float) -> Unit,
+    ) {
+        val maxScroll = layout.listMaxScroll(list, rowHeight, count)
+        val barWidth = if (maxScroll > 0) maxOf(2f, layout.margin / 2f) else 0f
+        val textWidth = list.width - barWidth - 2f * layout.margin
+
+        canvas.save()
+        canvas.clipRect(rect(list))
+        // Only the rows that touch the box are drawn; the rest are off the top or bottom.
+        val first = maxOf(0, scroll / rowHeight)
+        val last = minOf(count - 1, (scroll + list.height) / rowHeight)
+        for (index in first..last) {
+            val row = layout.listRow(list, rowHeight, index, scroll)
+            if (pressed == index || lit == index) {
+                paint.color = palette.button
+                canvas.drawRoundRect(
+                    row.x.toFloat(), row.y.toFloat(), row.right - barWidth, row.bottom.toFloat(),
+                    CORNER, CORNER, paint,
+                )
+            }
+            val size = paint.textSize
+            drawRow(index, row, textWidth)
+            paint.textSize = size
+            // A hairline under every row but the last, so rows read as rows.
+            if (index < count - 1) {
+                paint.color = palette.header
+                canvas.drawRect(
+                    (row.x + layout.margin).toFloat(), row.bottom - 1f,
+                    row.right - barWidth - layout.margin, row.bottom.toFloat(), paint,
+                )
+            }
+        }
+        if (maxScroll > 0) {
+            // Track the height of the box; thumb the fraction of the list in view, placed
+            // by the fraction scrolled. The one thing on the tile that says there is more.
+            paint.color = palette.header
+            canvas.drawRect(list.right - barWidth, list.y.toFloat(), list.right.toFloat(), list.bottom.toFloat(), paint)
+            val content = (count * rowHeight).toFloat()
+            val thumb = maxOf(barWidth * 2f, list.height * list.height / content)
+            val top = list.y + (list.height - thumb) * scroll / maxScroll
+            paint.color = palette.dim
+            canvas.drawRect(list.right - barWidth, top, list.right.toFloat(), top + thumb, paint)
+        }
+        canvas.restore()
     }
 
     /** The full-width now-playing pane: cover art, two lines of text, three buttons. */
@@ -217,12 +1016,18 @@ object DashboardDrawing {
         paint: Paint,
         layout: DashboardLayout,
         snapshot: Dashboard.Snapshot,
-        palette: Palette,
+        palette: DashboardPalette,
         art: android.graphics.Bitmap?,
     ) {
         val tile = layout.media
         paint.color = palette.tile
         canvas.drawRoundRect(rect(tile), CORNER, CORNER, paint)
+
+        if (snapshot.mediaIdle) {
+            // P7.5: nothing is playing, so the pane offers what could be (plan §5.5).
+            drawPlayers(canvas, paint, layout, snapshot, palette)
+            return
+        }
 
         drawAlbumArt(canvas, paint, layout, palette, art)
 
@@ -276,6 +1081,106 @@ object DashboardDrawing {
     }
 
     /**
+     * The idle media pane (P7.5, plan §5.5): the player apps, most recently active first,
+     * as many as [DashboardLayout.PLAYER_ROWS], each a row with a Resume button, and
+     * without notification access one small line saying the phone could list more.
+     *
+     * A press is answered on the row itself: greyed with "Starting…" while it is pending,
+     * "Couldn't resume" in the warning colour when it failed. A Resume that works shows
+     * itself by the pane turning into now-playing, once the player's session says so.
+     */
+    private fun drawPlayers(
+        canvas: Canvas,
+        paint: Paint,
+        layout: DashboardLayout,
+        snapshot: Dashboard.Snapshot,
+        palette: DashboardPalette,
+    ) {
+        val hint = !snapshot.mediaAccess
+        val players = snapshot.players.take(DashboardLayout.PLAYER_ROWS)
+        if (players.isEmpty()) {
+            val area = layout.playerRow(0, hint)
+            paint.color = palette.dim
+            paint.textSize = area.height * 0.26f
+            paint.textAlign = Paint.Align.CENTER
+            val text = fit(paint, "No media players found", layout.media.width - 2f * layout.margin)
+            val middle = (layout.media.y + (if (hint) layout.playerHint.y else layout.media.bottom)) / 2f
+            canvas.drawText(text, layout.media.centerX.toFloat(), middle + paint.textSize * 0.36f, paint)
+            paint.textAlign = Paint.Align.LEFT
+        }
+        players.forEachIndexed { index, player ->
+            val row = layout.playerRow(index, hint)
+            if (row.height <= 0) return@forEachIndexed
+            val button = layout.resumeButton(row)
+            val pending = snapshot.resumePending == player.key
+            val failed = !pending && snapshot.resumeFailed == player.key
+            val pressed = snapshot.pressedPlayer == index
+            if (pressed) {
+                paint.color = palette.tilePressed
+                canvas.drawRoundRect(rect(row), CORNER, CORNER, paint)
+            }
+            // The name is drawn and never logged (Player's KDoc): listening history.
+            paint.color = if (pending) palette.dim else palette.text
+            paint.textSize = row.height * 0.3f
+            val nameX = row.x + layout.margin.toFloat()
+            canvas.drawText(
+                fit(paint, player.label, button.x - layout.margin - nameX),
+                nameX,
+                row.centerY + paint.textSize * 0.36f,
+                paint,
+            )
+            paint.color = when {
+                pressed -> palette.accent
+                pending -> palette.tilePressed
+                else -> palette.button
+            }
+            canvas.drawRoundRect(rect(button), CORNER, CORNER, paint)
+            val label = when {
+                pending -> "Starting…"
+                failed -> "Couldn't resume"
+                else -> "Resume"
+            }
+            paint.color = when {
+                failed -> palette.warning
+                pending -> palette.dim
+                else -> palette.text
+            }
+            paint.textSize = button.height * 0.24f
+            val room = button.width - 2f * layout.margin
+            if (!pending && !failed) {
+                // A play triangle before the word, the transport buttons' own shape, so
+                // the row reads as "play this" before the word is read.
+                val size = paint.textSize * 0.42f
+                val word = paint.measureText(label)
+                val start = button.centerX - (word + size * 2.4f) / 2f
+                triangle(canvas, paint, start, button.centerY.toFloat(), size, true)
+                canvas.drawText(label, start + size * 2.4f, button.centerY + paint.textSize * 0.36f, paint)
+            } else {
+                // Brought down to fit rather than cut: "Couldn't res…" says less than the
+                // whole words a little smaller.
+                // A little under the exact ratio: text width does not scale quite linearly
+                // with size, and the first lab frame came out one pixel over and ellipsized.
+                val width = paint.measureText(label)
+                if (width > room) paint.textSize = paint.textSize * room / width * 0.95f
+                paint.textAlign = Paint.Align.CENTER
+                canvas.drawText(fit(paint, label, room), button.centerX.toFloat(), button.centerY + paint.textSize * 0.36f, paint)
+                paint.textAlign = Paint.Align.LEFT
+            }
+        }
+        if (hint) {
+            // Small and once, no longer the headline (plan §5.5): apps with a browser
+            // service are listed without access, live sessions only with it.
+            val box = layout.playerHint
+            paint.color = palette.dim
+            paint.textSize = box.height * 0.55f
+            val text = "The phone can list more players with notification access on"
+            val width = paint.measureText(text)
+            if (width > box.width) paint.textSize = maxOf(box.height * 0.4f, paint.textSize * box.width / width)
+            canvas.drawText(fit(paint, text, box.width.toFloat()), box.x.toFloat(), box.y + box.height * 0.7f, paint)
+        }
+    }
+
+    /**
      * Cover art, or a placeholder square when there is none.
      *
      * A placeholder rather than nothing: an empty gap where the art belongs reads as a
@@ -286,7 +1191,7 @@ object DashboardDrawing {
         canvas: Canvas,
         paint: Paint,
         layout: DashboardLayout,
-        palette: Palette,
+        palette: DashboardPalette,
         art: android.graphics.Bitmap?,
     ) {
         val box = layout.albumArt
@@ -343,7 +1248,7 @@ object DashboardDrawing {
         paint: Paint,
         layout: DashboardLayout,
         snapshot: Dashboard.Snapshot,
-        palette: Palette,
+        palette: DashboardPalette,
     ) {
         val map = layout.map
         if (snapshot.mapStatus != "ok") {
@@ -357,10 +1262,11 @@ object DashboardDrawing {
             // its own backing plate rather than straight onto the map: the map is
             // arbitrary colours underneath, and an attribution that disappears over a
             // dark forest or a light car park is not an attribution.
-            paint.textSize = maxOf(10f, map.height / 40f)
+            // Sized and placed by the layout, which stacks the zoom bubbles above it.
+            paint.textSize = layout.attributionTextSize.toFloat()
             val width = paint.measureText(ATTRIBUTION)
             val textX = map.right - layout.margin - width
-            val textY = map.bottom - layout.margin / 2f
+            val textY = (layout.attributionTop + layout.attributionTextSize).toFloat()
             val padding = paint.textSize * 0.3f
             paint.color = palette.attributionPlate
             canvas.drawRect(
@@ -372,14 +1278,205 @@ object DashboardDrawing {
             )
             paint.color = palette.attribution
             canvas.drawText(ATTRIBUTION, textX, textY, paint)
+            drawAlternativeBubbles(canvas, paint, map, snapshot, palette)
             drawVehicle(canvas, paint, map, snapshot, palette)
             drawMapControls(canvas, paint, layout, snapshot, palette)
         }
+        // Outside the map's `ok` branch: guidance does not need a map, and a driver
+        // following a route with no map installed still needs to know the next turn.
+        snapshot.turnCard?.let { drawTurnCard(canvas, paint, layout, it, palette) }
         paint.style = Paint.Style.STROKE
         paint.strokeWidth = maxOf(1f, layout.height / 540f)
         paint.color = palette.tile
         canvas.drawRoundRect(rect(map), CORNER, CORNER, paint)
         paint.style = Paint.Style.FILL
+    }
+
+    /**
+     * The turn card (P7.4, plan §5.3): the maneuver's icon, the distance to it large, and
+     * the street it turns onto on its own line; `Rerouting…` or `You have arrived` in that
+     * line's place, with no distance.
+     *
+     * On a solid plate with a rim, like the attribution and for the same reason: the map
+     * under it is any colour at all.
+     */
+    private fun drawTurnCard(
+        canvas: Canvas,
+        paint: Paint,
+        layout: DashboardLayout,
+        card: TurnCard,
+        palette: DashboardPalette,
+    ) {
+        val box = layout.turnCard
+        if (box.width <= 0 || box.height <= 0) return
+        paint.style = Paint.Style.FILL
+        paint.color = palette.tile
+        canvas.drawRoundRect(rect(box), CORNER, CORNER, paint)
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = maxOf(1f, box.height / 60f)
+        paint.color = palette.bubbleRim
+        canvas.drawRoundRect(rect(box), CORNER, CORNER, paint)
+        paint.style = Paint.Style.FILL
+
+        val icon = layout.turnIcon
+        drawManeuver(canvas, paint, Maneuvers.glyph(card.maneuver, card.exit), icon, palette.accent, palette.dim, palette.tile)
+        val glyphDrawn = Maneuvers.glyph(card.maneuver, card.exit).shape != GlyphShape.NONE
+        val textX = (if (glyphDrawn) icon.right else box.x) + layout.margin.toFloat()
+        val room = box.right - layout.margin - textX
+        val h = box.height.toFloat()
+        val distance = card.distance
+        if (distance != null) {
+            val typeface = paint.typeface
+            paint.typeface = Typeface.DEFAULT_BOLD
+            paint.color = palette.text
+            paint.textSize = h * 0.4f
+            canvas.drawText(fit(paint, distance, room), textX, box.y + h * 0.5f, paint)
+            paint.typeface = typeface
+            paint.textSize = h * 0.24f
+            canvas.drawText(fit(paint, card.line, room), textX, box.y + h * 0.84f, paint)
+        } else {
+            // One line, centred in the card: re-routing or arrived.
+            paint.color = if (card.line == UpcomingTurn.REROUTING) palette.warning else palette.text
+            paint.textSize = h * 0.3f
+            canvas.drawText(fit(paint, card.line, room), textX, box.centerY + paint.textSize * 0.36f, paint)
+        }
+    }
+
+    /**
+     * One maneuver icon (P7.4) in [box], from [Maneuvers.glyph] of the value the cluster
+     * is sent. [colour] is the path taken, [faint] the road not taken, and [ground] what
+     * it is drawn over, for the pin's hole.
+     *
+     * Drawn from strokes rather than set from a font, as ☀/☾ is, so no glyph can fall back
+     * to a missing character; and in one small vocabulary — a stem from the bottom, a
+     * branch at the maneuver's angle, an arrowhead — so every turn reads the same way.
+     */
+    private fun drawManeuver(
+        canvas: Canvas,
+        paint: Paint,
+        glyph: ManeuverGlyph,
+        box: Box,
+        colour: Int,
+        faint: Int,
+        ground: Int,
+    ) {
+        val s = minOf(box.width, box.height).toFloat()
+        if (s <= 0f || glyph.shape == GlyphShape.NONE) return
+        val cx = box.centerX.toFloat()
+        val cy = box.centerY.toFloat()
+        val bottom = cy + s * 0.42f
+        paint.strokeWidth = s * 0.11f
+        paint.strokeCap = Paint.Cap.ROUND
+        paint.strokeJoin = Paint.Join.ROUND
+        fun stroke(path: Path, c: Int) {
+            paint.style = Paint.Style.STROKE
+            paint.color = c
+            canvas.drawPath(path, paint)
+            paint.style = Paint.Style.FILL
+        }
+        when (glyph.shape) {
+            GlyphShape.TURN, GlyphShape.KEEP, GlyphShape.RAMP -> {
+                val radians = Math.toRadians(glyph.degrees.toDouble())
+                val dx = Math.sin(radians).toFloat()
+                val dy = -Math.cos(radians).toFloat()
+                val reach = s * (if (glyph.shape == GlyphShape.TURN) 0.3f else 0.28f)
+                // A turn leans to one side; moving the stem the other way keeps the whole
+                // icon about the middle of its box.
+                val px = if (glyph.shape == GlyphShape.TURN) cx - dx * reach * 0.6f else cx
+                val py = when {
+                    glyph.shape != GlyphShape.TURN -> cy + s * 0.1f
+                    glyph.degrees == 0 -> cy - s * 0.2f
+                    Math.abs(glyph.degrees) > 90 -> cy - s * 0.12f
+                    else -> cy + s * 0.05f
+                }
+                if (glyph.shape == GlyphShape.KEEP) {
+                    // The fork's other side, faint, so "keep left" reads as a choice made.
+                    stroke(Path().apply { moveTo(px, py); lineTo(px - dx * reach, py + dy * reach) }, faint)
+                } else if (glyph.shape == GlyphShape.RAMP) {
+                    // The road carrying straight on past the exit.
+                    stroke(Path().apply { moveTo(px, py); lineTo(px, cy - s * 0.4f) }, faint)
+                }
+                val endX = if (glyph.degrees == 0) px else px + dx * reach
+                val endY = if (glyph.degrees == 0) py else py + dy * reach
+                stroke(Path().apply { moveTo(px, bottom); lineTo(px, py); lineTo(endX, endY) }, colour)
+                arrowhead(canvas, paint, endX, endY, dx, dy, s, colour)
+            }
+            GlyphShape.U_TURN -> {
+                // Up one leg, over the top, down the other; left-hand U-turns turn left.
+                val side = if (glyph.degrees < 0) 1f else -1f
+                val r = s * 0.16f
+                val top = cy - s * 0.1f
+                val path = Path().apply {
+                    moveTo(cx + side * r, cy + s * 0.38f)
+                    lineTo(cx + side * r, top)
+                    arcTo(RectF(cx - r, top - r, cx + r, top + r), if (side > 0) 0f else 180f, if (side > 0) -180f else 180f)
+                    lineTo(cx - side * r, cy + s * 0.1f)
+                }
+                stroke(path, colour)
+                arrowhead(canvas, paint, cx - side * r, cy + s * 0.1f, 0f, 1f, s, colour)
+            }
+            GlyphShape.ROUNDABOUT -> {
+                val ringY = cy - s * 0.08f
+                val r = s * 0.2f
+                stroke(Path().apply { moveTo(cx, bottom); lineTo(cx, ringY + r) }, colour)
+                paint.style = Paint.Style.STROKE
+                paint.color = colour
+                canvas.drawCircle(cx, ringY, r, paint)
+                paint.style = Paint.Style.FILL
+                // Which way round: counter-clockwise (right-hand traffic) goes up the
+                // ring's right side, clockwise up its left.
+                val sideX = cx - glyph.degrees * r
+                arrowhead(canvas, paint, sideX, ringY + s * 0.02f, 0f, -1f, s * 0.7f, colour)
+                if (glyph.exit > 0) {
+                    val typeface = paint.typeface
+                    paint.typeface = Typeface.DEFAULT_BOLD
+                    paint.textAlign = Paint.Align.CENTER
+                    paint.textSize = s * 0.22f
+                    canvas.drawText(glyph.exit.toString(), cx, ringY + paint.textSize * 0.36f, paint)
+                    paint.textAlign = Paint.Align.LEFT
+                    paint.typeface = typeface
+                }
+            }
+            GlyphShape.DESTINATION -> {
+                // A map pin: a disc over a point, with a hole of the ground's colour.
+                paint.style = Paint.Style.FILL
+                paint.color = colour
+                val headY = cy - s * 0.12f
+                canvas.drawCircle(cx, headY, s * 0.2f, paint)
+                canvas.drawPath(
+                    Path().apply {
+                        moveTo(cx - s * 0.17f, headY + s * 0.1f)
+                        lineTo(cx + s * 0.17f, headY + s * 0.1f)
+                        lineTo(cx, cy + s * 0.4f)
+                        close()
+                    },
+                    paint,
+                )
+                paint.color = ground
+                canvas.drawCircle(cx, headY, s * 0.08f, paint)
+            }
+            GlyphShape.NONE -> {}
+        }
+        paint.style = Paint.Style.FILL
+        paint.strokeCap = Paint.Cap.BUTT
+        paint.strokeJoin = Paint.Join.MITER
+    }
+
+    /** A filled arrowhead with its base centred on ([x], [y]), pointing along ([dx], [dy]). */
+    private fun arrowhead(canvas: Canvas, paint: Paint, x: Float, y: Float, dx: Float, dy: Float, s: Float, colour: Int) {
+        val length = s * 0.2f
+        val half = s * 0.16f
+        paint.style = Paint.Style.FILL
+        paint.color = colour
+        canvas.drawPath(
+            Path().apply {
+                moveTo(x + dx * length, y + dy * length)
+                lineTo(x - dy * half, y + dx * half)
+                lineTo(x + dy * half, y - dx * half)
+                close()
+            },
+            paint,
+        )
     }
 
     /**
@@ -394,16 +1491,25 @@ object DashboardDrawing {
         paint: Paint,
         map: Box,
         snapshot: Dashboard.Snapshot,
-        palette: Palette,
+        palette: DashboardPalette,
     ) {
         val (x, y) = snapshot.mapMarker ?: return
         canvas.save()
         canvas.clipRect(rect(map))
         val size = map.height / 60f
         val arrow = snapshot.mapArrow
+        // The driver's colour (P7.2), with the rim that colour was chosen with: the dot
+        // gets one too now, because a white or yellow dot on the day map has no edge
+        // without it.
+        val colour = snapshot.markerColour
         if (arrow == null) {
-            paint.color = palette.accent
+            paint.color = colour.fill
             canvas.drawCircle(x.toFloat(), y.toFloat(), size, paint)
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = maxOf(1.5f, size / 4f)
+            paint.color = colour.rim
+            canvas.drawCircle(x.toFloat(), y.toFloat(), size, paint)
+            paint.style = Paint.Style.FILL
         } else {
             // A notched arrowhead with its tip along the direction of travel, pivoting on
             // the fix itself so it sits where the dot did. Bigger than the dot and rimmed,
@@ -418,12 +1524,12 @@ object DashboardDrawing {
                 lineTo(-r * 0.72f, r * 0.8f)
                 close()
             }
-            paint.color = palette.accent
+            paint.color = colour.fill
             canvas.drawPath(path, paint)
             paint.style = Paint.Style.STROKE
             paint.strokeJoin = Paint.Join.ROUND
             paint.strokeWidth = maxOf(1.5f, r / 7f)
-            paint.color = palette.bubbleRim
+            paint.color = colour.rim
             canvas.drawPath(path, paint)
             paint.style = Paint.Style.FILL
             paint.strokeJoin = Paint.Join.MITER
@@ -433,7 +1539,8 @@ object DashboardDrawing {
 
     /**
      * The floating bubbles in the pane's bottom-left corner: recentre, and the compass
-     * that switches between north-up and direction-of-travel-up.
+     * that switches between north-up and direction-of-travel-up; and in its bottom-right
+     * corner, above the credit, + and − (P7.2).
      *
      * Translucent plates rather than opaque ones, so they read as floating over the map
      * instead of as holes punched in it, and so a street running under one is still
@@ -449,22 +1556,14 @@ object DashboardDrawing {
         paint: Paint,
         layout: DashboardLayout,
         snapshot: Dashboard.Snapshot,
-        palette: Palette,
+        palette: DashboardPalette,
     ) {
         DashboardLayout.MAP_ACTIONS.forEachIndexed { index, action ->
             val box = layout.mapBubble(index)
             val cx = box.centerX.toFloat()
             val cy = box.centerY.toFloat()
             val radius = box.width / 2f
-            paint.style = Paint.Style.FILL
-            paint.color =
-                if (snapshot.pressedMapBubble == action) palette.bubblePressed else palette.bubble
-            canvas.drawCircle(cx, cy, radius, paint)
-            paint.style = Paint.Style.STROKE
-            paint.strokeWidth = maxOf(1f, radius / 16f)
-            paint.color = palette.bubbleRim
-            canvas.drawCircle(cx, cy, radius - paint.strokeWidth / 2f, paint)
-            paint.style = Paint.Style.FILL
+            drawBubble(canvas, paint, box, snapshot.pressedMapBubble == action, palette)
             if (action == "recentre") {
                 drawRecentre(canvas, paint, cx, cy, radius * 0.55f, snapshot.mapFollowing, palette)
             } else {
@@ -482,6 +1581,66 @@ object DashboardDrawing {
             }
             paint.style = Paint.Style.FILL
         }
+        // P7.2: + above −, bottom-right, one zoom level a press.
+        DashboardLayout.ZOOM_ACTIONS.forEachIndexed { index, action ->
+            val box = layout.zoomBubble(index)
+            drawBubble(canvas, paint, box, snapshot.pressedZoom == action, palette)
+            val cx = box.centerX.toFloat()
+            val cy = box.centerY.toFloat()
+            val arm = box.width * 0.24f
+            val half = maxOf(1.5f, box.width / 22f)
+            paint.color = palette.text
+            canvas.drawRect(cx - arm, cy - half, cx + arm, cy + half, paint)
+            if (action == "zoom-in") canvas.drawRect(cx - half, cy - arm, cx + half, cy + arm, paint)
+        }
+    }
+
+    /**
+     * The live alternatives' "+6 min" bubbles: a rounded plate in the map bubbles' colours,
+     * lit while pressed, with the time on it. Clipped to the pane like the vehicle marker.
+     */
+    private fun drawAlternativeBubbles(
+        canvas: Canvas,
+        paint: Paint,
+        map: Box,
+        snapshot: Dashboard.Snapshot,
+        palette: DashboardPalette,
+    ) {
+        if (snapshot.alternativeBubbles.isEmpty()) return
+        canvas.save()
+        canvas.clipRect(rect(map))
+        for (bubble in snapshot.alternativeBubbles) {
+            val box = bubble.box
+            val radius = box.height / 2f
+            paint.style = Paint.Style.FILL
+            paint.color = if (bubble.pressed) palette.bubblePressed else palette.bubble
+            canvas.drawRoundRect(rect(box), radius, radius, paint)
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = maxOf(1f, radius / 8f)
+            paint.color = palette.bubbleRim
+            canvas.drawRoundRect(rect(box), radius, radius, paint)
+            paint.style = Paint.Style.FILL
+            paint.color = palette.text
+            paint.textSize = box.height * 0.5f
+            val width = paint.measureText(bubble.label)
+            canvas.drawText(bubble.label, box.centerX - width / 2f, box.centerY + paint.textSize * 0.36f, paint)
+        }
+        canvas.restore()
+    }
+
+    /** One floating plate with its rim, lit while pressed. */
+    private fun drawBubble(canvas: Canvas, paint: Paint, box: Box, pressed: Boolean, palette: DashboardPalette) {
+        val cx = box.centerX.toFloat()
+        val cy = box.centerY.toFloat()
+        val radius = box.width / 2f
+        paint.style = Paint.Style.FILL
+        paint.color = if (pressed) palette.bubblePressed else palette.bubble
+        canvas.drawCircle(cx, cy, radius, paint)
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = maxOf(1f, radius / 16f)
+        paint.color = palette.bubbleRim
+        canvas.drawCircle(cx, cy, radius - paint.strokeWidth / 2f, paint)
+        paint.style = Paint.Style.FILL
     }
 
     /**
@@ -495,7 +1654,7 @@ object DashboardDrawing {
         cy: Float,
         radius: Float,
         following: Boolean,
-        palette: Palette,
+        palette: DashboardPalette,
     ) {
         paint.color = if (following) palette.accent else palette.text
         paint.style = Paint.Style.STROKE
@@ -532,62 +1691,5 @@ object DashboardDrawing {
     private val TAIL = Math.toRadians(140.0)
     private const val CORNER = 12f
     private const val ELLIPSIS = "…"
-    private const val UNVALIDATED = "scale inferred"
     private const val ATTRIBUTION = "© OpenStreetMap contributors (ODbL)"
-
-    /** Day and night colours; the night set is what pairs with VTM's NEWTRON theme. */
-    data class Palette(
-        val background: Int,
-        val header: Int,
-        val tile: Int,
-        val tilePressed: Int,
-        val button: Int,
-        val text: Int,
-        val dim: Int,
-        val accent: Int,
-        val warning: Int,
-        val attribution: Int,
-        /** Backing plate, so the credit stays legible over any map colour. */
-        val attributionPlate: Int,
-        /** The floating map controls: mostly opaque, so the map still shows under them. */
-        val bubble: Int,
-        val bubblePressed: Int,
-        /** Their edge, so the plate has one over a map that happens to match it. */
-        val bubbleRim: Int,
-    ) {
-        companion object {
-            val DAY = Palette(
-                background = 0xFF14171A.toInt(),
-                header = 0xFF1F2429.toInt(),
-                tile = 0xFF262C33.toInt(),
-                tilePressed = 0xFF39424C.toInt(),
-                button = 0xFF39424C.toInt(),
-                text = 0xFFF2F4F6.toInt(),
-                dim = 0xFF9AA5B1.toInt(),
-                accent = 0xFF4E9AF1.toInt(),
-                warning = 0xFFE2B33C.toInt(),
-                attribution = 0xFF12161A.toInt(),
-                attributionPlate = 0xCCF2F4F6.toInt(),
-                bubble = 0xE62B323A.toInt(),
-                bubblePressed = 0xF24A5666.toInt(),
-                bubbleRim = 0xB39AA5B1.toInt(),
-            )
-            val NIGHT = Palette(
-                background = 0xFF07090B.toInt(),
-                header = 0xFF0E1216.toInt(),
-                tile = 0xFF141A20.toInt(),
-                tilePressed = 0xFF223040.toInt(),
-                button = 0xFF1C2630.toInt(),
-                text = 0xFFD8DEE4.toInt(),
-                dim = 0xFF6C7884.toInt(),
-                accent = 0xFF2F6FB8.toInt(),
-                warning = 0xFFB98F2A.toInt(),
-                attribution = 0xFFE8EDF2.toInt(),
-                attributionPlate = 0xCC0A0D10.toInt(),
-                bubble = 0xE61C2630.toInt(),
-                bubblePressed = 0xF2334458.toInt(),
-                bubbleRim = 0xB36C7884.toInt(),
-            )
-        }
-    }
 }

@@ -255,7 +255,9 @@ heading, `dashboard_bearing_divisor=1000.0 dashboard_car_speed_divisor=1000.0`.
 - **The parked-map baseline is the emulator's**, where nothing else is running. A phone
   with other activity might not go as quiet.
 
-## 7. Spec and plan amendments this needs — proposed, not applied
+## 7. Spec and plan amendments this needs
+
+**Applied 22 September 2026** to `spec.md` and `plan.md` (or to the non-governed file named), with the rest of the queue.
 
 `spec.md` and `plan.md` are governed. These sit behind the six P5.5 proposed and the six
 in the P6 plan §9, all still unapplied.

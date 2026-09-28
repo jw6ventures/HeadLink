@@ -13,37 +13,81 @@ import android.content.pm.PackageManager
 import android.graphics.Typeface
 import android.hardware.usb.UsbAccessory
 import android.hardware.usb.UsbManager
+import android.location.Location
+import android.location.LocationManager
 import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.Settings
+import android.text.format.DateFormat
+import android.util.TypedValue
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowInsets
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.CheckBox
+import android.widget.CompoundButton
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Spinner
+import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import java.io.IOException
+import java.util.Date
 
 /**
  * User-initiated connection: profile, stop stage, TLS profile, and certificate-trial
- * controls; Connect/Stop; accessory enumeration and filter diagnostics; USB and
- * notification permission; and report export. The activity never touches the accessory
- * descriptor; after permission it hands the attempt to [ProjectionService]. Only small
- * binder calls and file reads run on the UI thread.
+ * controls, saved across launches in [AppSettings] (P7.1); Connect/Stop, and the
+ * plug-in start that does what Connect does for an already-pinned head unit; accessory
+ * enumeration and filter diagnostics; USB and notification permission; and report
+ * export. The activity never touches the accessory descriptor; after permission it hands
+ * the attempt to [ProjectionService]. Only small binder calls and file reads run on the
+ * UI thread.
+ *
+ * **P7.7 (plan §6): one activity, five tabs.** Home (the status in words, one large
+ * Connect/Stop, the route and the favorites), Setup (what is missing, each with the button
+ * that fixes it), Maps & routing, Settings, and Diagnostics, shown only with the
+ * Diagnostics switch on. Every control that existed before is still here: the protocol
+ * and diagnostic ones, identity and pins, report export and the live report moved to
+ * Diagnostics rather than going away. The tabs change where controls sit, never what
+ * they do — the USB permission and attach paths, the plug-in start and its identity hold,
+ * [loadSaved]'s one-field-per-write saving and the per-attempt options below are the
+ * P7.1 code unchanged — and one [SessionController] listener still renders every tab.
  */
 class ConnectionActivity : Activity() {
     private lateinit var usb: UsbManager
     private lateinit var filter: AccessoryFilter
     private val main = Handler(Looper.getMainLooper())
-    private val render: () -> Unit = { renderState() }
+    private val render: () -> Unit = {
+        renderState()
+        leaveAfterAutoStart()
+        retryAutoStart()
+    }
+
+    /** Generation of the attempt a plug-in started, until the activity has stepped back. */
+    private var autoStarted: Long? = null
+
+    /**
+     * Set while a plug-in start is held for the source identity ([AutoStart.WAIT]); the
+     * uptime by which it gives up. Only ever one: a second attach while held decides
+     * again and keeps the first deadline.
+     */
+    private var autoStartWaitUntil: Long? = null
+
+    private val autoStartGiveUp = Runnable {
+        if (autoStartWaitUntil != null) {
+            autoStartWaitUntil = null
+            SessionController.note(
+                "auto-start no: the source identity was not ready within ${AutoStart.WAIT_MS / 1000} s; gave up",
+            )
+        }
+    }
 
     private lateinit var stageText: TextView
     private lateinit var notificationText: TextView
@@ -67,12 +111,13 @@ class ConnectionActivity : Activity() {
     private lateinit var setupFieldSpinner: Spinner
     private lateinit var sensorsSpinner: Spinner
     private lateinit var sensorLocationCheck: CheckBox
-    private lateinit var mediaInfoCheck: CheckBox
-    private lateinit var audioCheck: CheckBox
-    private lateinit var navigationCheck: CheckBox
+    // P7.7: the Settings tab's choices are switches; the Diagnostics tab keeps checkboxes.
+    private lateinit var mediaInfoCheck: CompoundButton
+    private lateinit var audioCheck: CompoundButton
+    private lateinit var navigationCheck: CompoundButton
     private lateinit var navigationUnitsSpinner: Spinner
-    private lateinit var navigationForceCheck: CheckBox
-    private lateinit var navigationScriptCheck: CheckBox
+    private lateinit var navigationForceCheck: CompoundButton
+    private lateinit var navigationScriptCheck: CompoundButton
     private lateinit var mediaAccessText: TextView
     private lateinit var mediaAccessButton: Button
     private lateinit var softwareEncoderCheck: CheckBox
@@ -82,9 +127,45 @@ class ConnectionActivity : Activity() {
     private lateinit var sceneSpinner: Spinner
     private lateinit var mapSideSpinner: Spinner
     private lateinit var speedUnitSpinner: Spinner
+    private lateinit var autoStartCheck: CompoundButton
+    private lateinit var diagnosticsCheck: CompoundButton
+    private lateinit var markerColourSpinner: Spinner
+    private lateinit var dayNightSpinner: Spinner
+    private lateinit var notificationsOnDashboardCheck: CompoundButton
+    private lateinit var callControlsCheck: CompoundButton
+    private lateinit var readAloudCheck: CompoundButton
+    private lateinit var readAloudRow: View
+    private lateinit var speechMediaSpinner: Spinner
+    // P8.3: Maps & routing → Voice guidance (plan §7).
+    private lateinit var voiceGuidanceCheck: CompoundButton
+    private lateinit var voiceEarlyCheck: CheckBox
+    private lateinit var voicePrepareCheck: CheckBox
+    private lateinit var voiceAtTurnCheck: CheckBox
+    private lateinit var voiceTimingSpinner: Spinner
+    private lateinit var voiceDetailSpinner: Spinner
+    private lateinit var voiceStreetNamesCheck: CompoundButton
+    private lateinit var voiceRerouteCheck: CompoundButton
+    private lateinit var voiceArrivalCheck: CompoundButton
+    private lateinit var sampleButton: Button
+    private lateinit var sampleText: TextView
+    // Maps & routing → Route preferences (docs/routing-settings.md).
+    private lateinit var avoidHighwaysCheck: CompoundButton
+    private lateinit var avoidTollsCheck: CompoundButton
+    private lateinit var avoidUnpavedCheck: CompoundButton
+    private lateinit var bypassTownsCheck: CompoundButton
+    private lateinit var allowTracksCheck: CompoundButton
+    private lateinit var topSpeedSpinner: Spinner
+    private lateinit var etaSpinner: Spinner
+    private lateinit var learnPaceCheck: CompoundButton
+    private lateinit var showAlternativesCheck: CompoundButton
 
-    /** Held, unlike the other spinners' labels, because this row hides with the scene. */
-    private lateinit var speedUnitLabel: TextView
+    /** Held, unlike most rows, because these hide with the scene, the cluster or the sensors. */
+    private lateinit var speedUnitRow: View
+    private lateinit var mapSideRow: View
+    private lateinit var navigationUnitsRow: View
+    private lateinit var navigationForceRow: View
+    private lateinit var navigationScriptRow: View
+    private lateinit var sensorLocationRow: View
     private lateinit var mapText: TextView
     private lateinit var importMapButton: Button
     private lateinit var routingText: TextView
@@ -96,6 +177,9 @@ class ConnectionActivity : Activity() {
     private lateinit var routeInput: EditText
     private lateinit var routeButton: Button
     private lateinit var clearRouteButton: Button
+    private lateinit var previewButton: Button
+    private lateinit var favoritesText: TextView
+    private lateinit var addFavoriteButton: Button
     private lateinit var keepaliveSpinner: Spinner
     private lateinit var forgetPinsButton: Button
     private lateinit var replaceIdentityButton: Button
@@ -103,6 +187,41 @@ class ConnectionActivity : Activity() {
     private lateinit var connectButton: Button
     private lateinit var stopButton: Button
     private lateinit var useListedButton: Button
+
+    // P7.7: the tabs, and what Home, Setup and Settings add.
+    private lateinit var ui: PhoneViews
+    private lateinit var scroll: ScrollView
+    private lateinit var pages: List<View>
+    private lateinit var tabs: List<TextView>
+    private var currentTab = TAB_HOME
+
+    /**
+     * Open Diagnostics on the status card shows the tab for this screen without turning
+     * the saved switch on, which would also put the debug line in the dashboard's header.
+     */
+    private var diagnosticsRevealed = false
+    private lateinit var statusCard: LinearLayout
+    private lateinit var statusSentence: TextView
+    private lateinit var statusActionButton: Button
+    private lateinit var primaryButton: Button
+    private var primaryAction = StatusAction.CONNECT
+    private var cardAction = StatusAction.NONE
+    private lateinit var routeSummaryText: TextView
+    private lateinit var favoritesList: LinearLayout
+    private lateinit var saveDestinationButton: Button
+    private var shownFavorites: List<Favorite>? = null
+    private lateinit var setupList: LinearLayout
+    private var shownSetup: List<SetupItem>? = null
+    private var shownHereTile: String? = null
+    private val setupButtons = mutableMapOf<SetupItem, Button>()
+    private lateinit var callControlsText: TextView
+    /** P8.1: Home's "Speech: …" line, re-read in onResume, since an engine may have come or gone. */
+    private lateinit var speechText: TextView
+    private var speechEngine: SpeechEngine? = null
+    private lateinit var exclusionsRow: View
+    private lateinit var exclusionsText: TextView
+    private lateinit var versionText: TextView
+    private lateinit var routeDetailText: TextView
 
     private val permissionReceiver =
         object : BroadcastReceiver() {
@@ -115,6 +234,10 @@ class ConnectionActivity : Activity() {
         object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
                 if (intent.action != UsbManager.ACTION_USB_ACCESSORY_DETACHED) return
+                if (autoStartWaitUntil != null) {
+                    clearAutoStartWait()
+                    SessionController.note("auto-start no: detached while waiting for the source identity")
+                }
                 val attempt = SessionController.attempt ?: return
                 if (!SessionController.isCurrent(attempt) || attempt.serviceRequested) return
                 val detached = intent.getParcelableExtra(UsbManager.EXTRA_ACCESSORY, UsbAccessory::class.java)
@@ -133,17 +256,31 @@ class ConnectionActivity : Activity() {
         super.onCreate(savedInstanceState)
         usb = getSystemService(UsbManager::class.java)
         filter = AccessoryFilter.load(resources)
+        RouteClock.install()
+        currentTab = savedInstanceState?.getInt(STATE_TAB, TAB_HOME) ?: TAB_HOME
         buildViews()
         registerReceiver(permissionReceiver, IntentFilter(ACTION_USB_PERMISSION), RECEIVER_NOT_EXPORTED)
         registerReceiver(detachReceiver, IntentFilter(UsbManager.ACTION_USB_ACCESSORY_DETACHED), RECEIVER_NOT_EXPORTED)
         SessionController.addListener(render)
+        showHomeOnAttach(intent)
         if (!handleLabIntent(intent)) handleAttachIntent(intent)
         renderState()
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        showHomeOnAttach(intent)
         if (!handleLabIntent(intent)) handleAttachIntent(intent)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putInt(STATE_TAB, currentTab)
+    }
+
+    /** A plug-in shows Home, whose status says what the attach did (plan §2). */
+    private fun showHomeOnAttach(intent: Intent?) {
+        if (intent?.action == UsbManager.ACTION_USB_ACCESSORY_ATTACHED) selectTab(TAB_HOME)
     }
 
     /**
@@ -153,6 +290,16 @@ class ConnectionActivity : Activity() {
     override fun onResume() {
         super.onResume()
         DropFolder.sweep(this)
+        // The dashboard's ☀/☾ saves day/night from the head unit while this screen is
+        // behind it (P7 plan §5.6), so the row is re-read rather than trusted. Selecting
+        // the same position again fires nothing, and a changed one stores what it read.
+        val saved = AppSettings.load(this)
+        dayNightSpinner.setSelection(saved.dayNight.ordinal)
+        // P8.3: likewise the voice toggle beside End route, which is this screen's switch.
+        voiceGuidanceCheck.isChecked = saved.voice.enabled
+        // P8.1: the engine is chosen in Android's settings, which this screen links to, so
+        // it is looked up again whenever the screen comes back.
+        speechEngine = SpeechEngines.default(this)
         renderState()
     }
 
@@ -170,9 +317,23 @@ class ConnectionActivity : Activity() {
             RouteRequest.parse(route)?.let { Routing.request(this, it, "lab", "lab") }
                 ?: SessionController.note("lab route \"$route\" is not lat,lon lat,lon; ignored")
         }
+        // Saved places for the favorites tile, `name@lat,lon;name@lat,lon`, replacing the
+        // list: how the lab gets a tile with rows in it to draw and scroll.
+        val favorites = intent?.getStringExtra(EXTRA_LAB_FAVORITES)
+        if (favorites != null && applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+            Favorites.replace(this, labFavorites(favorites))
+            SessionController.note("lab favorites: ${Favorites.list(this).size} saved")
+        }
+        // P8.1: the emulator has no A2DP output, so the lab lets Speaker's Bluetooth gate
+        // pass on any output (plan §10). Debug builds only; the report says speech_gate=lab.
+        val speechGate = intent?.hasExtra(EXTRA_LAB_SPEECH_BLUETOOTH) == true
+        if (speechGate && applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+            Speaker.labBluetooth = intent.getBooleanExtra(EXTRA_LAB_SPEECH_BLUETOOTH, false)
+            SessionController.note("lab speech Bluetooth gate ${if (Speaker.labBluetooth) "overridden" else "restored"} (debug build)")
+        }
         val socket = intent?.getStringExtra(EXTRA_LAB_SOCKET)
         if (socket == null) {
-            if (route == null) return false
+            if (route == null && favorites == null && !speechGate) return false
             setIntent(Intent(this, ConnectionActivity::class.java))
             return true
         }
@@ -230,10 +391,22 @@ class ConnectionActivity : Activity() {
         return true
     }
 
+    /** The lab extra's places; an entry that does not parse is left out, not fatal. */
+    private fun labFavorites(text: String): List<Favorite> =
+        text.split(';').mapNotNull { entry ->
+            val name = entry.substringBefore('@', "")
+            val point = entry.substringAfter('@', "").split(',')
+            if (point.size != 2) return@mapNotNull null
+            val lat = point[0].trim().toDoubleOrNull() ?: return@mapNotNull null
+            val lon = point[1].trim().toDoubleOrNull() ?: return@mapNotNull null
+            Favorite.of(name, lat, lon)
+        }
+
     override fun onDestroy() {
         SessionController.removeListener(render)
         unregisterReceiver(permissionReceiver)
         unregisterReceiver(detachReceiver)
+        main.removeCallbacks(autoStartGiveUp)
         super.onDestroy()
     }
 
@@ -244,6 +417,11 @@ class ConnectionActivity : Activity() {
         val extra = intent.getParcelableExtra(UsbManager.EXTRA_ACCESSORY, UsbAccessory::class.java)
         val current = Accessories.current(usb, extra)
         val attempt = SessionController.attempt
+        if (SessionController.stage == Stage.IDLE) {
+            SessionController.note("attach intent while IDLE; enumerated=${current != null}")
+            autoStart()
+            return
+        }
         if (attempt == null || SessionController.stage != Stage.ARMED) {
             SessionController.note("attach intent while ${SessionController.stage.name}; enumerated=${current != null}")
             return
@@ -257,62 +435,135 @@ class ConnectionActivity : Activity() {
         scan(attempt)
     }
 
+    /**
+     * Plug-in-and-go (P7 plan §2): an attach with no attempt in progress starts one with
+     * the saved settings, exactly as Connect would, when [AutoStart.decide] allows it —
+     * the setting is on, the accessory matches the filter, a head unit is already pinned,
+     * and the identity is ready. Anything else leaves the attach doing what it always
+     * did, which is nothing but the note.
+     *
+     * First-use trust is never armed here ([PerAttempt.NONE]): with no pins this path does
+     * not start at all, and with pins an unknown head unit is refused by the pin check
+     * rather than trusted. Plugging into an unknown USB host must never pin it.
+     *
+     * From cold — the process was killed since the last drive, which is the usual case —
+     * the attach arrives before [IdentityWork] has loaded the identity on its worker
+     * thread. That is [AutoStart.WAIT]: the start is held, [retryAutoStart] decides again
+     * when the identity settles, and it gives up after [AutoStart.WAIT_MS]. A detach, or
+     * any attempt beginning meanwhile, ends the hold. Each decision is made afresh, so a
+     * held start still needs the accessory enumerated and matching when it goes.
+     *
+     * The notification permission is not asked for. The attach may have launched this
+     * activity behind the keyguard with the phone in a pocket, and a prompt no one sees
+     * would hold the attempt at ARMED; the session runs without its notification, as a
+     * denied one already does, and [notificationText] says so on screen.
+     */
+    private fun autoStart() {
+        val saved = AppSettings.load(this)
+        val attached = when (Accessories.enumerate(usb, filter)) {
+            Enumeration.None -> AutoStart.Attached.NONE
+            is Enumeration.Mismatch -> AutoStart.Attached.MISMATCH
+            is Enumeration.Match -> AutoStart.Attached.MATCH
+        }
+        val pins = IdentityWork.trust(this).pins()
+        val decision = AutoStart.decide(
+            SessionController.stage, saved.autoStart, attached, pins.size,
+            saved.stopAfter == SessionSettings.STOP_AFTER_PROJECTION, identityState(),
+        )
+        if (decision == AutoStart.WAIT) {
+            if (autoStartWaitUntil == null) {
+                SessionController.note("auto-start held: ${decision.reason}")
+                autoStartWaitUntil = SystemClock.uptimeMillis() + AutoStart.WAIT_MS
+                main.postDelayed(autoStartGiveUp, AutoStart.WAIT_MS)
+            }
+            return
+        }
+        // Cleared before the note, whose listener would otherwise decide again.
+        clearAutoStartWait()
+        SessionController.note("auto-start ${if (decision == AutoStart.START) "yes" else "no"}: ${decision.reason}")
+        if (decision != AutoStart.START) return
+        val attempt = SessionController.begin(saved.attempt(pins)) ?: return
+        autoStarted = attempt.generation
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            SessionController.note("notification permission not granted; auto-start does not prompt")
+        }
+        scan(attempt)
+    }
+
+    /**
+     * Decides a held plug-in start again once the identity has settled (loaded or failed)
+     * or the stage has left IDLE. Called from the session listener, which the identity's
+     * arrival notifies; while nothing that matters has changed it does nothing, so the
+     * notes it causes cannot loop.
+     */
+    private fun retryAutoStart() {
+        if (autoStartWaitUntil == null) return
+        if (SessionController.stage == Stage.IDLE && identityState() == AutoStart.Identity.LOADING) return
+        autoStart()
+    }
+
+    private fun clearAutoStartWait() {
+        autoStartWaitUntil = null
+        main.removeCallbacks(autoStartGiveUp)
+    }
+
+    /**
+     * Loading covers both "busy" and "not yet started": a cold process handles the attach
+     * before the worker has even reported. Failed is a finished load with no passing
+     * self-test, which no amount of waiting fixes.
+     */
+    private fun identityState(): AutoStart.Identity = when {
+        SessionController.identityReady -> AutoStart.Identity.READY
+        SessionController.identityBusy || SessionController.identityReport.isEmpty() -> AutoStart.Identity.LOADING
+        else -> AutoStart.Identity.FAILED
+    }
+
+    /**
+     * Moves the activity behind whatever was in front once the attempt it auto-started
+     * has its foreground service running, so the phone is not left showing the settings
+     * screen for a session that needs nothing from it.
+     *
+     * Not at the moment the service is requested: `startForegroundService` is allowed
+     * because this activity is in front, and whether the platform still counts it as in
+     * front by the time the service promotes itself is exactly what the locked-phone
+     * experiment (§2 item 2) has to find out. Leaving only after the session has moved
+     * past PERMISSION — the service promotes itself before that — keeps this step out of
+     * that question. A failed attempt leaves the screen up, so the failure is seen.
+     */
+    private fun leaveAfterAutoStart() {
+        val generation = autoStarted ?: return
+        val attempt = SessionController.attempt
+        if (attempt == null || attempt.generation != generation || SessionController.stage == Stage.IDLE) {
+            autoStarted = null
+            return
+        }
+        if (SessionController.stage.ordinal <= Stage.PERMISSION.ordinal) return
+        autoStarted = null
+        SessionController.note("auto-started attempt running; moving to the back")
+        moveTaskToBack(true)
+    }
+
     private fun connect() {
         if (SessionController.identityBusy) return
-        val stopAfter = stopAfterSpinner.selectedItem as String
-        if (stopAfter != SessionSettings.STOP_AFTER_VERSION && !SessionController.identityReady) {
+        // Every control saved itself as it changed, so what is saved is what is on screen.
+        val saved = AppSettings.load(this)
+        if (saved.stopAfter != SessionSettings.STOP_AFTER_VERSION && !SessionController.identityReady) {
             // The identity is prepared before attachment, never while a head unit waits.
             Toast.makeText(this, R.string.identity_not_ready, Toast.LENGTH_LONG).show()
             return
         }
-        val armed = firstUseCheck.isChecked && stopAfter != SessionSettings.STOP_AFTER_VERSION
-        // The discovery response only arrives when the attempt runs discovery.
-        val capture = captureDiscoveryCheck.isChecked && stopAfter == SessionSettings.STOP_AFTER_DISCOVERY
-        val settings = AttemptSettings(
-            profile = profileSpinner.selectedItem as String,
-            stopAfter = stopAfter,
-            tlsProfile = tlsProfileSpinner.selectedItem as String,
-            armedFirstUse = armed,
-            pins = IdentityWork.trust(this).pins(),
-            captureDiscovery = capture,
-            captureUnhandled = captureUnhandledCheck.isChecked && stopAfter != SessionSettings.STOP_AFTER_VERSION,
-            captureVideo = captureVideoCheck.isChecked && stopAfter == SessionSettings.STOP_AFTER_PROJECTION,
-            openAllChannels = openAllChannelsCheck.isChecked && stopAfter == SessionSettings.STOP_AFTER_PROJECTION,
-            rebuildOnRegain = !resumeInPlaceCheck.isChecked,
-            requestFocus = !(waitForFocusCheck.isChecked && stopAfter == SessionSettings.STOP_AFTER_PROJECTION),
-            keyframeSeconds = SessionSettings.KEYFRAME_SECONDS[keyframeSpinner.selectedItemPosition],
-            setupField = setupFieldSpinner.selectedItem as String,
-            keepalive = keepaliveSpinner.selectedItem as String,
-            sensors = if (stopAfter == SessionSettings.STOP_AFTER_PROJECTION) {
-                sensorsSpinner.selectedItem as String
-            } else {
-                SessionSettings.SENSORS_NONE
-            },
-            sensorLocation = sensorLocationCheck.isChecked &&
-                stopAfter == SessionSettings.STOP_AFTER_PROJECTION &&
-                sensorsSpinner.selectedItem != SessionSettings.SENSORS_NONE,
-            mediaInfo = mediaInfoCheck.isChecked && stopAfter == SessionSettings.STOP_AFTER_PROJECTION,
-            audio = audioCheck.isChecked && stopAfter == SessionSettings.STOP_AFTER_PROJECTION,
-            navigation = navigationCheck.isChecked && stopAfter == SessionSettings.STOP_AFTER_PROJECTION,
-            navigationUnits = SessionSettings.NAVIGATION_UNITS[navigationUnitsSpinner.selectedItemPosition],
-            navigationForce = navigationForceCheck.isChecked && navigationCheck.isChecked &&
-                stopAfter == SessionSettings.STOP_AFTER_PROJECTION,
-            navigationScript = navigationScriptCheck.isChecked && navigationCheck.isChecked,
-            softwareEncoder = softwareEncoderCheck.isChecked && stopAfter == SessionSettings.STOP_AFTER_PROJECTION,
-            videoPreference = SessionSettings.VIDEO_PREFERENCES[videoPreferenceSpinner.selectedItemPosition],
-            encoderFps = if (stopAfter == SessionSettings.STOP_AFTER_PROJECTION) {
-                SessionSettings.ENCODER_RATES[encoderFpsSpinner.selectedItemPosition]
-            } else {
-                0
-            },
-            sceneArea = sceneAreaSpinner.selectedItem as String,
-            scene = sceneSpinner.selectedItem as String,
-            mapOnLeft = mapSideSpinner.selectedItemPosition == 0,
-            speedUnit = SpeedUnit.entries[speedUnitSpinner.selectedItemPosition],
+        val once = PerAttempt(
+            firstUse = firstUseCheck.isChecked,
+            captureDiscovery = captureDiscoveryCheck.isChecked,
+            captureUnhandled = captureUnhandledCheck.isChecked,
+            captureVideo = captureVideoCheck.isChecked,
+            sensorLocation = sensorLocationCheck.isChecked,
         )
+        val settings = saved.attempt(IdentityWork.trust(this).pins(), once)
         val attempt = SessionController.begin(settings) ?: return
-        // First-use trust is scoped to this one attempt.
+        // First-use trust and position in the report are scoped to this one attempt.
         firstUseCheck.isChecked = false
+        sensorLocationCheck.isChecked = false
         if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             // Asked at most once per attempt; the result continues arming either way.
             attempt.notificationPrompted = true
@@ -324,6 +575,16 @@ class ConnectionActivity : Activity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        // P7.7's Setup buttons ask for these outside any attempt; they only change the list.
+        if (requestCode == REQUEST_SETUP_LOCATION) {
+            val granted = grantResults.any { it == PackageManager.PERMISSION_GRANTED }
+            SessionController.note("location permission ${if (granted) "granted" else "denied"} from Setup")
+            // Asked before and refused for good: Android shows no prompt, so the button
+            // goes where the operator can still allow it.
+            if (!granted && !shouldShowRequestPermissionRationale(Manifest.permission.ACCESS_COARSE_LOCATION)) openAppSettings()
+            renderState()
+            return
+        }
         if (requestCode != REQUEST_NOTIFICATIONS) return
         val granted = grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
         SessionController.note("notification permission ${if (granted) "granted" else "denied"}")
@@ -516,6 +777,10 @@ class ConnectionActivity : Activity() {
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQUEST_PREVIEW) {
+            if (resultCode == RESULT_OK && data != null) adoptPreviewChoice(data.getLongExtra(PreviewActivity.EXTRA_TOKEN, -1L))
+            return
+        }
         val uri = data?.data
         if (resultCode != RESULT_OK || uri == null) return
         if (requestCode == REQUEST_IMPORT_MAP) {
@@ -549,6 +814,33 @@ class ConnectionActivity : Activity() {
             else -> return
         }
         Thread({ writeExport(uri, text) }, "report-export").start()
+    }
+
+    /**
+     * Opens the route preview on the route on show. The request is a small file (Austin to
+     * Denver is under 200 KB), written here because the preview runs in another process.
+     */
+    private fun openPreview() {
+        val request = Routing.previewRequest() ?: return
+        try {
+            RoutePreview.writeRequest(RoutePreview.requestFile(filesDir), request)
+        } catch (e: IOException) {
+            Toast.makeText(this, getString(R.string.preview_unreadable, e.message ?: e.toString()), Toast.LENGTH_LONG).show()
+            return
+        }
+        startActivityForResult(Intent(this, PreviewActivity::class.java), REQUEST_PREVIEW)
+    }
+
+    /** The preview chose another route: follow it, unless the route it replaces is gone. */
+    private fun adoptPreviewChoice(token: Long) {
+        val adopted = try {
+            val (chosenToken, route) = RoutePreview.readChoice(RoutePreview.choiceFile(filesDir))
+            chosenToken == token && Routing.adopt(route, chosenToken)
+        } catch (e: IOException) {
+            false
+        }
+        Toast.makeText(this, if (adopted) R.string.preview_adopted else R.string.preview_stale, Toast.LENGTH_LONG).show()
+        render()
     }
 
     /**
@@ -663,6 +955,168 @@ class ConnectionActivity : Activity() {
         render()
     }
 
+    /**
+     * A place for the dashboard's favorites tile: a name and a location in any form the
+     * destination box takes. Opens on the current destination when there is one, since
+     * a place just shared from OsmAnd is the likeliest thing to want kept.
+     *
+     * The name and the coordinates may be shown here and on the head unit; the event
+     * log records only that the list changed and how long it is.
+     */
+    private fun addFavorite() {
+        val margin = (16 * resources.displayMetrics.density).toInt()
+        val destination = Navigation.destination
+        val nameInput = EditText(this).apply {
+            setHint(R.string.favorite_name_hint)
+            isSingleLine = true
+            destination?.label?.let { setText(it) }
+        }
+        val locationInput = EditText(this).apply {
+            setHint(R.string.favorite_location_hint)
+            isSingleLine = true
+            destination?.let { setText(String.format(java.util.Locale.ROOT, "%.5f, %.5f", it.latitude, it.longitude)) }
+        }
+        val form = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(margin, margin / 2, margin, 0)
+            addView(TextView(this@ConnectionActivity).apply { setText(R.string.add_favorite_description) })
+            addView(nameInput)
+            addView(locationInput)
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.add_favorite)
+            .setView(form)
+            .setPositiveButton(R.string.add_favorite) { _, _ ->
+                val message = when (val parsed = DestinationParser.parseText(locationInput.text.toString())) {
+                    is ParsedDestination.Found -> {
+                        val place = parsed.destination
+                        // No name typed: the place's own label, else its coordinates.
+                        val name = nameInput.text.toString().ifBlank { Navigation.describe(place) }
+                        val favorite = Favorite.of(name, place.latitude, place.longitude)
+                        when {
+                            favorite == null -> getString(R.string.favorite_name_missing)
+                            !Favorites.add(this, favorite) -> getString(R.string.favorites_full, Favorite.MAX)
+                            else -> {
+                                SessionController.note("favorite added (${Favorites.list(this).size} saved)")
+                                getString(R.string.favorite_added, favorite.name)
+                            }
+                        }
+                    }
+                    is ParsedDestination.Refused ->
+                        getString(if (parsed.reason == Refusal.ADDRESS_ONLY) R.string.destination_address_only else R.string.route_input_invalid)
+                }
+                Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+                render()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    /**
+     * A tap on a favorite routes there, exactly as a tap on the dashboard's tile does
+     * (P7 plan §6.4). The log says only that it came from the phone.
+     */
+    private fun routeToFavorite(favorite: Favorite) {
+        SessionController.note("phone favorite tapped")
+        val message = Navigation.set(this, Destination(favorite.latitude, favorite.longitude, favorite.name), DestinationSource.FAVORITE)
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+        render()
+    }
+
+    /** A long press: Rename or Remove, each naming exactly the place it changes. */
+    private fun favoriteActions(favorite: Favorite) {
+        AlertDialog.Builder(this)
+            .setTitle(favorite.name)
+            .setItems(arrayOf(getString(R.string.rename_favorite), getString(R.string.remove_favorite))) { _, which ->
+                if (which == 0) renameFavorite(favorite) else removeFavorite(favorite)
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    /**
+     * Drops one saved place after a confirmation. The index is looked up again when the
+     * operator confirms, since the list may have changed behind the dialog (a lab intent,
+     * or a second screen), and a stale index would remove the wrong place.
+     */
+    private fun removeFavorite(favorite: Favorite) {
+        AlertDialog.Builder(this)
+            .setMessage(getString(R.string.remove_favorite_confirm, favorite.name))
+            .setPositiveButton(R.string.remove_favorite_remove) { _, _ ->
+                val index = Favorites.list(this).indexOf(favorite)
+                if (index < 0) return@setPositiveButton
+                Favorites.remove(this, index)
+                SessionController.note("favorite removed (${Favorites.list(this).size} saved)")
+                Toast.makeText(this, getString(R.string.favorite_removed, favorite.name), Toast.LENGTH_LONG).show()
+                render()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    /**
+     * A new name for one saved place, held to [Favorite.of]'s rules like a new one, and
+     * written back in the same position so the dashboard's order does not change.
+     */
+    private fun renameFavorite(favorite: Favorite) {
+        val margin = ui.dp(16)
+        val input = EditText(this).apply {
+            setHint(R.string.favorite_name_hint)
+            isSingleLine = true
+            setText(favorite.name)
+            setSelection(favorite.name.length)
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.rename_favorite)
+            .setView(LinearLayout(this).apply {
+                setPadding(margin, margin / 2, margin, 0)
+                addView(input, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            })
+            .setPositiveButton(R.string.rename_favorite) { _, _ ->
+                val renamed = Favorite.of(input.text.toString(), favorite.latitude, favorite.longitude)
+                val current = Favorites.list(this)
+                val index = current.indexOf(favorite)
+                val message = when {
+                    renamed == null -> getString(R.string.favorite_name_missing)
+                    index < 0 -> return@setPositiveButton
+                    else -> {
+                        Favorites.replace(this, current.mapIndexed { i, f -> if (i == index) renamed else f })
+                        SessionController.note("favorite renamed (${current.size} saved)")
+                        getString(R.string.favorite_renamed, renamed.name)
+                    }
+                }
+                Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+                render()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    /**
+     * Saves the destination in one tap (§6.4): a place just shared from OsmAnd is the
+     * likeliest one to keep. Named by its own label, else its coordinates; Rename is a
+     * long press away. A place already saved at the same point is not saved twice.
+     */
+    private fun saveDestination() {
+        val destination = Navigation.destination ?: return
+        val current = Favorites.list(this)
+        current.firstOrNull { it.latitude == destination.latitude && it.longitude == destination.longitude }?.let {
+            Toast.makeText(this, getString(R.string.favorite_exists, it.name), Toast.LENGTH_LONG).show()
+            return
+        }
+        val favorite = Favorite.of(Navigation.describe(destination), destination.latitude, destination.longitude)
+        val message = when {
+            favorite == null -> getString(R.string.favorite_name_missing)
+            !Favorites.add(this, favorite) -> getString(R.string.favorites_full, Favorite.MAX)
+            else -> {
+                SessionController.note("favorite added (${Favorites.list(this).size} saved)")
+                getString(R.string.favorite_added, favorite.name)
+            }
+        }
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+        render()
+    }
+
     /** The picked document's display name, for the installed file to keep. */
     private fun queryName(uri: Uri): String? =
         contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
@@ -728,7 +1182,7 @@ class ConnectionActivity : Activity() {
         // one; it stays checked but inert otherwise, and `connect` clears it too.
         sensorLocationCheck.isEnabled =
             idle && projection && sensorsSpinner.selectedItem != SessionSettings.SENSORS_NONE
-        sensorLocationCheck.visibility =
+        sensorLocationRow.visibility =
             if (sensorsSpinner.selectedItem == SessionSettings.SENSORS_NONE) View.GONE else View.VISIBLE
         mediaInfoCheck.isEnabled =
             idle && stopAfterSpinner.selectedItem == SessionSettings.STOP_AFTER_PROJECTION
@@ -738,12 +1192,12 @@ class ConnectionActivity : Activity() {
             idle && stopAfterSpinner.selectedItem == SessionSettings.STOP_AFTER_PROJECTION
         // The unit choice only means something when the cluster is being driven.
         navigationUnitsSpinner.isEnabled = navigationCheck.isEnabled && navigationCheck.isChecked
-        navigationUnitsSpinner.visibility =
+        navigationUnitsRow.visibility =
             if (navigationCheck.isChecked) View.VISIBLE else View.GONE
         navigationForceCheck.isEnabled = navigationUnitsSpinner.isEnabled
-        navigationForceCheck.visibility = navigationUnitsSpinner.visibility
+        navigationForceRow.visibility = navigationUnitsRow.visibility
         navigationScriptCheck.isEnabled = navigationUnitsSpinner.isEnabled
-        navigationScriptCheck.visibility = navigationUnitsSpinner.visibility
+        navigationScriptRow.visibility = navigationUnitsRow.visibility
         // The grant is made and withdrawn in Settings, so it is re-read on every render
         // rather than remembered. Transport buttons never depend on it.
         val mediaAccess = MediaAccessService.enabled(this)
@@ -767,29 +1221,29 @@ class ConnectionActivity : Activity() {
         val dashboard = sceneSpinner.selectedItem == SessionSettings.SCENE_DASHBOARD
         mapSideSpinner.isEnabled = sceneSpinner.isEnabled && dashboard
         importMapButton.isEnabled = idle
-        mapSideSpinner.visibility = if (dashboard) View.VISIBLE else View.GONE
+        mapSideRow.visibility = if (dashboard) View.VISIBLE else View.GONE
         // The unit is the dashboard header's; the demo scene draws no speed at all.
         speedUnitSpinner.isEnabled = sceneSpinner.isEnabled && dashboard
-        speedUnitSpinner.visibility = if (dashboard) View.VISIBLE else View.GONE
-        speedUnitLabel.visibility = speedUnitSpinner.visibility
-        mapText.visibility = if (dashboard) View.VISIBLE else View.GONE
-        importMapButton.visibility = if (dashboard) View.VISIBLE else View.GONE
+        speedUnitRow.visibility = if (dashboard) View.VISIBLE else View.GONE
+        // P7.7: the map rows now live on their own tab and stay visible with the demo
+        // scene, which only hides what the maps are for, not whether they are installed.
         // Every installed map is drawn, so every one is listed.
-        mapText.text = MapData.installed(this).takeIf { it.isNotEmpty() }?.let { maps ->
-            getString(R.string.map_installed, maps.joinToString(", ") { it.name }, maps.sumOf { it.length() } / (1L shl 20))
+        val maps = MapData.installed(this)
+        mapText.text = maps.takeIf { it.isNotEmpty() }?.let {
+            getString(R.string.map_installed, it.joinToString(", ") { map -> map.name }, it.sumOf { map -> map.length() } / (1L shl 20))
         } ?: getString(R.string.map_none)
         // Routing is not tied to an attempt or a scene: a route can be computed with no head
         // unit attached, which is how its cost on the phone is measured.
         val tiles = Routing.installed(this)
-        routingText.text = buildString {
-            append(
-                if (tiles.isEmpty()) getString(R.string.routing_none)
-                else getString(R.string.routing_installed, tiles.joinToString(", ") { it.name }),
-            )
-            // The destination's name is the operator's own and may be shown here; the
-            // report beside it carries only which source set it.
+        routingText.text =
+            if (tiles.isEmpty()) getString(R.string.routing_none)
+            else getString(R.string.routing_installed, tiles.joinToString(", ") { it.name })
+        // The destination's name is the operator's own and may be shown here; the report
+        // beside it carries only which source set it. Home says the same in words; this
+        // is the pre-P7.7 detail, with where the destination came from and the search time.
+        routeDetailText.text = buildString {
             Navigation.destination?.let { destination ->
-                append("\n").append(
+                append(
                     getString(
                         if (Navigation.waiting) R.string.destination_line_waiting else R.string.destination_line,
                         Navigation.describe(destination),
@@ -797,9 +1251,14 @@ class ConnectionActivity : Activity() {
                     ),
                 )
             }
-            Routing.summary()?.let { append("\n").append(getString(R.string.route_line, it)) }
+            Routing.summary()?.let {
+                if (isNotEmpty()) append("\n")
+                append(getString(R.string.route_line, it))
+            }
+            if (isEmpty()) append(getString(R.string.destination_none))
         }
         clearRouteButton.isEnabled = Navigation.destination != null || Routing.line != null || Routing.pending != 0L
+        previewButton.isEnabled = Routing.previewRequest() != null
         importRoutingButton.isEnabled = Routing.pending == 0L
         removeDataButton.isEnabled = idle && Routing.pending == 0L && !DropFolder.busy
         folderText.text = DropFolder.folder(this)?.let { folder ->
@@ -830,13 +1289,438 @@ class ConnectionActivity : Activity() {
         stopButton.isEnabled = stage != Stage.IDLE && stage != Stage.STOPPING
         useListedButton.visibility =
             if (stage == Stage.ARMED && attempt?.mismatchCandidate != null) View.VISIBLE else View.GONE
-        reportText.text = SessionReport.compose(this, usb, filter)
+        // The live report is composed only while it is on screen: it is the one costly
+        // part of a render, and every session event renders.
+        if (currentTab == TAB_DIAGNOSTICS) reportText.text = SessionReport.compose(this, usb, filter)
         projectionText.text = SessionController.projectionReport.ifEmpty { getString(R.string.no_projection) }
+        renderHome(stage, attempt)
+        renderSetup(idle, maps.size, tiles.map { it.name }.toSet(), pins.size, notificationsGranted, mediaAccess)
+        renderSettings()
+        renderTabs()
+    }
+
+    /**
+     * Home (§6.1): the status in words, the one large button, the route in words and the
+     * favorites. The status card's own button carries only the actions the large button
+     * does not: the large one is Connect (or Try again) while idle and Stop otherwise.
+     */
+    private fun renderHome(stage: Stage, attempt: Attempt?) {
+        val status = StatusText.of(
+            stage,
+            SessionController.finalCategory,
+            parseReport(SessionController.nativeReport.toByteArray())["auth_status"],
+            autoStartCheck.isChecked,
+            Navigation.destination?.let(Navigation::describe),
+            // Events are cleared when an attempt begins, so this is this attempt's unplug.
+            unplugged = SessionController.events.any { it.contains("accessory detached") },
+            mismatch = stage == Stage.ARMED && attempt?.mismatchCandidate != null,
+        )
+        statusSentence.text = status.sentence
+        statusCard.backgroundTintList = getColorStateList(
+            when (status.tone) {
+                StatusTone.QUIET -> R.color.status_quiet
+                StatusTone.BUSY -> R.color.status_busy
+                StatusTone.GOOD -> R.color.status_good
+                StatusTone.PROBLEM -> R.color.status_problem
+            },
+        )
+        cardAction = when (status.action) {
+            StatusAction.OPEN_DIAGNOSTICS, StatusAction.TRUST_AND_CONNECT, StatusAction.USE_LISTED -> status.action
+            else -> StatusAction.NONE
+        }
+        statusActionButton.visibility = if (cardAction == StatusAction.NONE) View.GONE else View.VISIBLE
+        statusActionButton.text = cardAction.label
+        primaryAction = when {
+            stage != Stage.IDLE -> StatusAction.STOP
+            status.action == StatusAction.TRY_AGAIN -> StatusAction.TRY_AGAIN
+            else -> StatusAction.CONNECT
+        }
+        primaryButton.text = when (primaryAction) {
+            StatusAction.STOP -> getString(R.string.stop)
+            StatusAction.CONNECT -> getString(R.string.connect)
+            else -> primaryAction.label
+        }
+        // The same conditions as Diagnostics' own Connect and Stop, computed above.
+        primaryButton.isEnabled = if (primaryAction == StatusAction.STOP) stopButton.isEnabled else connectButton.isEnabled
+
+        // P8.1 (plan §7): which engine speaks, flagged if it can reach the network.
+        val engine = speechEngine
+        speechText.text = when {
+            engine == null -> getString(R.string.speech_no_engine)
+            engine.internet -> getString(R.string.speech_engine_networked, engine.label)
+            else -> getString(R.string.speech_engine, engine.label)
+        }
+
+        val destination = Navigation.destination
+        val result = Routing.last
+        val route = result?.route
+        // Guide's live distance and time to go while following, else the route's totals.
+        val figures = RouteClock.figures(System.currentTimeMillis())
+        val arrival = figures?.arrivalMillis?.let { DateFormat.getTimeFormat(this).format(Date(it)) }
+        routeSummaryText.text = StatusText.routeSummary(
+            destination?.let(Navigation::describe),
+            Navigation.waiting,
+            Routing.pending != 0L,
+            result != null && route == null,
+            figures?.metres,
+            figures?.seconds,
+            arrival,
+            SpeedUnit.entries.getOrElse(speedUnitSpinner.selectedItemPosition) { SpeedUnit.MPH },
+        ) ?: getString(R.string.route_none)
+        saveDestinationButton.visibility = if (destination != null) View.VISIBLE else View.GONE
+
+        // The places are the operator's own and may be listed here, as the destination is.
+        val favorites = Favorites.list(this)
+        favoritesText.text = getString(R.string.favorites_title, favorites.size, Favorite.MAX)
+        addFavoriteButton.isEnabled = favorites.size < Favorite.MAX
+        if (favorites == shownFavorites) return
+        shownFavorites = favorites
+        favoritesList.removeAllViews()
+        if (favorites.isEmpty()) {
+            favoritesList.addView(ui.caption().apply { setText(R.string.favorites_none) })
+        }
+        favorites.forEach { favoritesList.addView(favoriteRow(it)) }
+    }
+
+    /**
+     * One saved place: its name large, its coordinates small, the whole row a touch
+     * target. Tap routes there; a long press offers Rename and Remove.
+     */
+    private fun favoriteRow(favorite: Favorite): View = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        minimumHeight = ui.dp(56)
+        gravity = android.view.Gravity.CENTER_VERTICAL
+        setPadding(ui.dp(4), ui.dp(8), ui.dp(4), ui.dp(8))
+        val attributes = obtainStyledAttributes(intArrayOf(android.R.attr.selectableItemBackground))
+        background = attributes.getDrawable(0)
+        attributes.recycle()
+        isClickable = true
+        isLongClickable = true
+        setOnClickListener { routeToFavorite(favorite) }
+        setOnLongClickListener {
+            favoriteActions(favorite)
+            true
+        }
+        addView(ui.primary(TextView(this@ConnectionActivity)).apply {
+            text = favorite.name
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
+        })
+        addView(ui.caption().apply {
+            text = String.format(java.util.Locale.ROOT, "%.5f, %.5f", favorite.latitude, favorite.longitude)
+            setPadding(0, 0, 0, 0)
+        })
+    }
+
+    /**
+     * Setup (§6.1): what is missing, each with the one button that fixes it, or Ready.
+     * Rebuilt only when the list changes; the buttons' enabled state follows every render,
+     * because the imports and trust are only allowed while idle, as they are elsewhere.
+     */
+    private fun renderSetup(idle: Boolean, maps: Int, tiles: Set<String>, pins: Int, sessionNotifications: Boolean, access: Boolean) {
+        val location = hasLocation()
+        val here = if (location && tiles.isNotEmpty()) lastKnownLocation()?.let { RoutingData.tileFor(it.latitude, it.longitude) } else null
+        val wanted = SetupCheck.notificationAccessWanted(
+            mediaInfoCheck.isChecked, notificationsOnDashboardCheck.isChecked, callControlsCheck.isChecked,
+            CallControl.fullControlsGranted(this),
+        )
+        val items = SetupCheck.items(maps, tiles, here, wanted, access, location, pins, sessionNotifications)
+        tabs[TAB_SETUP].text = if (items.isEmpty()) getString(R.string.tab_setup) else getString(R.string.tab_setup_count, items.size)
+        if (items != shownSetup || here != shownHereTile) {
+            shownSetup = items
+            shownHereTile = here
+            setupList.removeAllViews()
+            setupButtons.clear()
+            if (items.isEmpty()) {
+                setupList.addView(ui.card(ui.title(R.string.setup_ready), ui.caption().apply { setText(R.string.setup_ready_detail) }))
+            }
+            for (item in items) {
+                val fix = Button(this).apply {
+                    text = item.fix
+                    setOnClickListener { fix(item) }
+                }
+                setupButtons[item] = fix
+                setupList.addView(
+                    ui.card(
+                        ui.primary(TextView(this)).apply {
+                            text = item.title
+                            setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
+                            typeface = Typeface.DEFAULT_BOLD
+                        },
+                        ui.caption().apply {
+                            text = if (item == SetupItem.NO_ROUTING_HERE && here != null) {
+                                getString(R.string.setup_tile_needed, item.detail, here)
+                            } else {
+                                item.detail
+                            }
+                        },
+                        fix,
+                    ),
+                )
+            }
+        }
+        setupButtons.forEach { (item, button) ->
+            button.isEnabled = when (item) {
+                SetupItem.NO_MAP -> importMapButton.isEnabled
+                SetupItem.NO_ROUTING, SetupItem.NO_ROUTING_HERE -> importRoutingButton.isEnabled
+                SetupItem.NO_PINS -> idle && !SessionController.identityBusy
+                else -> true
+            }
+        }
+    }
+
+    private fun fix(item: SetupItem) {
+        when (item) {
+            SetupItem.NO_MAP -> importMapButton.performClick()
+            SetupItem.NO_ROUTING, SetupItem.NO_ROUTING_HERE -> importRoutingButton.performClick()
+            SetupItem.NOTIFICATION_ACCESS -> grantNotificationAccess()
+            SetupItem.LOCATION -> requestLocation()
+            SetupItem.NO_PINS -> trustAndConnect()
+            SetupItem.SESSION_NOTIFICATIONS -> openSessionNotificationSettings()
+        }
+    }
+
+    /** What Settings shows beside its switches, re-read each render like the media grant. */
+    private fun renderSettings() {
+        callControlsText.visibility = if (callControlsCheck.isChecked) View.VISIBLE else View.GONE
+        callControlsText.text =
+            if (CallControl.fullControlsGranted(this)) getString(R.string.call_controls_full)
+            else getString(R.string.call_controls_partial, CallControl.GRANT_COMMAND)
+        exclusionsRow.visibility = if (notificationsOnDashboardCheck.isChecked) View.VISIBLE else View.GONE
+        readAloudRow.visibility = if (notificationsOnDashboardCheck.isChecked) View.VISIBLE else View.GONE
+        val saved = AppSettings.load(this)
+        val excluded = saved.notificationExclusions
+        // P8.3: the trip panel's toggle may have been pressed since, with this screen up.
+        // Setting the switch stores the value it already has and tells Guide nothing new.
+        if (voiceGuidanceCheck.isChecked != saved.voice.enabled) voiceGuidanceCheck.isChecked = saved.voice.enabled
+        exclusionsText.text =
+            if (excluded.isEmpty()) getString(R.string.notification_exclusions_nothing)
+            else getString(R.string.notification_exclusions_count, excluded.size)
+    }
+
+    /** Diagnostics is a tab only with its switch on, or once the status card opened it. */
+    private fun renderTabs() {
+        val diagnostics = diagnosticsCheck.isChecked || diagnosticsRevealed
+        tabs[TAB_DIAGNOSTICS].visibility = if (diagnostics) View.VISIBLE else View.GONE
+        if (!diagnostics && currentTab == TAB_DIAGNOSTICS) selectTab(TAB_SETTINGS)
+    }
+
+    /** Shows one page. Rendering is the caller's: a tap renders after it, [onCreate] before. */
+    private fun selectTab(index: Int) {
+        currentTab = index
+        pages.forEachIndexed { i, page -> page.visibility = if (i == index) View.VISIBLE else View.GONE }
+        ui.select(tabs, index)
+        scroll.scrollTo(0, 0)
+    }
+
+    private fun onPrimary() {
+        if (primaryAction == StatusAction.STOP) stop() else connect()
+    }
+
+    private fun onCardAction() {
+        when (cardAction) {
+            StatusAction.OPEN_DIAGNOSTICS -> {
+                diagnosticsRevealed = true
+                selectTab(TAB_DIAGNOSTICS)
+                renderState()
+            }
+            StatusAction.TRUST_AND_CONNECT -> trustAndConnect()
+            StatusAction.USE_LISTED -> useListed()
+            else -> {}
+        }
+    }
+
+    /**
+     * "Trust and connect" (§6.2, and Setup's no-pins item): Diagnostics' "Trust the next
+     * head unit" box, ticked for one attempt, then Connect — the same C2 first-use path,
+     * behind a confirmation that says what it pins. [connect] clears the box once an
+     * attempt begins; if none began (the identity was still loading), it is cleared here
+     * too, so it cannot arm a later Connect nobody meant to trust with.
+     */
+    private fun trustAndConnect() {
+        if (SessionController.stage != Stage.IDLE) return
+        AlertDialog.Builder(this)
+            .setTitle(R.string.trust_title)
+            .setMessage(R.string.trust_confirm)
+            .setPositiveButton(R.string.trust_and_connect) { _, _ ->
+                val before = SessionController.attempt
+                firstUseCheck.isChecked = true
+                connect()
+                if (SessionController.attempt === before) firstUseCheck.isChecked = false
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    /**
+     * APP09: the integration is offered on its own, and the permission it needs is
+     * explained before the operator is sent to Settings to grant it. Nothing here can
+     * request the grant directly — a notification listener binding is made in Settings —
+     * so this only opens that screen.
+     */
+    private fun grantNotificationAccess() {
+        val seconds = resources.getQuantityString(
+            R.plurals.media_access_seconds, MediaControl.SEEK_SECONDS, MediaControl.SEEK_SECONDS,
+        )
+        AlertDialog.Builder(this)
+            .setMessage(getString(R.string.media_access_prompt, seconds))
+            .setPositiveButton(R.string.media_access_grant) { _, _ -> openNotificationAccess() }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    /**
+     * Location only when the operator asks for it from Setup, after saying what it is
+     * for (APP09): the app still never asks on its own. Both are requested so Android can
+     * offer "approximate", which the position fallback also works with.
+     */
+    private fun requestLocation() {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.location_title)
+            .setMessage(R.string.location_prompt)
+            .setPositiveButton(R.string.location_allow) { _, _ ->
+                requestPermissions(
+                    arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
+                    REQUEST_SETUP_LOCATION,
+                )
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    /**
+     * **Play a sample** (P8.3, plan §7): the words a Prepare prompt would say, through
+     * [Speaker.sample], which takes a prompt's path, binding the engine for the sample alone
+     * when no projection has one. The button waits for the outcome, which says why when
+     * nothing was heard.
+     */
+    private fun playSample() {
+        val saved = AppSettings.load(this)
+        sampleText.setText(R.string.voice_sample_playing)
+        sampleButton.isEnabled = false
+        val text = SpokenText.sample(saved.speedUnit, saved.voice.streetNames)
+        val started = Speaker.sample(this, saved, text) { outcome ->
+            sampleButton.isEnabled = true
+            sampleText.text = sampleMessage(outcome, AppSettings.load(this).voice.enabled)
+        }
+        if (!started) sampleText.setText(R.string.voice_sample_busy)
+    }
+
+    /** What the phone says about a sample: heard, or why not; and whether prompts are off. */
+    private fun sampleMessage(outcome: SampleOutcome, guidanceOn: Boolean): String {
+        val said = when (outcome) {
+            SampleOutcome.SPOKEN ->
+                getString(if (Speaker.labBluetooth) R.string.voice_sample_spoken_lab else R.string.voice_sample_spoken)
+            SampleOutcome.NO_ENGINE -> getString(R.string.voice_sample_no_engine)
+            SampleOutcome.NO_ENGLISH -> getString(R.string.voice_sample_no_english)
+            SampleOutcome.ENGINE_TIMEOUT -> (SpeechQueue.SAMPLE_INIT_TIMEOUT_MS / 1000).toInt().let { seconds ->
+                resources.getQuantityString(R.plurals.voice_sample_engine_timeout, seconds, seconds)
+            }
+            SampleOutcome.NO_BLUETOOTH -> getString(R.string.voice_sample_no_bluetooth)
+            SampleOutcome.IN_CALL -> getString(R.string.voice_sample_in_call)
+            SampleOutcome.NO_FOCUS -> getString(R.string.voice_sample_no_focus)
+            SampleOutcome.INTERRUPTED -> getString(R.string.voice_sample_interrupted)
+            SampleOutcome.BLUETOOTH_LOST -> getString(R.string.voice_sample_bluetooth_lost)
+            SampleOutcome.FOCUS_LOST -> getString(R.string.voice_sample_focus_lost)
+            SampleOutcome.STOPPED -> getString(R.string.voice_sample_stopped)
+            SampleOutcome.ERROR -> getString(R.string.voice_sample_error)
+        }
+        return if (guidanceOn) said else said + "\n" + getString(R.string.voice_sample_guidance_off)
+    }
+
+    /** Android's text-to-speech settings: engine, voice and rate are chosen there (plan §7). */
+    private fun openSpeechSettings() {
+        try {
+            startActivity(Intent(SpeechEngines.SETTINGS_ACTION))
+        } catch (e: RuntimeException) {
+            SessionController.note("cannot open text-to-speech settings: $e")
+        }
+    }
+
+    private fun openAppSettings() {
+        try {
+            startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)))
+        } catch (e: RuntimeException) {
+            SessionController.note("cannot open app settings: $e")
+        }
+    }
+
+    /** The session notification's own switch, which a denied prompt no longer offers. */
+    private fun openSessionNotificationSettings() {
+        try {
+            startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName))
+        } catch (e: RuntimeException) {
+            openAppSettings()
+        }
+    }
+
+    private fun hasLocation(): Boolean =
+        checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+            checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+
+    /**
+     * The phone's newest cached fix of any age, for Setup's "no routing data for where you
+     * are" only: which 5° tile the phone is in changes over hundreds of kilometres, so an
+     * old fix still answers it. Never requests a fix, and never leaves this screen.
+     */
+    private fun lastKnownLocation(): Location? {
+        if (!hasLocation()) return null
+        val manager = getSystemService(LocationManager::class.java) ?: return null
+        return try {
+            manager.getProviders(true)
+                .mapNotNull { manager.getLastKnownLocation(it) }
+                .maxByOrNull { it.elapsedRealtimeNanos }
+        } catch (e: SecurityException) {
+            null
+        }
+    }
+
+    /**
+     * The per-app exclusion list (§5.8): every app seen posting a notification the tile
+     * would show this session ([NotificationFeed.posters]), plus the ones already
+     * excluded, by name. Saved through [AppSettings] like any other choice, and handed to
+     * the feed at once so a change applies to a session already running. The event log
+     * gets the count only; which apps are excluded never leaves the phone's settings.
+     */
+    private fun chooseExclusions() {
+        val excluded = AppSettings.load(this).notificationExclusions
+        val packages = (NotificationFeed.posters() + excluded).map { it to appLabel(it) }
+            .sortedBy { it.second.lowercase(java.util.Locale.ROOT) }
+        if (packages.isEmpty()) {
+            ui.showHelp(R.string.notification_exclusions_label, getText(R.string.notification_exclusions_none))
+            return
+        }
+        val checked = BooleanArray(packages.size) { packages[it].first in excluded }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.notification_exclusions_label)
+            .setMultiChoiceItems(packages.map { it.second }.toTypedArray(), checked) { _, which, on -> checked[which] = on }
+            .setPositiveButton(android.R.string.ok) { _, _ ->
+                val chosen = packages.filterIndexed { i, _ -> checked[i] }.mapTo(HashSet()) { it.first }
+                AppSettings.update(this) { it.copy(notificationExclusions = chosen) }
+                NotificationFeed.exclusions = chosen
+                SessionController.note("notification exclusions changed (${chosen.size} apps)")
+                renderState()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    /** An app's name for the exclusion list, or its package when it cannot be seen. */
+    private fun appLabel(app: String): String =
+        try {
+            packageManager.getApplicationLabel(packageManager.getApplicationInfo(app, 0)).toString()
+        } catch (e: PackageManager.NameNotFoundException) {
+            app
+        }
+
+    private fun versionLine(): String {
+        val info = packageManager.getPackageInfo(packageName, 0)
+        return getString(R.string.version_line, info.versionName ?: "-", info.longVersionCode)
     }
 
     private fun buildViews() {
-        val margin = (16 * resources.displayMetrics.density).toInt()
-        fun text(monospace: Boolean = false) = TextView(this).apply {
+        ui = PhoneViews(this)
+        val margin = ui.dp(16)
+        fun text(monospace: Boolean = false) = ui.primary(TextView(this)).apply {
             setTextIsSelectable(true)
             if (monospace) typeface = Typeface.MONOSPACE
             setPadding(0, margin / 2, 0, margin / 2)
@@ -845,7 +1729,16 @@ class ConnectionActivity : Activity() {
             setText(label)
             setOnClickListener { action() }
         }
-        stageText = text().apply { textSize = 20f }
+        /** A secondary action: the platform's borderless button. */
+        fun quietButton(label: Int, action: () -> Unit) = Button(this, null, android.R.attr.borderlessButtonStyle).apply {
+            setText(label)
+            setOnClickListener { action() }
+        }
+        fun switch(label: Int) = Switch(this).apply {
+            setText(label)
+            minHeight = ui.dp(48)
+        }
+        stageText = text().apply { textSize = 18f }
         trustText = text(monospace = true)
         notificationText = text().apply { setText(R.string.notifications_denied) }
         accessoryText = text(monospace = true)
@@ -857,84 +1750,48 @@ class ConnectionActivity : Activity() {
             adapter = ArrayAdapter(this@ConnectionActivity, android.R.layout.simple_spinner_dropdown_item, items)
         }
         profileSpinner = spinner(PROFILES)
-        stopAfterSpinner = spinner(SessionSettings.STOP_AFTER).apply {
-            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-                override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                    renderState()
-                }
-
-                override fun onNothingSelected(parent: AdapterView<*>?) {
-                    renderState()
-                }
-            }
-        }
+        stopAfterSpinner = spinner(SessionSettings.STOP_AFTER)
         tlsProfileSpinner = spinner(SessionSettings.TLS_PROFILES)
-        firstUseCheck = CheckBox(this).apply { setText(R.string.first_use) }
-        captureDiscoveryCheck = CheckBox(this).apply { setText(R.string.capture_discovery) }
-        captureUnhandledCheck = CheckBox(this).apply { setText(R.string.capture_unhandled) }
-        captureVideoCheck = CheckBox(this).apply { setText(R.string.capture_video) }
-        openAllChannelsCheck = CheckBox(this).apply { setText(R.string.open_all_channels) }
-        resumeInPlaceCheck = CheckBox(this).apply { setText(R.string.resume_in_place) }
-        waitForFocusCheck = CheckBox(this).apply { setText(R.string.wait_for_focus) }
+        firstUseCheck = CheckBox(this).apply { setText(R.string.first_use_label) }
+        captureDiscoveryCheck = CheckBox(this).apply { setText(R.string.capture_discovery_label) }
+        captureUnhandledCheck = CheckBox(this).apply { setText(R.string.capture_unhandled_label) }
+        captureVideoCheck = CheckBox(this).apply { setText(R.string.capture_video_label) }
+        openAllChannelsCheck = CheckBox(this).apply { setText(R.string.open_all_channels_label) }
+        resumeInPlaceCheck = CheckBox(this).apply { setText(R.string.resume_in_place_label) }
+        waitForFocusCheck = CheckBox(this).apply { setText(R.string.wait_for_focus_label) }
         keyframeSpinner = spinner(SessionSettings.KEYFRAME_SECONDS.map { "$it s" })
         setupFieldSpinner = spinner(SessionSettings.SETUP_FIELDS)
-        sensorsSpinner = spinner(SessionSettings.SENSOR_SETS).apply {
-            // Starts on the whole advertised set rather than the head of the list: the
-            // operator chooses `none` for an attempt that must change nothing.
-            setSelection(SessionSettings.SENSOR_SETS.indexOf(SessionSettings.SENSORS_ALL))
-            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-                override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                    renderState()
-                }
-
-                override fun onNothingSelected(parent: AdapterView<*>?) {
-                    renderState()
-                }
-            }
-        }
+        // Its saved default is the whole advertised set rather than the head of the list:
+        // the operator chooses `none` for an attempt that must change nothing.
+        sensorsSpinner = spinner(SessionSettings.SENSOR_SETS)
         // APP09 and spec §10: position is offered on its own, with what it means stated,
-        // and it is never on unless the operator turned it on for this attempt.
-        sensorLocationCheck = CheckBox(this).apply { setText(R.string.sensor_location) }
-        mediaInfoCheck = CheckBox(this).apply {
-            setText(R.string.media_info)
-            // On by default; it adds no Android permission of its own, and the grant it can
-            // use is still asked for separately below.
-            isChecked = true
-            setOnCheckedChangeListener { _, _ -> renderState() }
-        }
+        // and it is never on unless the operator turned it on for this attempt. Never
+        // saved (P7.1's PerAttempt), and cleared once the attempt begins.
+        sensorLocationCheck = CheckBox(this).apply { setText(R.string.sensor_location_label) }
+        // On by default (SavedSettings); it adds no Android permission of its own, and
+        // the grant it can use is still asked for separately below.
+        mediaInfoCheck = switch(R.string.media_info_label)
         // APP09 again: audio out is offered on its own. It adds no Android permission —
         // the audio is this app's own and goes out over USB — so there is nothing to send
         // the operator to Settings for, only a choice to make.
-        audioCheck = CheckBox(this).apply { setText(R.string.audio_out) }
+        audioCheck = switch(R.string.audio_out_label)
         // APP09 once more: turn-by-turn on the vehicle's own cluster is its own choice. It
         // needs no Android permission — the maneuvers are the followed route's (P6.5), or
         // P6.2's script — and a head unit that refuses the channel affects nothing else.
-        navigationCheck = CheckBox(this).apply {
-            setText(R.string.navigation_cluster)
-            setOnCheckedChangeListener { _, _ -> renderState() }
-        }
+        // On by default (SavedSettings), like media_info: no permission of its own, and
+        // G9/G10 passed with it on.
+        navigationCheck = switch(R.string.navigation_cluster_label)
         navigationUnitsSpinner = spinner(SessionSettings.NAVIGATION_UNITS)
         // Offered beside the cluster box rather than on its own, because on its own it
         // means nothing: it changes what happens when the head unit declines to answer,
-        // and a head unit that answers never reaches it.
-        navigationForceCheck = CheckBox(this).apply { setText(R.string.navigation_force) }
-        navigationScriptCheck = CheckBox(this).apply { setText(R.string.navigation_script) }
-        mediaAccessText = TextView(this)
-        // APP09: the integration is offered on its own, and the permission it needs is
-        // explained before the operator is sent to Settings to grant it. Nothing here can
-        // request the grant directly — a notification listener binding is made in
-        // Settings — so the button only opens that screen.
-        mediaAccessButton = button(R.string.media_access_grant) {
-            val seconds = resources.getQuantityString(
-                R.plurals.media_access_seconds, MediaControl.SEEK_SECONDS, MediaControl.SEEK_SECONDS,
-            )
-            AlertDialog.Builder(this)
-                .setMessage(getString(R.string.media_access_prompt, seconds))
-                .setPositiveButton(R.string.media_access_grant) { _, _ -> openNotificationAccess() }
-                .setNegativeButton(android.R.string.cancel, null)
-                .show()
-        }
-        softwareEncoderCheck = CheckBox(this).apply { setText(R.string.software_encoder) }
+        // and a head unit that answers never reaches it. On by default (spec §8.1): Ford
+        // SYNC 4.0 never sends InstrumentClusterStart, so waiting for it sends nothing.
+        // Lab runs still take it from EXTRA_LAB_NAVIGATION_FORCE, off unless asked.
+        navigationForceCheck = switch(R.string.navigation_force_label)
+        navigationScriptCheck = switch(R.string.navigation_script_label)
+        mediaAccessText = ui.caption()
+        mediaAccessButton = button(R.string.media_access_grant) { grantNotificationAccess() }
+        softwareEncoderCheck = CheckBox(this).apply { setText(R.string.software_encoder_label) }
         videoPreferenceSpinner = spinner(SessionSettings.VIDEO_PREFERENCES)
         encoderFpsSpinner = spinner(
             SessionSettings.ENCODER_RATES.map { if (it == 0) getString(R.string.encoder_fps_negotiated) else "$it" },
@@ -944,8 +1801,55 @@ class ConnectionActivity : Activity() {
         mapSideSpinner = spinner(MAP_SIDES)
         // Opens on the first entry, which is why [SpeedUnit] lists mph first.
         speedUnitSpinner = spinner(SpeedUnit.LABELS)
-        speedUnitLabel = TextView(this).apply { setText(R.string.speed_unit_label) }
-        mapText = TextView(this)
+        // P7.1's settings, on the Settings tab since P7.7.
+        autoStartCheck = switch(R.string.auto_start_label)
+        diagnosticsCheck = switch(R.string.diagnostics)
+        markerColourSpinner = spinner(MarkerColour.LABELS)
+        dayNightSpinner = spinner(DayNightMode.LABELS)
+        notificationsOnDashboardCheck = switch(R.string.notifications_on_dashboard)
+        callControlsCheck = switch(R.string.call_controls)
+        // P8.1 (plan §7): under the dashboard switch, and only shown with it on.
+        readAloudCheck = switch(R.string.read_aloud_label)
+        readAloudRow = ui.withHelp(readAloudCheck, R.string.read_aloud_label, R.string.read_aloud_help)
+        speechMediaSpinner = spinner(SpeechMedia.LABELS)
+        speechText = ui.body()
+        // P8.3: voice guidance. The switch is the trip panel's toggle; the rest are what
+        // P8.2 saved with the plan's defaults and read at every projection start.
+        voiceGuidanceCheck = switch(R.string.voice_guidance_label)
+        voiceEarlyCheck = CheckBox(this).apply { setText(R.string.voice_early) }
+        voicePrepareCheck = CheckBox(this).apply { setText(R.string.voice_prepare) }
+        voiceAtTurnCheck = CheckBox(this).apply { setText(R.string.voice_at_turn) }
+        // In PromptTiming's and PromptDetail's order, which is how the rows below read them.
+        voiceTimingSpinner = spinner(
+            listOf(R.string.voice_timing_earlier, R.string.voice_timing_normal, R.string.voice_timing_later).map(::getString),
+        )
+        voiceDetailSpinner = spinner(listOf(R.string.voice_detail_brief, R.string.voice_detail_full).map(::getString))
+        voiceStreetNamesCheck = switch(R.string.voice_street_names_label)
+        voiceRerouteCheck = switch(R.string.voice_announce_reroute_label)
+        voiceArrivalCheck = switch(R.string.voice_announce_arrival_label)
+        sampleButton = button(R.string.voice_sample) { playSample() }
+        // Announced when it changes, so the outcome is heard as well as seen.
+        sampleText = ui.caption().apply { accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
+        // Route preferences: the car-vario profile's switches, its top speed, and how the
+        // times are shown. In RouteOptions' list orders, which is how the rows read them.
+        avoidHighwaysCheck = switch(R.string.route_avoid_highways)
+        avoidTollsCheck = switch(R.string.route_avoid_tolls)
+        avoidUnpavedCheck = switch(R.string.route_avoid_unpaved)
+        bypassTownsCheck = switch(R.string.route_bypass_towns)
+        allowTracksCheck = switch(R.string.route_allow_tracks)
+        topSpeedSpinner = spinner(RouteOptions.TOP_SPEEDS_KMH.map(RouteOptions::topSpeedLabel))
+        etaSpinner = spinner(RouteOptions.ETA_PERCENTS.map(RouteOptions::etaLabel))
+        learnPaceCheck = switch(R.string.route_learn_pace_label)
+        showAlternativesCheck = switch(R.string.route_show_alternatives_label)
+        callControlsText = ui.caption().apply { setTextIsSelectable(true) }
+        exclusionsText = ui.body()
+        exclusionsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            addView(exclusionsText, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(quietButton(R.string.notification_exclusions_choose) { chooseExclusions() })
+        }
+        mapText = ui.body()
         importMapButton = button(R.string.import_map) {
             AlertDialog.Builder(this)
                 .setMessage(R.string.import_map_description)
@@ -964,7 +1868,7 @@ class ConnectionActivity : Activity() {
                 .setNegativeButton(android.R.string.cancel, null)
                 .show()
         }
-        routingText = TextView(this)
+        routingText = ui.body()
         importRoutingButton = button(R.string.import_routing) {
             AlertDialog.Builder(this)
                 .setMessage(R.string.import_routing_description)
@@ -984,7 +1888,7 @@ class ConnectionActivity : Activity() {
                 .show()
         }
         removeDataButton = button(R.string.remove_data) { removeData() }
-        folderText = TextView(this)
+        folderText = ui.body()
         chooseFolderButton = button(R.string.choose_drop_folder) {
             AlertDialog.Builder(this)
                 .setMessage(R.string.choose_drop_folder_description)
@@ -1001,13 +1905,22 @@ class ConnectionActivity : Activity() {
         checkFolderButton = button(R.string.check_drop_folder) { DropFolder.sweep(this) }
         routeInput = EditText(this).apply {
             setHint(R.string.route_input_hint)
-            isSingleLine = true
+            // One line of input, but the hint may wrap to a second on a narrow phone
+            // rather than be cut off mid-word.
+            inputType = android.text.InputType.TYPE_CLASS_TEXT
+            setHorizontallyScrolling(false)
+            maxLines = 2
         }
         routeButton = button(R.string.compute_route) { computeRoute() }
         clearRouteButton = button(R.string.clear_route) {
             Navigation.clear()
             render()
         }
+        previewButton = button(R.string.preview_route) { openPreview() }
+        favoritesText = ui.title(R.string.favorites_label)
+        favoritesList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        saveDestinationButton = button(R.string.save_destination) { saveDestination() }
+        addFavoriteButton = quietButton(R.string.add_favorite_coordinates) { addFavorite() }
         keepaliveSpinner = spinner(SessionSettings.KEEPALIVE_PROFILES)
         forgetPinsButton = button(R.string.forget_pins) { forgetPins() }
         replaceIdentityButton = button(R.string.replace_identity) { replaceIdentity() }
@@ -1041,106 +1954,423 @@ class ConnectionActivity : Activity() {
         }
         val exportButton = button(R.string.export) { exportReport(REQUEST_EXPORT) }
         val exportSavedButton = button(R.string.export_saved) { exportReport(REQUEST_EXPORT_SAVED) }
-        val column = LinearLayout(this).apply {
+        loadSaved()
+
+        // Home: what someone who is not debugging sees (§6.1).
+        statusSentence = ui.primary(TextView(this)).apply { setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f) }
+        statusActionButton = Button(this).apply { setOnClickListener { onCardAction() } }
+        statusCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            addView(stageText)
-            addView(TextView(this@ConnectionActivity).apply { setText(R.string.profile_label) })
-            addView(profileSpinner)
-            addView(TextView(this@ConnectionActivity).apply { setText(R.string.stop_after_label) })
-            addView(stopAfterSpinner)
-            addView(TextView(this@ConnectionActivity).apply { setText(R.string.tls_profile_label) })
-            addView(tlsProfileSpinner)
-            addView(TextView(this@ConnectionActivity).apply { setText(R.string.keepalive_label) })
-            addView(keepaliveSpinner)
-            addView(firstUseCheck)
-            addView(captureDiscoveryCheck)
-            addView(captureUnhandledCheck)
-            addView(captureVideoCheck)
-            addView(openAllChannelsCheck)
-            addView(resumeInPlaceCheck)
-            addView(waitForFocusCheck)
-            addView(TextView(this@ConnectionActivity).apply { setText(R.string.keyframe_label) })
-            addView(keyframeSpinner)
-            addView(TextView(this@ConnectionActivity).apply { setText(R.string.setup_field_label) })
-            addView(setupFieldSpinner)
-            addView(TextView(this@ConnectionActivity).apply { setText(R.string.sensors_label) })
-            addView(sensorsSpinner)
-            addView(sensorLocationCheck)
-            addView(mediaInfoCheck)
-            addView(audioCheck)
-            addView(navigationCheck)
-            addView(navigationUnitsSpinner)
-            addView(navigationForceCheck)
-            addView(navigationScriptCheck)
-            addView(mediaAccessText)
-            addView(mediaAccessButton)
-            addView(softwareEncoderCheck)
-            addView(TextView(this@ConnectionActivity).apply { setText(R.string.video_preference_label) })
-            addView(videoPreferenceSpinner)
-            addView(TextView(this@ConnectionActivity).apply { setText(R.string.encoder_fps_label) })
-            addView(encoderFpsSpinner)
-            addView(TextView(this@ConnectionActivity).apply { setText(R.string.scene_area_label) })
-            addView(sceneAreaSpinner)
-            addView(TextView(this@ConnectionActivity).apply { setText(R.string.scene_label) })
-            addView(sceneSpinner)
-            addView(TextView(this@ConnectionActivity).apply { setText(R.string.map_side_label) })
-            addView(mapSideSpinner)
-            addView(speedUnitLabel)
-            addView(speedUnitSpinner)
-            addView(mapText)
-            addView(importMapButton)
-            addView(folderText)
-            addView(row(chooseFolderButton, checkFolderButton))
-            addView(routingText)
-            addView(row(importRoutingButton, removeDataButton))
-            addView(routeInput)
-            addView(row(routeButton, clearRouteButton))
-            addView(row(connectButton, stopButton))
-            addView(row(scanButton, useListedButton))
-            addView(notificationText)
-            addView(resultText)
-            addView(accessoryText)
-            addView(savedText)
-            addView(row(exportButton, exportSavedButton))
-            addView(projectionText)
-            addView(trustText)
-            addView(row(forgetPinsButton, replaceIdentityButton))
-            addView(importIdentityButton)
-            addView(noticesButton)
-            addView(reportText)
+            setBackgroundResource(R.drawable.status_background)
+            setPadding(ui.dp(20), ui.dp(20), ui.dp(20), ui.dp(16))
+            addView(statusSentence)
+            addView(statusActionButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
-        val scroll = ScrollView(this).apply {
+        primaryButton = ui.primaryButton { onPrimary() }
+        routeSummaryText = ui.primary(TextView(this)).apply {
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            setPadding(0, ui.dp(4), 0, ui.dp(4))
+        }
+        val favoritesHeader = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            addView(favoritesText, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(ui.helpButton(R.string.favorites_label, getText(R.string.favorites_help)))
+        }
+        val home = page(
+            statusCard,
+            primaryButton.also {
+                it.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    .apply { setMargins(0, ui.dp(12), 0, ui.dp(6)) }
+            },
+            ui.card(
+                ui.title(R.string.route_title), routeSummaryText, routeInput, ui.row(routeButton, clearRouteButton),
+                previewButton.also {
+                    it.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                },
+            ),
+            // P8.1 (plan §7): the engine that speaks, and where it is chosen.
+            ui.card(speechText, quietButton(R.string.speech_settings) { openSpeechSettings() }),
+            ui.card(
+                favoritesHeader,
+                ui.caption().apply { setText(R.string.favorites_hint) },
+                favoritesList,
+                saveDestinationButton,
+                addFavoriteButton,
+            ),
+        )
+
+        // Setup: the checklist, filled by renderSetup.
+        setupList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val setup = page(setupList)
+
+        // Maps & routing: import, the drop folder, the installed files, removal.
+        val mapsPage = page(
+            ui.card(ui.title(R.string.maps_title), mapText, importMapButton),
+            ui.card(ui.title(R.string.routing_title), routingText, importRoutingButton),
+            ui.card(ui.title(R.string.drop_folder_title), folderText, ui.row(chooseFolderButton, checkFolderButton)),
+            ui.card(
+                ui.title(R.string.route_prefs_title),
+                ui.caption().apply { setText(R.string.route_prefs_caption) },
+                ui.withHelp(avoidHighwaysCheck, R.string.route_avoid_highways, R.string.route_avoid_highways_help),
+                ui.withHelp(avoidTollsCheck, R.string.route_avoid_tolls, R.string.route_avoid_tolls_help),
+                ui.withHelp(avoidUnpavedCheck, R.string.route_avoid_unpaved, R.string.route_avoid_unpaved_help),
+                ui.withHelp(bypassTownsCheck, R.string.route_bypass_towns, R.string.route_bypass_towns_help),
+                ui.withHelp(allowTracksCheck, R.string.route_allow_tracks, R.string.route_allow_tracks_help),
+                ui.labelled(R.string.route_top_speed_label, R.string.route_top_speed_help, topSpeedSpinner),
+                ui.labelled(R.string.route_eta_label, R.string.route_eta_help, etaSpinner),
+                ui.withHelp(learnPaceCheck, R.string.route_learn_pace_label, R.string.route_learn_pace_help),
+                ui.withHelp(showAlternativesCheck, R.string.route_show_alternatives_label, R.string.route_show_alternatives_help),
+            ),
+            // P8.3 (plan §7): Maps & routing → Voice guidance.
+            ui.card(
+                ui.title(R.string.voice_title),
+                ui.withHelp(voiceGuidanceCheck, R.string.voice_guidance_label, R.string.voice_guidance_help),
+                ui.labelled(
+                    R.string.voice_prompts_label, R.string.voice_prompts_help,
+                    ui.row(voiceEarlyCheck, voicePrepareCheck, voiceAtTurnCheck), stacked = true,
+                ),
+                ui.labelled(R.string.voice_timing_label, R.string.voice_timing_help, voiceTimingSpinner),
+                ui.labelled(R.string.voice_detail_label, R.string.voice_detail_help, voiceDetailSpinner),
+                ui.withHelp(voiceStreetNamesCheck, R.string.voice_street_names_label, R.string.voice_street_names_help),
+                ui.withHelp(voiceRerouteCheck, R.string.voice_announce_reroute_label, R.string.voice_announce_reroute_help),
+                ui.withHelp(voiceArrivalCheck, R.string.voice_announce_arrival_label, R.string.voice_announce_arrival_help),
+                ui.withHelp(sampleButton, R.string.voice_sample, R.string.voice_sample_help),
+                sampleText,
+            ),
+            ui.card(removeDataButton),
+        )
+
+        // Settings: the everyday choices, each a few words with its ⓘ.
+        speedUnitRow = ui.labelled(R.string.speed_unit_label, R.string.speed_unit_help, speedUnitSpinner)
+        mapSideRow = ui.labelled(R.string.map_side_label, null, mapSideSpinner)
+        navigationUnitsRow = ui.labelled(R.string.navigation_units_label, null, navigationUnitsSpinner)
+        navigationForceRow = ui.withHelp(navigationForceCheck, R.string.navigation_force_label, R.string.navigation_force_help)
+        navigationScriptRow = ui.withHelp(navigationScriptCheck, R.string.navigation_script_label, R.string.navigation_script_help)
+        val settings = page(
+            ui.card(
+                ui.title(R.string.settings_dashboard),
+                speedUnitRow,
+                mapSideRow,
+                ui.labelled(R.string.marker_colour_label, null, markerColourSpinner),
+                ui.labelled(R.string.day_night_label, R.string.day_night_help, dayNightSpinner),
+            ),
+            ui.card(ui.withHelp(autoStartCheck, R.string.auto_start_label, R.string.auto_start_help)),
+            ui.card(
+                ui.title(R.string.settings_media),
+                ui.withHelp(mediaInfoCheck, R.string.media_info_label, R.string.media_info_help),
+                mediaAccessText,
+                mediaAccessButton,
+                ui.withHelp(audioCheck, R.string.audio_out_label, R.string.audio_out_help),
+            ),
+            ui.card(
+                ui.title(R.string.settings_cluster),
+                ui.withHelp(navigationCheck, R.string.navigation_cluster_label, R.string.navigation_cluster_help),
+                navigationUnitsRow,
+                navigationForceRow,
+                navigationScriptRow,
+            ),
+            ui.card(
+                ui.title(R.string.settings_notifications),
+                ui.withHelp(notificationsOnDashboardCheck, R.string.notifications_on_dashboard, R.string.notifications_on_dashboard_help),
+                exclusionsRow,
+                readAloudRow,
+                ui.withHelp(callControlsCheck, R.string.call_controls, R.string.call_controls_help),
+                callControlsText,
+            ),
+            // P8.1: applies to notification reading and, from P8.2, turn prompts (plan §7).
+            ui.card(
+                ui.title(R.string.settings_speech),
+                // Stacked: "Pause media" is cut to "Pause me…" beside its label at 360 dp.
+                ui.labelled(R.string.speech_media_label, R.string.speech_media_help, speechMediaSpinner, stacked = true),
+            ),
+            ui.card(ui.withHelp(diagnosticsCheck, R.string.diagnostics, R.string.diagnostics_help)),
+        )
+
+        // Diagnostics: everything else, moved rather than removed (§6.1).
+        versionText = ui.body(selectable = true).apply { text = versionLine() }
+        routeDetailText = text()
+        sensorLocationRow = ui.withHelp(sensorLocationCheck, R.string.sensor_location_label, R.string.sensor_location_help)
+        val diagnostics = page(
+            ui.card(
+                versionText, stageText, resultText, notificationText, accessoryText,
+                ui.row(connectButton, stopButton), ui.row(scanButton, useListedButton),
+            ),
+            ui.card(
+                ui.title(R.string.diagnostics_session),
+                ui.labelled(R.string.profile_label, R.string.profile_help, profileSpinner, stacked = true),
+                ui.labelled(R.string.stop_after_label, R.string.stop_after_help, stopAfterSpinner, stacked = true),
+                ui.labelled(R.string.tls_profile_label, R.string.tls_profile_help, tlsProfileSpinner, stacked = true),
+                ui.labelled(R.string.keepalive_label, R.string.keepalive_help, keepaliveSpinner, stacked = true),
+                ui.withHelp(firstUseCheck, R.string.first_use_label, R.string.first_use_help),
+                ui.withHelp(captureDiscoveryCheck, R.string.capture_discovery_label, R.string.capture_discovery_help),
+                ui.withHelp(captureUnhandledCheck, R.string.capture_unhandled_label, R.string.capture_unhandled_help),
+                ui.withHelp(captureVideoCheck, R.string.capture_video_label, R.string.capture_video_help),
+                ui.withHelp(openAllChannelsCheck, R.string.open_all_channels_label, R.string.open_all_channels_help),
+                ui.withHelp(resumeInPlaceCheck, R.string.resume_in_place_label, R.string.resume_in_place_help),
+                ui.withHelp(waitForFocusCheck, R.string.wait_for_focus_label, R.string.wait_for_focus_help),
+                ui.labelled(R.string.keyframe_label, R.string.keyframe_help, keyframeSpinner, stacked = true),
+                ui.labelled(R.string.setup_field_label, R.string.setup_field_help, setupFieldSpinner, stacked = true),
+            ),
+            ui.card(
+                ui.title(R.string.diagnostics_projection),
+                ui.labelled(R.string.scene_label, null, sceneSpinner, stacked = true),
+                ui.labelled(R.string.scene_area_label, R.string.scene_area_help, sceneAreaSpinner, stacked = true),
+                ui.labelled(R.string.sensors_label, R.string.sensors_help, sensorsSpinner, stacked = true),
+                sensorLocationRow,
+                ui.withHelp(softwareEncoderCheck, R.string.software_encoder_label, R.string.software_encoder_help),
+                ui.labelled(R.string.video_preference_label, R.string.video_preference_help, videoPreferenceSpinner, stacked = true),
+                ui.labelled(R.string.encoder_fps_label, R.string.encoder_fps_help, encoderFpsSpinner, stacked = true),
+            ),
+            ui.card(ui.title(R.string.route_title), routeDetailText),
+            ui.card(ui.title(R.string.diagnostics_reports), savedText, ui.row(exportButton, exportSavedButton), projectionText),
+            ui.card(
+                ui.title(R.string.diagnostics_identity),
+                trustText,
+                ui.row(forgetPinsButton, replaceIdentityButton),
+                importIdentityButton,
+                noticesButton,
+            ),
+            reportText,
+        )
+
+        pages = listOf(home, setup, mapsPage, settings, diagnostics)
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            pages.forEach { addView(it) }
+        }
+        scroll = ScrollView(this).apply {
             clipToPadding = false
-            addView(column)
-            setOnApplyWindowInsetsListener { view, insets ->
+            addView(content)
+        }
+        val (bar, tabViews) = ui.tabBar(
+            listOf(R.string.tab_home, R.string.tab_setup, R.string.tab_maps, R.string.tab_settings, R.string.diagnostics),
+        ) { index ->
+            selectTab(index)
+            renderState()
+        }
+        tabs = tabViews
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+            addView(bar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            // Edge to edge, as before P7.7: the content clears the status bar and cutout,
+            // and the tab bar clears the navigation bar, or the keyboard while it is up.
+            setOnApplyWindowInsetsListener { _, insets ->
                 val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
-                view.setPadding(bars.left + margin, bars.top + margin, bars.right + margin, bars.bottom + margin)
+                val ime = insets.getInsets(WindowInsets.Type.ime())
+                scroll.setPadding(bars.left + margin, bars.top + margin, bars.right + margin, margin)
+                bar.setPadding(bars.left, 0, bars.right, maxOf(bars.bottom, ime.bottom))
                 insets
             }
         }
-        setContentView(scroll)
+        setContentView(root)
+        selectTab(currentTab)
     }
 
-    private fun row(vararg views: View) = LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL
-        views.forEach { addView(it, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)) }
+    /** One tab's content: a column the tab bar shows or hides whole. */
+    private fun page(vararg views: View): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        views.forEach { addView(it) }
+    }
+
+    /**
+     * Puts every saved choice on screen, then makes each control save its own field as it
+     * changes (P7 plan §3).
+     *
+     * One field per write, through [AppSettings.update], rather than the whole screen at
+     * once: the dashboard saves day/night and the notification pause from the head unit
+     * while this screen sits behind it, and a whole-screen write would put back whatever
+     * this screen last showed. Listeners are attached only after every control holds its
+     * saved value, so loading writes nothing; a spinner's first layout reports its
+     * selection once, which stores the value it already had.
+     *
+     * First-use trust, the capture boxes and position in the report are not here: they
+     * stay per attempt.
+     */
+    private fun loadSaved() {
+        val saved = AppSettings.load(this)
+        profileSpinner.setSelection(PROFILES.indexOf(saved.profile))
+        stopAfterSpinner.setSelection(SessionSettings.STOP_AFTER.indexOf(saved.stopAfter))
+        tlsProfileSpinner.setSelection(SessionSettings.TLS_PROFILES.indexOf(saved.tlsProfile))
+        keepaliveSpinner.setSelection(SessionSettings.KEEPALIVE_PROFILES.indexOf(saved.keepalive))
+        openAllChannelsCheck.isChecked = saved.openAllChannels
+        resumeInPlaceCheck.isChecked = saved.resumeInPlace
+        waitForFocusCheck.isChecked = saved.waitForFocus
+        keyframeSpinner.setSelection(SessionSettings.KEYFRAME_SECONDS.indexOf(saved.keyframeSeconds))
+        setupFieldSpinner.setSelection(SessionSettings.SETUP_FIELDS.indexOf(saved.setupField))
+        sensorsSpinner.setSelection(SessionSettings.SENSOR_SETS.indexOf(saved.sensors))
+        mediaInfoCheck.isChecked = saved.mediaInfo
+        audioCheck.isChecked = saved.audio
+        navigationCheck.isChecked = saved.navigation
+        navigationUnitsSpinner.setSelection(SessionSettings.NAVIGATION_UNITS.indexOf(saved.navigationUnits))
+        navigationForceCheck.isChecked = saved.navigationForce
+        navigationScriptCheck.isChecked = saved.navigationScript
+        softwareEncoderCheck.isChecked = saved.softwareEncoder
+        videoPreferenceSpinner.setSelection(SessionSettings.VIDEO_PREFERENCES.indexOf(saved.videoPreference))
+        encoderFpsSpinner.setSelection(SessionSettings.ENCODER_RATES.indexOf(saved.encoderFps))
+        sceneAreaSpinner.setSelection(SessionSettings.SCENE_AREAS.indexOf(saved.sceneArea))
+        sceneSpinner.setSelection(SessionSettings.SCENES.indexOf(saved.scene))
+        mapSideSpinner.setSelection(if (saved.mapOnLeft) 0 else 1)
+        speedUnitSpinner.setSelection(saved.speedUnit.ordinal)
+        autoStartCheck.isChecked = saved.autoStart
+        diagnosticsCheck.isChecked = saved.diagnostics
+        markerColourSpinner.setSelection(saved.markerColour.ordinal)
+        dayNightSpinner.setSelection(saved.dayNight.ordinal)
+        notificationsOnDashboardCheck.isChecked = saved.notificationsOnDashboard
+        callControlsCheck.isChecked = saved.callControls
+        readAloudCheck.isChecked = saved.readAloud
+        speechMediaSpinner.setSelection(saved.speechMedia.ordinal)
+        voiceGuidanceCheck.isChecked = saved.voice.enabled
+        voiceEarlyCheck.isChecked = saved.voice.early
+        voicePrepareCheck.isChecked = saved.voice.prepare
+        voiceAtTurnCheck.isChecked = saved.voice.atTurn
+        voiceTimingSpinner.setSelection(saved.voice.timing.ordinal)
+        voiceDetailSpinner.setSelection(saved.voice.detail.ordinal)
+        voiceStreetNamesCheck.isChecked = saved.voice.streetNames
+        voiceRerouteCheck.isChecked = saved.voice.announceReroute
+        voiceArrivalCheck.isChecked = saved.voice.announceArrival
+        avoidHighwaysCheck.isChecked = saved.routing.avoidHighways
+        avoidTollsCheck.isChecked = saved.routing.avoidTolls
+        avoidUnpavedCheck.isChecked = saved.routing.avoidUnpaved
+        bypassTownsCheck.isChecked = saved.routing.bypassTowns
+        allowTracksCheck.isChecked = saved.routing.allowTracks
+        topSpeedSpinner.setSelection(RouteOptions.TOP_SPEEDS_KMH.indexOf(saved.routing.topSpeedKmh))
+        etaSpinner.setSelection(RouteOptions.ETA_PERCENTS.indexOf(saved.routing.etaPercent))
+        learnPaceCheck.isChecked = saved.routing.learnPace
+        showAlternativesCheck.isChecked = saved.routing.showAlternatives
+
+        fun Spinner.saves(change: (SavedSettings, Int) -> SavedSettings) {
+            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                    AppSettings.update(this@ConnectionActivity) { change(it, position) }
+                    renderState()
+                }
+
+                override fun onNothingSelected(parent: AdapterView<*>?) {
+                    renderState()
+                }
+            }
+        }
+        fun CompoundButton.saves(change: (SavedSettings, Boolean) -> SavedSettings) {
+            setOnCheckedChangeListener { _, checked ->
+                AppSettings.update(this@ConnectionActivity) { change(it, checked) }
+                renderState()
+            }
+        }
+        profileSpinner.saves { s, i -> s.copy(profile = PROFILES[i]) }
+        stopAfterSpinner.saves { s, i -> s.copy(stopAfter = SessionSettings.STOP_AFTER[i]) }
+        tlsProfileSpinner.saves { s, i -> s.copy(tlsProfile = SessionSettings.TLS_PROFILES[i]) }
+        keepaliveSpinner.saves { s, i -> s.copy(keepalive = SessionSettings.KEEPALIVE_PROFILES[i]) }
+        openAllChannelsCheck.saves { s, on -> s.copy(openAllChannels = on) }
+        resumeInPlaceCheck.saves { s, on -> s.copy(resumeInPlace = on) }
+        waitForFocusCheck.saves { s, on -> s.copy(waitForFocus = on) }
+        keyframeSpinner.saves { s, i -> s.copy(keyframeSeconds = SessionSettings.KEYFRAME_SECONDS[i]) }
+        setupFieldSpinner.saves { s, i -> s.copy(setupField = SessionSettings.SETUP_FIELDS[i]) }
+        sensorsSpinner.saves { s, i -> s.copy(sensors = SessionSettings.SENSOR_SETS[i]) }
+        mediaInfoCheck.saves { s, on -> s.copy(mediaInfo = on) }
+        audioCheck.saves { s, on -> s.copy(audio = on) }
+        navigationCheck.saves { s, on -> s.copy(navigation = on) }
+        navigationUnitsSpinner.saves { s, i -> s.copy(navigationUnits = SessionSettings.NAVIGATION_UNITS[i]) }
+        navigationForceCheck.saves { s, on -> s.copy(navigationForce = on) }
+        navigationScriptCheck.saves { s, on -> s.copy(navigationScript = on) }
+        softwareEncoderCheck.saves { s, on -> s.copy(softwareEncoder = on) }
+        videoPreferenceSpinner.saves { s, i -> s.copy(videoPreference = SessionSettings.VIDEO_PREFERENCES[i]) }
+        encoderFpsSpinner.saves { s, i -> s.copy(encoderFps = SessionSettings.ENCODER_RATES[i]) }
+        sceneAreaSpinner.saves { s, i -> s.copy(sceneArea = SessionSettings.SCENE_AREAS[i]) }
+        sceneSpinner.saves { s, i -> s.copy(scene = SessionSettings.SCENES[i]) }
+        mapSideSpinner.saves { s, i -> s.copy(mapOnLeft = i == 0) }
+        speedUnitSpinner.saves { s, i -> s.copy(speedUnit = SpeedUnit.entries[i]) }
+        autoStartCheck.saves { s, on -> s.copy(autoStart = on) }
+        // Turning the switch either way ends a reveal from the status card: the switch
+        // is the operator's answer to whether the tab should be there.
+        diagnosticsCheck.saves { s, on ->
+            diagnosticsRevealed = false
+            s.copy(diagnostics = on)
+        }
+        markerColourSpinner.saves { s, i -> s.copy(markerColour = MarkerColour.entries[i]) }
+        dayNightSpinner.saves { s, i -> s.copy(dayNight = DayNightMode.entries[i]) }
+        notificationsOnDashboardCheck.saves { s, on -> s.copy(notificationsOnDashboard = on) }
+        callControlsCheck.saves { s, on -> s.copy(callControls = on) }
+        readAloudCheck.saves { s, on -> s.copy(readAloud = on) }
+        speechMediaSpinner.saves { s, i -> s.copy(speechMedia = SpeechMedia.entries[i]) }
+        // P8.3: the voice settings, saved the same way and handed to Guide as they change,
+        // so a projection under way takes them without a restart. Guide passes the on/off
+        // to Speaker and the trip panel only when it differs from what they already have.
+        fun CompoundButton.savesVoice(change: (VoiceSettings, Boolean) -> VoiceSettings) {
+            setOnCheckedChangeListener { _, checked ->
+                val stored = AppSettings.update(this@ConnectionActivity) { it.copy(voice = change(it.voice, checked)) }
+                Guide.voiceChanged(stored.voice)
+                renderState()
+            }
+        }
+        fun Spinner.savesVoice(change: (VoiceSettings, Int) -> VoiceSettings) {
+            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                    val stored = AppSettings.update(this@ConnectionActivity) { it.copy(voice = change(it.voice, position)) }
+                    Guide.voiceChanged(stored.voice)
+                    renderState()
+                }
+
+                override fun onNothingSelected(parent: AdapterView<*>?) {
+                    renderState()
+                }
+            }
+        }
+        voiceGuidanceCheck.savesVoice { v, on -> v.copy(enabled = on) }
+        voiceEarlyCheck.savesVoice { v, on -> v.copy(early = on) }
+        voicePrepareCheck.savesVoice { v, on -> v.copy(prepare = on) }
+        voiceAtTurnCheck.savesVoice { v, on -> v.copy(atTurn = on) }
+        voiceTimingSpinner.savesVoice { v, i -> v.copy(timing = PromptTiming.entries[i]) }
+        voiceDetailSpinner.savesVoice { v, i -> v.copy(detail = PromptDetail.entries[i]) }
+        voiceStreetNamesCheck.savesVoice { v, on -> v.copy(streetNames = on) }
+        voiceRerouteCheck.savesVoice { v, on -> v.copy(announceReroute = on) }
+        voiceArrivalCheck.savesVoice { v, on -> v.copy(announceArrival = on) }
+        // Route preferences, saved the same way. A change that can alter the route
+        // recomputes the one shown (Navigation.optionsChanged); a spinner's first
+        // selection on layout stores what was already saved and so recomputes nothing.
+        fun saveRouting(change: (RouteOptions) -> RouteOptions) {
+            val previous = AppSettings.load(this).routing
+            val stored = AppSettings.update(this) { it.copy(routing = change(it.routing)) }
+            Navigation.optionsChanged(this, previous, stored.routing)
+            renderState()
+        }
+        fun CompoundButton.savesRouting(change: (RouteOptions, Boolean) -> RouteOptions) {
+            setOnCheckedChangeListener { _, checked -> saveRouting { change(it, checked) } }
+        }
+        fun Spinner.savesRouting(change: (RouteOptions, Int) -> RouteOptions) {
+            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                    saveRouting { change(it, position) }
+                }
+
+                override fun onNothingSelected(parent: AdapterView<*>?) {
+                    renderState()
+                }
+            }
+        }
+        avoidHighwaysCheck.savesRouting { r, on -> r.copy(avoidHighways = on) }
+        avoidTollsCheck.savesRouting { r, on -> r.copy(avoidTolls = on) }
+        avoidUnpavedCheck.savesRouting { r, on -> r.copy(avoidUnpaved = on) }
+        bypassTownsCheck.savesRouting { r, on -> r.copy(bypassTowns = on) }
+        allowTracksCheck.savesRouting { r, on -> r.copy(allowTracks = on) }
+        topSpeedSpinner.savesRouting { r, i -> r.copy(topSpeedKmh = RouteOptions.TOP_SPEEDS_KMH[i]) }
+        etaSpinner.savesRouting { r, i -> r.copy(etaPercent = RouteOptions.ETA_PERCENTS[i]) }
+        learnPaceCheck.savesRouting { r, on -> r.copy(learnPace = on) }
+        showAlternativesCheck.savesRouting { r, on -> r.copy(showAlternatives = on) }
     }
 
     companion object {
         /** Package-scoped action for the USB permission result broadcast. */
         const val ACTION_USB_PERMISSION = "org.openautoandroid.source.action.USB_PERMISSION"
-        /**
-         * `legacy-1.5-any-minor` only after `legacy-1.5` refused a recorded 1.6+ request;
-         * `match-1.7` answers a 1.6-or-later request at 1.7, as Google's Android Auto does
-         * and as Ford SYNC 4.0 accepts, and is the default. The legacy profiles downgrade
-         * to 1.5; `match-1.6` answers at 1.6.
-         */
-        val PROFILES = listOf("match-1.7", "legacy-1.5", "legacy-1.5-any-minor", "match-1.6")
+        /** The version profiles; see [SavedSettings.PROFILES], which owns the list since P7.1. */
+        val PROFILES = SavedSettings.PROFILES
         const val NOTICES_ASSET = "NOTICES.txt"
 
         /** Lab transport extras; honored only in a debug build (see [handleLabIntent]). */
         const val EXTRA_LAB_SOCKET = "lab_socket"
         const val EXTRA_LAB_ROUTE = "lab_route"
+        const val EXTRA_LAB_FAVORITES = "lab_favorites"
         const val EXTRA_LAB_STOP_AFTER = "lab_stop_after"
         const val EXTRA_LAB_PROFILE = "lab_profile"
         const val EXTRA_LAB_KEEPALIVE = "lab_keepalive"
@@ -1162,6 +2392,7 @@ class ConnectionActivity : Activity() {
         const val EXTRA_LAB_WAIT_FOR_FOCUS = "lab_wait_for_focus"
         const val EXTRA_LAB_KEYFRAME_SECONDS = "lab_keyframe_seconds"
         const val EXTRA_LAB_SETUP_FIELD = "lab_setup_field"
+        const val EXTRA_LAB_SPEECH_BLUETOOTH = "lab_speech_bluetooth"
         private const val REQUEST_NOTIFICATIONS = 1
         private const val REQUEST_EXPORT = 2
         private const val REQUEST_EXPORT_SAVED = 3
@@ -1169,6 +2400,16 @@ class ConnectionActivity : Activity() {
         private const val REQUEST_IMPORT_MAP = 5
         private const val REQUEST_IMPORT_ROUTING = 6
         private const val REQUEST_DROP_FOLDER = 7
+        private const val REQUEST_SETUP_LOCATION = 8
+        private const val REQUEST_PREVIEW = 9
+
+        /** The tabs, in the bar's order (P7.7, plan §6.1). */
+        private const val TAB_HOME = 0
+        private const val TAB_SETUP = 1
+        private const val TAB_MAPS = 2
+        private const val TAB_SETTINGS = 3
+        private const val TAB_DIAGNOSTICS = 4
+        private const val STATE_TAB = "tab"
 
         /** Map side choices, in the order [AttemptSettings.mapOnLeft] reads them. */
         val MAP_SIDES = listOf("map left", "map right")

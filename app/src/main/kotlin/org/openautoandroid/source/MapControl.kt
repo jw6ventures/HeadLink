@@ -76,7 +76,8 @@ data class MapCamera(
  * Where the map pane is looking, and the head-unit gestures that move it: a one-finger
  * drag pans, two fingers pinch to zoom and twist to rotate, a long press picks the place
  * under the finger as a destination (P6.4), and the two floating bubbles recentre it and
- * switch between north-up and direction-of-travel-up.
+ * switch between north-up and direction-of-travel-up. Two more, + and −, zoom it a whole
+ * level at a time (P7.2).
  *
  * Pure JVM on purpose, like [Dashboard] itself: the projection here is the arithmetic
  * that decides where a driver's finger lands on the world, and tools/jni-host-test can
@@ -185,12 +186,34 @@ class MapControl(
      * snapping the map north: losing the fix for a moment at a junction is exactly when
      * a driver is reading the map, and spinning it under them is worse than being a few
      * degrees stale.
+     *
+     * [below] is how many pixels under the pane's centre the followed position sits
+     * (P7.4): while the turn card covers the top of the pane, the vehicle moves down by
+     * half the card so it is centred in the part of the map still showing, and what lies
+     * ahead of it in direction-of-travel-up is not the part the card hides. Only while
+     * following; a map the driver has moved stays where they put it.
      */
-    fun camera(follow: Pair<Double, Double>?, bearing: Double?): MapCamera? {
+    @JvmOverloads
+    fun camera(follow: Pair<Double, Double>?, bearing: Double?, below: Int = 0): MapCamera? {
         if (bearing != null) heading = wrap(bearing.toFloat())
         val base = if (orientation == MapOrientation.HEADING_UP) heading else 0f
-        val centre = if (following) follow ?: return null else freeLatitude to freeLongitude
-        val camera = MapCamera(centre.first, centre.second, scale, wrap(base + turn))
+        val rotation = wrap(base + turn)
+        val centre = if (following) {
+            val (latitude, longitude) = follow ?: return null
+            if (below == 0) {
+                latitude to longitude
+            } else {
+                // The centre is the ground [below] pixels up the screen from the vehicle,
+                // which is where [marker] then puts it back: exactly [below] under the centre.
+                val (ox, oy) = worldOffset(0f, below.toFloat(), rotation, scale)
+                var x = (worldX(longitude) - ox) % 1.0
+                if (x < 0) x += 1.0
+                toLatitude((worldY(latitude) - oy).coerceIn(0.0, 1.0)) to toLongitude(x)
+            }
+        } else {
+            freeLatitude to freeLongitude
+        }
+        val camera = MapCamera(centre.first, centre.second, scale, rotation)
         last = camera
         return camera
     }
@@ -198,8 +221,9 @@ class MapControl(
     /**
      * Frame pixel the position source is drawn at, or null when it is off the pane.
      *
-     * While the map is following this is the pane's centre to the pixel, which is where
-     * the chrome used to draw the vehicle unconditionally. It stops being the centre the
+     * While the map is following this is the pane's centre to the pixel (or the offset
+     * [camera] was asked for, under the turn card), which is where the chrome used to
+     * draw the vehicle unconditionally. It stops being the centre the
      * moment a drag does, and a marker still pinned there would be the dashboard
      * claiming the vehicle is somewhere it is not.
      */
@@ -221,6 +245,18 @@ class MapControl(
         if (!following) recentres++
         following = true
         travelled = 0f
+    }
+
+    /**
+     * The + and − bubbles (P7.2): [levels] whole zoom levels in, or out when negative,
+     * about the pane's centre, clamped to the pinch's own range.
+     *
+     * Following is left as it is. While following, the centre is the vehicle, so the
+     * marker stays under it as it does for a pinch; and a driver who zooms out to see the
+     * next junction should not have to press recentre afterwards.
+     */
+    fun zoomBy(levels: Int) {
+        scale = (scale * Math.pow(2.0, levels.toDouble())).coerceIn(MIN_SCALE, MAX_SCALE)
     }
 
     /** Switches between north-up and direction-of-travel-up, and squares up the twist. */
@@ -434,10 +470,12 @@ class MapControl(
 
         /**
          * How far the pinch may travel. VTM itself allows 2^2 to 2^20; this is the part
-         * of that range a driver has any use for, and it keeps the far end off the zoom
-         * levels an operator-supplied Mapsforge file most often has no data for.
+         * of that range a driver has any use for. The far-out end is level 4, several
+         * thousand kilometres across the pane: all of Texas with room around it. The
+         * default Mapsforge writer keeps major roads down to level 0, so this is sparse
+         * rather than empty; it was level 12, then 8, until James asked to see further.
          */
-        const val MIN_SCALE = 4096.0
+        const val MIN_SCALE = 16.0
         const val MAX_SCALE = 524288.0
 
         /** `Tile.calculateTileSize()` at the map engine's 240dpi. */

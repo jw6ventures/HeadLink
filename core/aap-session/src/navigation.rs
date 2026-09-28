@@ -408,9 +408,9 @@ impl Guidance {
     ///
     /// `step` is the maneuver's identity, not its position in anything: the app numbers
     /// maneuvers so that a new route never reuses an identity an old one sent, because a
-    /// change of identity is what puts a new notification on the wire. No road names —
-    /// BRouter's data has none (its `lookups.dat` carries no `name` tag), so `onto` is
-    /// empty and `current_road` is left off the wire rather than sent blank.
+    /// change of identity is what puts a new notification on the wire. No road names:
+    /// BRouter's data has none (its `lookups.dat` carries no `name` tag), so the app reads
+    /// them from its map and adds them with [`Guidance::with_roads`].
     #[allow(clippy::too_many_arguments)]
     pub fn live(
         step: usize,
@@ -435,6 +435,24 @@ impl Guidance {
             destination_metres: metres(destination_metres).max(metres(step_metres)),
             destination_seconds: destination_seconds.max(step_seconds).max(0),
         }
+    }
+}
+
+impl Guidance {
+    /// A live maneuver's road names, from the app's map: `onto` the road the maneuver
+    /// turns onto (`NavigationStep.road_info`) and `current_road` the one being driven
+    /// (`current_road` in the distance message). Either may be empty, meaning the map
+    /// names none: an empty `onto` sends no road name, and an empty `current_road` is
+    /// left off the wire rather than sent blank, which would claim the road has no name.
+    pub fn with_roads(mut self, onto: &str, current_road: &str) -> Self {
+        let onto = crate::now_playing::clean(onto.trim());
+        self.onto = if onto.is_empty() {
+            Vec::new()
+        } else {
+            vec![onto]
+        };
+        self.current_road = crate::now_playing::clean(current_road.trim());
+        self
     }
 }
 
@@ -468,13 +486,14 @@ impl Source {
 
 /// What the app's guidance loop says the cluster should show (P6.5).
 ///
-/// Four states because `NavigationState` has four and three of them mean something here:
-/// guiding is `ACTIVE`, rerouting is `REROUTING`, and both idle and arrived are
-/// `INACTIVE`. Arrived is kept apart from idle only so the report can say a route was
-/// driven to its end.
+/// `NavigationState` has four values and three of them mean something here: guiding is
+/// `ACTIVE`, rerouting is `REROUTING`, and idle, arrived and ended are all `INACTIVE`.
+/// Arrived is kept apart from idle only so the report can say a route was driven to its
+/// end. Ended is kept apart from idle because it changes what happens to the cluster's
+/// focus, not what the cluster is told (P7.4).
 #[derive(Debug, Clone, PartialEq)]
 pub enum RouteState {
-    /// No route: nothing to guide.
+    /// No route: nothing to guide. The cluster, if held, is kept for the next one.
     Idle,
     /// On a route, with the next maneuver and the distances to it.
     Guiding(Guidance),
@@ -482,6 +501,16 @@ pub enum RouteState {
     Rerouting,
     /// At the destination.
     Arrived,
+    /// The driver ended the route: End route on the dashboard, Clear route on the phone,
+    /// or the route ending itself after arrival (P7.4). The same `INACTIVE` as idle, and
+    /// then the cluster handed back to the head unit's own navigation, so the vehicle's
+    /// own guidance can have it between routes. The next route asks for it again.
+    ///
+    /// Idle does not do this, and is still what the app publishes with no route at the
+    /// start of a session and for a route with no fix on it yet: P6.5 kept the cluster
+    /// across those so a destination needs no new handshake, and nothing about them says
+    /// the driver has finished with it.
+    Ended,
 }
 
 impl RouteState {
@@ -491,6 +520,7 @@ impl RouteState {
             RouteState::Guiding(_) => "guiding",
             RouteState::Rerouting => "rerouting",
             RouteState::Arrived => "arrived",
+            RouteState::Ended => "ended",
         }
     }
 }
@@ -743,6 +773,51 @@ mod tests {
         assert_eq!(
             g.instruction.chars().count(),
             crate::now_playing::TEXT_LIMIT
+        );
+    }
+
+    /// Road names are bounded like the instruction, and an empty one is no name at all
+    /// rather than a blank one on the wire.
+    #[test]
+    fn a_live_maneuver_carries_the_road_names_it_is_given() {
+        let g = Guidance::live(
+            1,
+            8,
+            None,
+            "Turn right onto Main Street",
+            100.0,
+            10,
+            200.0,
+            20,
+        )
+        .with_roads("Main Street", " Elm\nAvenue ");
+        assert_eq!(g.onto, vec!["Main Street".to_owned()]);
+        assert_eq!(g.current_road, "Elm Avenue");
+        let g = Guidance::live(1, 8, None, "Turn right", 100.0, 10, 200.0, 20).with_roads("", "  ");
+        assert!(g.onto.is_empty() && g.current_road.is_empty());
+        let long = "a".repeat(crate::now_playing::TEXT_LIMIT * 2);
+        let g = Guidance::live(1, 8, None, "", 0.0, 0, 0.0, 0).with_roads(&long, &long);
+        assert_eq!(g.onto[0].chars().count(), crate::now_playing::TEXT_LIMIT);
+        assert_eq!(
+            g.current_road.chars().count(),
+            crate::now_playing::TEXT_LIMIT
+        );
+        // Still nothing that says where in the report.
+        let g = Guidance::live(
+            1,
+            8,
+            None,
+            "Turn right onto Main Street",
+            100.0,
+            10,
+            200.0,
+            20,
+        )
+        .with_roads("Main Street", "Elm Avenue");
+        let summary = g.summary(Units::Imperial);
+        assert!(
+            !summary.contains("Main") && !summary.contains("Elm"),
+            "{summary}"
         );
     }
 

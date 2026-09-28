@@ -30,6 +30,15 @@ object Navigation {
     var source: DestinationSource? = null
         private set
 
+    /**
+     * The point the chosen route passes through, [latitude, longitude], when an
+     * alternative was chosen (the preview or the dashboard): every route to [destination]
+     * goes through it, re-routes included, until the vehicle has passed it ([viaPassed]).
+     * Null for BRouter's own best route. Never reported: it is a place.
+     */
+    var via: DoubleArray? = null
+        private set
+
     /** Set when a destination is held for want of a position to route from. */
     var waiting = false
         private set
@@ -68,6 +77,7 @@ object Navigation {
         }
         this.destination = destination
         this.source = source
+        via = null
         return route(context)
     }
 
@@ -95,9 +105,16 @@ object Navigation {
         }
         waiting = false
         val (point, from) = start
+        // Read at every request, re-routes included, so a change on the Routing screen
+        // applies to the next route without a restart.
+        val options = AppSettings.load(context).routing
+        Guide.learnPace = options.learnPace
         Routing.request(
             context,
-            RouteRequest(point.first, point.second, destination.latitude, destination.longitude, bearing),
+            RouteRequest(
+                point.first, point.second, destination.latitude, destination.longitude, bearing, options,
+                viaLat = via?.get(0), viaLon = via?.get(1),
+            ),
             if (reroute) "reroute" else source.label,
             from,
         )
@@ -109,13 +126,49 @@ object Navigation {
         if (waiting && vehicleFix?.invoke() != null) route(context)
     }
 
+    /**
+     * The Routing screen saved [options] after [previous]. A change that can alter the
+     * route recomputes the one being shown, from wherever the vehicle or phone is now, so
+     * what the screen says and what the map draws agree; Learn my pace alone only changes
+     * how the time still to go is shown, and applies at once.
+     */
+    fun optionsChanged(context: Context, previous: RouteOptions, options: RouteOptions) {
+        Guide.learnPace = options.learnPace
+        if (!previous.routeDiffers(options) || destination == null) return
+        SessionController.note("routing settings changed; recomputing the route")
+        route(context)
+    }
+
     /** Drops the destination and takes the route line off the map. */
     fun clear() {
         destination = null
         source = null
+        via = null
         waiting = false
         Routing.clear()
         Guide.clear()
+        NavigationStore.changed()
+    }
+
+    /** An alternative was chosen: routes keep to its via point from now on, or to none. */
+    fun chose(route: Route) {
+        via = route.via
+        NavigationStore.changed()
+    }
+
+    /** The vehicle has passed the via point: from here the best route is the chosen one. */
+    fun viaPassed() {
+        if (via == null) return
+        via = null
+        SessionController.note("passed the chosen route's via point")
+        NavigationStore.changed()
+    }
+
+    /** What [NavigationStore] read back at start: the destination and via, with no route request. */
+    fun restore(destination: Destination, source: DestinationSource, via: DoubleArray?) {
+        this.destination = destination
+        this.source = source
+        this.via = via
     }
 
     /** What the phone calls the destination: its label, else its coordinates. */
@@ -180,5 +233,6 @@ object Navigation {
     /** The `[routing]` lines this adds. No destination, no label, no coordinates. */
     fun report(): String =
         "routing_destination_source=${source?.label ?: "-"} routing_destination_waiting=$waiting " +
+            "routing_via=${via != null} " +
             "routing_destinations_refused=$refused routing_last_refusal=$lastRefusal\n"
 }

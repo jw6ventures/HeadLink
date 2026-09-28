@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- P7.7 (plan §6.5): a current platform theme that follows the system's light or dark
+     setting, with the dashboard's accent. Platform only: no AppCompat, no Material
+     Components (spec §2.2). The window draws edge to edge; ConnectionActivity pads its
+     content by the system bar insets. values-night flips the bar icons to light. -->
+<resources>
+    <style name="Theme.OpenAutoAndroid" parent="@android:style/Theme.DeviceDefault.DayNight">
+        <item name="android:colorAccent">@color/accent</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+</resources>

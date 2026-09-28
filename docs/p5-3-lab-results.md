@@ -308,4 +308,5 @@ Still outstanding:
   in a way that reads as Ford's. It is the Prodigy lab receiver's value (and, as this
   slice shows, Prodigy's audio handler hardcodes the same 10). Ford's video window is 4
   and its *audio* window is 40, both now measured on the vehicle. Correcting that line is
-  a one-line fix the P5 plan already called for and it is *not* done here.
+  a one-line fix the P5 plan already called for and it is *not* done here. **Done 22 September
+  2026.**

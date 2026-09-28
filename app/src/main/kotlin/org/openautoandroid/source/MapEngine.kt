@@ -11,13 +11,17 @@ import org.oscim.core.GeoPoint
 import org.oscim.core.MapPosition
 import org.oscim.core.Tile
 import org.oscim.layers.PathLayer
+import org.oscim.layers.tile.MapTile
+import org.oscim.layers.tile.TileSet
 import org.oscim.layers.tile.buildings.BuildingLayer
 import org.oscim.layers.tile.vector.VectorTileLayer
 import org.oscim.layers.tile.vector.labeling.LabelLayer
 import org.oscim.map.Map
 import org.oscim.renderer.GLState
 import org.oscim.renderer.MapRenderer
+import org.oscim.theme.IRenderTheme
 import org.oscim.theme.StreamRenderTheme
+import org.oscim.theme.ThemeLoader
 import org.oscim.theme.internal.VtmThemes
 import org.oscim.tiling.TileSource
 import org.oscim.tiling.source.mapfile.MapFileTileSource
@@ -46,7 +50,15 @@ import java.io.File
  * 1920x1080 frame; and a stationary vehicle can re-composite the last texture without
  * redrawing the map at all.
  */
-class MapEngine(private val width: Int, private val height: Int) {
+class MapEngine(width: Int, height: Int) {
+
+    /** The pane's size in pixels; changed only by [resize]. */
+    private var width = width
+    private var height = height
+
+    /** Times [resize] rebuilt the framebuffer for a new pane size. */
+    var resizes = 0L
+        private set
 
     /** Set once the map has a tile source with a readable file behind it. */
     var mapName: String = "-"
@@ -59,8 +71,38 @@ class MapEngine(private val width: Int, private val height: Int) {
     private var map: PaneMap? = null
     private var routeLayer: PathLayer? = null
 
+    /**
+     * A dark edge under the route line, shown with the day theme only.
+     *
+     * The route's cyan was chosen against the night ground, where it is the brightest
+     * thing on the map. On the day theme's white carriageways and light grey ground it
+     * is about 2:1 against both, which is visible when looked for and easy to lose at a
+     * glance. A casing restores the edge without changing the colour itself, which
+     * tools/route-line-pixels.py and the P6.4 lab check count by value. At night the
+     * line needs no help, so the night picture stays exactly what the P6 evidence saw.
+     */
+    private var routeCasing: PathLayer? = null
+
+    /**
+     * The live alternatives' lines ([LiveAlternatives]), grey on a darker edge, two layers
+     * each, under the route's casing so the route stays on top where they share roads.
+     */
+    private val alternativeLayers = ArrayList<PathLayer>()
+
+    /** Alternatives drawn now, and the most at once this session; counts, never the geometry. */
+    var alternativesShown = 0
+        private set
+    var alternativesShownMax = 0
+        private set
+
+    /** The base layer, whose tile manager says when a theme switch has finished loading. */
+    private var baseLayer: VectorTileLayer? = null
+
     /** Retries tiles VTM read badly; see [MapReadGuard]. Null with no map data. */
     private var readGuard: MapReadGuard? = null
+
+    /** Keeps a theme switch's loader pause from closing map files; see [MapLoaderInterrupts]. */
+    private var loaderInterrupts: MapLoaderInterrupts? = null
 
     /** Points in the route line on show, 0 for none. A count, never the geometry. */
     var routePoints = 0
@@ -70,7 +112,71 @@ class MapEngine(private val width: Int, private val height: Int) {
     var routeChanges = 0L
         private set
     private var renderer: MapRenderer? = null
+
+    /** The report's name for the theme on show, or empty before one is applied. */
     private var theme = ""
+
+    /**
+     * Which theme is applied: [UNTHEMED], [DAY] or [NIGHT]. An Int rather than a
+     * `Boolean?`, so the per-frame "nothing changed" test in [setNight] is one integer
+     * compare with nothing boxed.
+     */
+    private var appliedMode = UNTHEMED
+
+    /** Each theme parsed once, on first use, and kept: see [themeFor]. */
+    private var dayTheme: LoadedTheme? = null
+    private var nightTheme: LoadedTheme? = null
+    private var fallbackTheme: LoadedTheme? = null
+    private var currentTheme: IRenderTheme? = null
+
+    /** Times the theme changed after the first, i.e. day/night switches. */
+    var themeSwitches = 0L
+        private set
+
+    /** Longest [setNight] call that switched, ms: VTM pausing its loaders, on this thread. */
+    private var switchCallMsMax = 0L
+
+    /** Longest theme parse, ms. Paid once per theme per session, on the first switch to it. */
+    private var parseMsMax = 0L
+
+    /**
+     * When the current switch began, from [System.nanoTime], or 0 when no switch is
+     * waiting for its tiles. See [drawFrame] for why a switch holds the old picture.
+     */
+    private var holdStartNs = 0L
+
+    /** The visible tiles a waiting switch is watching; locked while held, released after. */
+    private val holdTiles = TileSet()
+
+    /** Frames that kept the previous map picture while a switch loaded. */
+    var held = 0L
+        private set
+    private var holdMsLast = -1L
+    private var holdMsMax = 0L
+
+    /** Switches that gave up waiting at [SWITCH_HOLD_MAX_MS] and drew what had loaded. */
+    private var holdTimeouts = 0L
+
+    /** Times a waiting switch asked VTM again for tiles a failed read had dropped. */
+    private var holdRequeues = 0L
+    private var lastRequeueNs = 0L
+
+    /** Rasterisations the frame that ends a hold needs; see [drawFrame]. */
+    private var settlePasses = 1
+
+    /**
+     * The ground colour, ARGB: the applied theme's `map-background`, or the no-data grey.
+     *
+     * Set as the GL clear colour by [drawFrame] itself, every frame, because VTM's own
+     * setting of it does not survive sharing the context. `MapRenderer` hands its clear
+     * colour to `GLState.setClearColor`, which skips the GL call when its cache says the
+     * colour is already set, and the dashboard's compositor clears the window to black
+     * with a raw `glClearColor` between map frames. So from the second frame on, VTM's
+     * `glClear` painted the ground black whatever the theme said. At night that was
+     * nearly invisible (the dark theme's ground is #151a2b); the first day-theme lab frame
+     * showed white roads on black, and every frame before P7.6 has had a black ground.
+     */
+    private var background = NO_DATA_BACKGROUND
 
     /**
      * Whether a tile source was installed, so the map has vector layers to theme.
@@ -80,6 +186,8 @@ class MapEngine(private val width: Int, private val height: Int) {
      * so on a dashboard with no map data the first frame killed the process (P6.2 lab run,
      * 21 September 2026). [start] already knew not to theme an empty map; nothing else
      * did, because [theme] stays empty forever in that case and is not the same question.
+     * Now that [setNight] re-themes on every change of the head unit's night flag rather
+     * than once, this guard is what every one of those calls passes through first.
      */
     private var layered = false
 
@@ -171,12 +279,25 @@ class MapEngine(private val width: Int, private val height: Int) {
         // if this keeps running and reports why.
         val source = openTileSource(mapFiles)?.let(::MapReadGuard)
         readGuard = source
-        val base: VectorTileLayer? = source?.let { paneMap.setBaseMap(it) }
+        // Outermost, so it sees the loader thread's interrupt status around the whole
+        // query, MapReadGuard's retry judgement included.
+        val interrupts = source?.let(::MapLoaderInterrupts)
+        loaderInterrupts = interrupts
+        val base: VectorTileLayer? = interrupts?.let { paneMap.setBaseMap(it) }
+        baseLayer = base
         if (base != null) {
             paneMap.layers().add(BuildingLayer(paneMap, base))
         } else {
             MapRenderer.setBackgroundColor(NO_DATA_BACKGROUND)
+            background = NO_DATA_BACKGROUND
         }
+        // The casing goes in first so it draws under the line. Off until a day theme is
+        // applied; a disabled layer is skipped by the renderer, so at night it costs
+        // nothing but holding the points.
+        val casing = PathLayer(paneMap, ROUTE_CASING_COLOR, ROUTE_WIDTH + ROUTE_CASING_EXTRA)
+        casing.isEnabled = false
+        paneMap.layers().add(casing)
+        routeCasing = casing
         // Above the roads and buildings and below the labels, so street names stay
         // readable along the route rather than being painted over by it. Present with no
         // map data too: a route over an empty pane still says which way to go.
@@ -193,63 +314,170 @@ class MapEngine(private val width: Int, private val height: Int) {
     }
 
     /**
-     * Applies the map's render theme.
+     * Applies the day or the night map theme, whichever `night` asks for, every time it
+     * changes.
      *
-     * There is one theme, and `night` currently changes nothing but the clear colour.
-     * That is deliberate rather than unfinished: the only signal available is Ford's
-     * `is_night`, which it sends true once per session and never updates even in
-     * daylight, so switching a whole theme on it would leave a driver with a night map
-     * at noon and no way to correct it. A day variant belongs with a signal worth
-     * trusting.
+     * `night` is the head unit's `is_night` (NIGHT_DATA), carried through
+     * `Dashboard.restriction` on every sensor event that has one. Until P7.6 this applied
+     * one dark theme and ignored the flag, on the grounds that Ford "sends is_night=true
+     * once per session and never updates it, even in daylight". That reading was wrong
+     * about its cause: every one of those sessions was with the truck's display pinned to
+     * dark mode, so what they recorded was the operator's setting, not SYNC 4.0's
+     * behaviour (P7 plan §1 item 16). A Ford whose display follows its light sensor is
+     * expected to send a second NIGHT_DATA at dusk; no recorded session has one yet,
+     * which is why the switch is proven only on the lab receiver so far.
+     *
+     * Called once per frame from the scene thread, so the case that matters for cost is
+     * "nothing changed", and that is a single integer compare before anything else.
      */
     fun setNight(night: Boolean) {
+        val mode = if (night) NIGHT else DAY
+        if (mode == appliedMode) return
         val paneMap = map ?: return
         // A map with no data has no vector layer to theme, and VTM answers a theme for
         // one with an `IllegalStateException`. This runs once per frame, so without this
         // line a dashboard whose operator has imported no map data dies on its first
         // frame — with the pane drawing its "no map data" background, which is exactly
-        // the case [start] goes out of its way to keep running.
-        if (!layered || theme.isNotEmpty()) return
+        // the case [start] goes out of its way to keep running. [appliedMode] stays
+        // UNTHEMED in that case, so every frame comes back here, and returns here.
+        if (!layered) return
 
-        // The project's own theme, not one of VTM's. Its bundled set is drawn for a
-        // phone in the hand: NEWTRON is high-contrast neon and DEFAULT is a paper map,
-        // and neither reads well as a panel a driver glances at. `dashboard-dark.xml`
-        // is a dark navy scheme with the carriageway as a light ribbon and arterials
-        // in warm tan. It is original work against the rendertheme schema, so no VTM
-        // theme is vendored or modified.
-        //
-        // Ford sends is_night=true once per session and never updates it, even in
-        // daylight, so this is not yet a light sensor worth trusting — see the
-        // night-mode finding in the P5.2 record. Until that is settled the dark theme
-        // is the one that gets used in practice.
-        val applied = applyOwnTheme()
-        if (!applied) {
-            // A theme that will not parse leaves a blank map, which is worse than a
-            // stock one; fall back rather than project nothing.
-            paneMap.setTheme(VtmThemes.NEWTRON)
+        val started = System.nanoTime()
+        val switching = appliedMode != UNTHEMED
+        val chosen = themeFor(night)
+        // Two failed themes share the one fallback; re-applying it would drop every
+        // tile to redraw an identical picture.
+        if (chosen.theme !== currentTheme) {
+            // VTM's `Map.setTheme` pauses the tile loaders (waiting out any tile being
+            // read), installs the theme, sets the clear colour to the theme's own
+            // map-background, and clears the map, so every tile is read and tessellated
+            // again. That last part is the cost of a switch, and why [drawFrame] holds
+            // the old picture until the new one is ready.
+            paneMap.setTheme(chosen.theme)
+            currentTheme = chosen.theme
+            background = chosen.theme.mapBackground
+            // Only once something has been drawn: the dashboard reads night as false
+            // until the first NIGHT_DATA arrives, so a session can switch before its
+            // first map frame, and holding then would hold a texture never written.
+            if (switching && drawn > 0) beginHold(started)
         }
-        theme = if (applied) THEME_DARK else THEME_FALLBACK
-        MapRenderer.setBackgroundColor(NIGHT_BACKGROUND)
+        routeCasing?.isEnabled = !night
+        theme = chosen.name
+        appliedMode = mode
         dirty = true
+        if (switching) {
+            themeSwitches++
+            switchCallMsMax = maxOf(switchCallMsMax, (System.nanoTime() - started) / 1_000_000L)
+        }
     }
 
-    /** Loads `dashboard-dark.xml`; false if it is missing or will not parse. */
-    private fun applyOwnTheme(): Boolean {
-        val paneMap = map ?: return false
-        return try {
-            val stream = MapAssets.openFileAsStream(THEME_ASSET)
-            if (stream == null) {
-                fail("map theme $THEME_ASSET is not packaged")
-                return false
-            }
-            // A fresh stream per load: a theme file is consumed as it is parsed, so a
-            // cached one cannot be applied twice.
-            paneMap.setTheme(StreamRenderTheme("", stream))
-            true
-        } catch (e: RuntimeException) {
-            fail("map theme failed to load: $e")
-            false
+    /**
+     * The parsed theme for `night`, loading it on first use.
+     *
+     * Each is parsed once per session and kept. A drive past dusk switches a few times at
+     * most, but the operator's day/night toggle can be pressed repeatedly, and parsing
+     * XML on the scene thread for every press would be a frame dropped each time for no
+     * reason: VTM's `Map.setTheme(ThemeFile)` is nothing more than [ThemeLoader.load]
+     * followed by `setTheme(IRenderTheme)`, and an [IRenderTheme] is not consumed by
+     * being applied.
+     *
+     * The project's own themes, not VTM's. VTM's bundled set is drawn for a phone in the
+     * hand: NEWTRON is high-contrast neon and DEFAULT is a paper map, and neither reads
+     * well as a panel a driver glances at. `dashboard-dark.xml` is a dark navy scheme
+     * with the carriageway as a light ribbon; `dashboard-light.xml` is its daylight
+     * partner, a light grey ground with white carriageways, with the same rules in the
+     * same order so no feature class appears or disappears at dusk. Both are original
+     * work against the rendertheme schema, so no VTM theme is vendored or modified.
+     */
+    private fun themeFor(night: Boolean): LoadedTheme {
+        (if (night) nightTheme else dayTheme)?.let { return it }
+        val started = System.nanoTime()
+        val asset = if (night) THEME_NIGHT_ASSET else THEME_DAY_ASSET
+        val own = loadOwnTheme(asset)
+        parseMsMax = maxOf(parseMsMax, (System.nanoTime() - started) / 1_000_000L)
+        // A theme that will not parse leaves a blank map, which is worse than a stock
+        // one; fall back rather than project nothing. Per theme: a broken day file costs
+        // the day map, not the night one that still parses.
+        val loaded = if (own != null) {
+            LoadedTheme(own, if (night) THEME_DARK else THEME_LIGHT)
+        } else {
+            fallbackTheme ?: LoadedTheme(ThemeLoader.load(VtmThemes.NEWTRON), THEME_FALLBACK)
+                .also { fallbackTheme = it }
         }
+        if (night) nightTheme = loaded else dayTheme = loaded
+        return loaded
+    }
+
+    /** Parses one packaged theme; null if it is missing or will not parse. */
+    private fun loadOwnTheme(asset: String): IRenderTheme? {
+        return try {
+            val stream = MapAssets.openFileAsStream(asset)
+            if (stream == null) {
+                fail("map theme $asset is not packaged")
+                return null
+            }
+            // A fresh stream per parse: a theme file is consumed as it is read.
+            ThemeLoader.load(StreamRenderTheme("", stream))
+        } catch (e: RuntimeException) {
+            // ThemeException is an IllegalArgumentException, so this covers a file that
+            // is packaged but malformed as well as one VTM cannot apply.
+            fail("map theme $asset failed to load: $e")
+            null
+        }
+    }
+
+    private fun beginHold(now: Long) {
+        // A switch during a switch keeps the first start: the picture on show is still
+        // the one from before both, and the hold is measured from when it went stale.
+        if (holdStartNs == 0L) holdStartNs = now
+        lastRequeueNs = now
+    }
+
+    /**
+     * Whether the switch being held has its visible tiles loaded, or has waited long
+     * enough. Scene thread, after [PaneMap.prepare], which is what fires VTM's clear
+     * and hands the tile manager the new visible set to watch.
+     *
+     * A tile a failed read dropped (VTM clears a FAILED tile back to NONE, see
+     * [MapReadGuard]) is only queued again on the next position change, and a parked
+     * vehicle makes none. So while held, a dropped tile gets the position event it is
+     * waiting for, at most every [REQUEUE_INTERVAL_NS]. Without that a switch while
+     * parked over a bad block would sit here until the timeout and then draw with a hole.
+     */
+    private fun switchLoaded(paneMap: PaneMap): Boolean {
+        val manager = baseLayer?.manager
+        val now = System.nanoTime()
+        if (manager == null) return endHold(now, timedOut = false)
+        manager.getActiveTiles(holdTiles)
+        var waiting = 0
+        var dropped = 0
+        for (i in 0 until holdTiles.cnt) {
+            val tile = holdTiles.tiles[i] ?: continue
+            if (tile.state(LOADED_STATES)) continue
+            waiting++
+            if (tile.state(MapTile.State.NONE.toInt())) dropped++
+        }
+        if (waiting == 0) return endHold(now, timedOut = false)
+        if (now - holdStartNs >= SWITCH_HOLD_MAX_MS * 1_000_000L) return endHold(now, timedOut = true)
+        if (dropped > 0 && now - lastRequeueNs >= REQUEUE_INTERVAL_NS) {
+            paneMap.events.fire(Map.POSITION_EVENT, paneMap.mapPosition)
+            holdRequeues++
+            lastRequeueNs = now
+        }
+        return false
+    }
+
+    /** Ends a hold: records it, unlocks the watched tiles, and sizes the settling frame. */
+    private fun endHold(now: Long, timedOut: Boolean): Boolean {
+        val ms = (now - holdStartNs) / 1_000_000L
+        holdMsLast = ms
+        holdMsMax = maxOf(holdMsMax, ms)
+        if (timedOut) holdTimeouts++
+        settlePasses = ((holdTiles.cnt + TILE_UPLOADS_PER_PASS - 1) / TILE_UPLOADS_PER_PASS)
+            .coerceIn(1, MAX_SETTLE_PASSES)
+        holdTiles.releaseTiles()
+        holdStartNs = 0L
+        return true
     }
 
     /**
@@ -286,12 +514,42 @@ class MapEngine(private val width: Int, private val height: Int) {
         val layer = routeLayer ?: return
         if (route == null) {
             layer.clearPath()
+            routeCasing?.clearPath()
             routePoints = 0
         } else {
-            layer.setPoints(List(route.points) { GeoPoint(route.latitudes[it], route.longitudes[it]) })
+            val points = List(route.points) { GeoPoint(route.latitudes[it], route.longitudes[it]) }
+            layer.setPoints(points)
+            // Kept in step at night too, so switching to day shows the casing at once
+            // rather than a line without its edge until the next route.
+            routeCasing?.setPoints(points)
             routePoints = route.points
         }
         routeChanges++
+        dirty = true
+    }
+
+    /**
+     * Draws [routes] as the live alternatives, replacing any before them; empty takes them
+     * off. Scene thread.
+     */
+    fun setAlternatives(routes: List<Route>) {
+        val paneMap = map ?: return
+        val layers = paneMap.layers()
+        alternativeLayers.forEach { layers.remove(it) }
+        alternativeLayers.clear()
+        val below = routeCasing?.let { layers.indexOf(it) }?.takeIf { it >= 0 } ?: layers.size
+        for (route in routes) {
+            val points = List(route.points) { GeoPoint(route.latitudes[it], route.longitudes[it]) }
+            val edge = PathLayer(paneMap, ALTERNATIVE_EDGE_COLOR, ALTERNATIVE_WIDTH + ROUTE_CASING_EXTRA)
+            val line = PathLayer(paneMap, ALTERNATIVE_COLOR, ALTERNATIVE_WIDTH)
+            edge.setPoints(points)
+            line.setPoints(points)
+            alternativeLayers += edge
+            alternativeLayers += line
+        }
+        layers.addAll(below, alternativeLayers)
+        alternativesShown = routes.size
+        alternativesShownMax = maxOf(alternativesShownMax, routes.size)
         dirty = true
     }
 
@@ -302,6 +560,18 @@ class MapEngine(private val width: Int, private val height: Int) {
      * returns. Both [GLState.bindFramebuffer] and [GLState.viewport] issue their GL call
      * unconditionally rather than consulting VTM's state cache, so handing the context
      * back and forth this way keeps that cache truthful.
+     *
+     * **A day/night switch holds the previous picture until the new one is loaded.** A
+     * theme change clears every tile (see [setNight]), and VTM draws a tile it has no data
+     * for as the bare background. Rasterised straight through, a switch is a pane that
+     * blinks to an empty ground and then fills in tile by tile as the loaders finish, with
+     * a moment of old-theme labels over new-theme ground on the way. Instead, while a
+     * switch waits, VTM's per-frame update still runs (that is what fires the clear and
+     * queues the new tiles) but nothing is rasterised, so the texture keeps the last
+     * finished picture; the frame that ends the hold draws the new theme whole. The map
+     * pauses for as long as the reload takes, which is the lab's measured switch cost,
+     * and [SWITCH_HOLD_MAX_MS] bounds it, so a tile that will not load can cost a hole,
+     * never a frozen map.
      */
     fun drawFrame() {
         val paneMap = map ?: return
@@ -317,14 +587,60 @@ class MapEngine(private val width: Int, private val height: Int) {
             reused++
             return
         }
+        // VTM's position, animation and event update. It issues no GL, so it runs before
+        // the framebuffer is bound, where a held frame can stop without touching it.
+        paneMap.prepare()
+        if (holdStartNs != 0L && !switchLoaded(paneMap)) {
+            // Still dirty, so the next frame comes back to check again.
+            held++
+            return
+        }
         dirty = false
         drawn++
 
         GLState.bindFramebuffer(framebuffer)
         GLState.viewport(width, height)
-        paneMap.prepare()
-        mapRenderer.onDrawFrame()
+        // See [background]: VTM's cached clear colour is stale by now.
+        GLES20.glClearColor(
+            ((background shr 16) and 0xFF) / 255f,
+            ((background shr 8) and 0xFF) / 255f,
+            (background and 0xFF) / 255f,
+            ((background ushr 24) and 0xFF) / 255f,
+        )
+        // VTM uploads at most [TILE_UPLOADS_PER_PASS] newly loaded tiles per pass and
+        // draws the rest as background until the next. Normally that is invisible,
+        // because tiles arrive a few at a time; at the end of a hold they have all
+        // arrived at once, so the settling frame takes enough passes to upload them all
+        // and the picture it leaves in the texture is the whole map, not part of it.
+        val passes = settlePasses
+        settlePasses = 1
+        repeat(passes) { mapRenderer.onDrawFrame() }
         GLState.bindFramebuffer(0)
+    }
+
+    /**
+     * Resizes the map to a pane of `newWidth` x `newHeight`: a new framebuffer, and VTM's
+     * viewport told the new size. Scene thread, with our EGL context current.
+     *
+     * The pane changes size when the head unit moves the content rectangle mid-session
+     * (VIDEO_GEOMETRY). The chrome follows the new layout at once. Before this, the map
+     * kept the size it was started with, so a wider pane showed the old map in its left
+     * part and black past it, a strip that stayed put when the map was panned or zoomed
+     * (seen on the truck, 24 September 2026).
+     */
+    fun resize(newWidth: Int, newHeight: Int) {
+        if (newWidth == width && newHeight == height) return
+        if (newWidth <= 0 || newHeight <= 0) return
+        width = newWidth
+        height = newHeight
+        val paneMap = map ?: return
+        deleteFramebuffer()
+        val fboError = createFramebuffer()
+        if (fboError != null) fail(fboError)
+        renderer?.onSurfaceChanged(width, height)
+        paneMap.viewport().setViewSize(width, height)
+        resizes++
+        dirty = true
     }
 
     /** Marks the next [drawFrame] as needing a real rasterisation. */
@@ -333,15 +649,30 @@ class MapEngine(private val width: Int, private val height: Int) {
     }
 
     fun release() {
+        if (holdStartNs != 0L) {
+            holdTiles.releaseTiles()
+            holdStartNs = 0L
+        }
         map?.destroy()
         map = null
+        baseLayer = null
         readGuard = null
+        loaderInterrupts = null
         routeLayer = null
+        routeCasing = null
         routePoints = 0
         layered = false
+        appliedMode = UNTHEMED
+        currentTheme = null
+        dayTheme = null
+        nightTheme = null
+        fallbackTheme = null
         renderer = null
-        val names = intArrayOf(colorTexture)
-        if (colorTexture != 0) GLES20.glDeleteTextures(1, names, 0)
+        deleteFramebuffer()
+    }
+
+    private fun deleteFramebuffer() {
+        if (colorTexture != 0) GLES20.glDeleteTextures(1, intArrayOf(colorTexture), 0)
         if (depthStencil != 0) GLES20.glDeleteRenderbuffers(1, intArrayOf(depthStencil), 0)
         if (framebuffer != 0) GLES20.glDeleteFramebuffers(1, intArrayOf(framebuffer), 0)
         colorTexture = 0
@@ -349,12 +680,24 @@ class MapEngine(private val width: Int, private val height: Int) {
         framebuffer = 0
     }
 
-    /** `key=value` lines for the session report (spec §10). No position is recorded. */
+    /**
+     * `key=value` lines for the session report (spec §10). No position is recorded.
+     *
+     * The `theme_*` fields are the day/night switch (P7.6): how many, how long the
+     * scene thread spent in the switching call, and how long the pane held its previous
+     * picture while the new theme's tiles loaded (last and worst; -1 before any switch).
+     */
     fun report(): String =
-        "map_engine=vtm-$VTM_VERSION pane=${width}x$height theme=${theme.ifEmpty { "-" }} " +
+        "map_engine=vtm-$VTM_VERSION pane=${width}x$height resizes=$resizes theme=${theme.ifEmpty { "-" }} " +
             "data=$mapName drawn=$drawn reused=$reused moved=$moved " +
-            "route_points=$routePoints route_changes=$routeChanges " +
-            "${readGuard?.report() ?: "map_reads=0"} error=${failure ?: "-"}\n"
+            "route_points=$routePoints route_changes=$routeChanges map_alternatives=$alternativesShown map_alternatives_max=$alternativesShownMax " +
+            "${readGuard?.report() ?: "map_reads=0"} error=${failure ?: "-"}\n" +
+            "map_theme_switches=$themeSwitches map_theme_call_ms_max=$switchCallMsMax " +
+            "map_theme_parse_ms_max=$parseMsMax map_theme_held_frames=$held " +
+            "map_theme_hold_ms_last=$holdMsLast map_theme_hold_ms_max=$holdMsMax " +
+            "map_theme_hold_timeouts=$holdTimeouts map_theme_hold_requeues=$holdRequeues " +
+            "map_loader_reopened=${loaderInterrupts?.reopened?.get() ?: 0} " +
+            "map_loader_reopen_failed=${loaderInterrupts?.failedRenewals?.get() ?: 0}\n"
 
     private fun fail(detail: String): String {
         if (failure == null) failure = detail
@@ -515,6 +858,9 @@ class MapEngine(private val width: Int, private val height: Int) {
     /** Where [PaneMap.post] sends work; the scene thread's handler. */
     var sceneHandler: android.os.Handler? = null
 
+    /** A parsed theme and the name the report gives it. */
+    private class LoadedTheme(val theme: IRenderTheme, val name: String)
+
     companion object {
         const val VTM_VERSION = "0.25.0"
 
@@ -524,21 +870,70 @@ class MapEngine(private val width: Int, private val height: Int) {
         private const val TARGET_DPI = 240f
 
         /**
-         * The route line: a saturated cyan that no road in `dashboard-dark.xml` uses, so
-         * it cannot be mistaken for one, and bright against the navy ground at night.
+         * The route line: a saturated cyan that no road in either owned theme uses, so it
+         * cannot be mistaken for one. Bright against the navy ground at night; on the day
+         * theme it gets [ROUTE_CASING_COLOR] under it. The same in both, because the lab's
+         * route-line check (tools/route-line-pixels.py) counts it by value.
          */
         const val ROUTE_COLOR = 0xFF22C7F0.toInt()
 
         /** Pixels at the map's 240 dpi; wider than a motorway casing, so it reads at a glance. */
         private const val ROUTE_WIDTH = 9f
 
+        /**
+         * The day casing: a deep teal, darker than anything in `dashboard-light.xml` but
+         * the labels, so the line has an edge against white roads and grey ground alike,
+         * and still reads as the route's own colour family rather than as a road class.
+         */
+        private const val ROUTE_CASING_COLOR = 0xFF0B4F6C.toInt()
+
+        /** Casing overhang, pixels at 240 dpi: two each side, a visible edge without bulk. */
+        private const val ROUTE_CASING_EXTRA = 4f
+
+        /**
+         * The live alternatives: a mid grey no road in either theme uses, on a darker edge so it
+         * reads on the day theme's white roads and the night theme's navy alike, and narrower
+         * than the route so the route is still the line to follow.
+         */
+        const val ALTERNATIVE_COLOR = 0xFF9AA5B1.toInt()
+        private const val ALTERNATIVE_EDGE_COLOR = 0xFF4A5560.toInt()
+        private const val ALTERNATIVE_WIDTH = 6f
+
         /** Packaged at `app/src/main/resources/assets/oaa/`, read through [MapAssets]. */
-        private const val THEME_ASSET = "oaa/dashboard-dark.xml"
+        private const val THEME_NIGHT_ASSET = "oaa/dashboard-dark.xml"
+        private const val THEME_DAY_ASSET = "oaa/dashboard-light.xml"
         private const val THEME_DARK = "oaa-dark"
+        private const val THEME_LIGHT = "oaa-light"
         private const val THEME_FALLBACK = "vtm-fallback"
 
-        /** Matches `map-background` in the owned theme, so a tile gap is invisible. */
-        private const val NIGHT_BACKGROUND = 0xFF151A2B.toInt()
+        /** Values of [appliedMode]. */
+        private const val UNTHEMED = -1
+        private const val DAY = 0
+        private const val NIGHT = 1
+
+        /**
+         * The longest a switch holds the previous picture, ms. The lab measured a switch
+         * at well under this (docs/p7-6-map-results.md); it is a bound for a tile that
+         * will not load, so a stuck read costs a hole in the new picture rather than a
+         * map that stops following the vehicle.
+         */
+        private const val SWITCH_HOLD_MAX_MS = 1500L
+
+        /** How often a held switch re-asks for tiles a failed read dropped. */
+        private const val REQUEUE_INTERVAL_NS = 250_000_000L
+
+        /**
+         * VTM's `TileRenderer.MAX_TILE_LOAD`: newly loaded tiles uploaded per render pass.
+         * It is `protected` there, so it is restated here; if VTM raised it, the settling
+         * frame would just take a pass or two more than it needs.
+         */
+        private const val TILE_UPLOADS_PER_PASS = 8
+
+        /** Bounds the settling frame; a pane at 1080p shows well under 32 tiles. */
+        private const val MAX_SETTLE_PASSES = 4
+
+        /** A tile whose data is loaded: uploaded, or waiting to be on the next pass. */
+        private val LOADED_STATES = MapTile.State.NEW_DATA.toInt() or MapTile.State.READY.toInt()
 
         /** Distinct from both themes, so "no data" never reads as an empty region. */
         private const val NO_DATA_BACKGROUND = 0xFF23282E.toInt()

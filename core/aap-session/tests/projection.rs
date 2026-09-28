@@ -2966,6 +2966,58 @@ fn maneuver_of(n: &aap_proto::messages::NavigationNotification) -> Option<i32> {
         .and_then(|m| m.r#type)
 }
 
+/// The road names the app read from its map reach the cluster: the road turned onto in
+/// the notification's `road_info` beside the instruction that names it, and the road being
+/// driven as the distance message's `current_road`.
+#[test]
+fn a_live_route_puts_its_road_names_on_the_cluster() {
+    let (mut s, mut hu, t0) = start(navigation_hu(Cluster::OnOpen, NavFocus::Projected), |c| {
+        c.projection.navigation = true;
+        c.projection.navigation_source = NavSource::Route;
+        c.projection.navigation_interval = Duration::from_millis(500);
+    });
+    let media = s.media();
+    let mut source = Source::new(800, 480);
+    media.submit(CONFIG, 0, &source.config());
+    let (frame, flags) = source.frame(true);
+    media.submit(flags, 1_000, &frame);
+
+    s.guidance().publish(RouteState::Guiding(
+        Guidance::live(
+            1,
+            8,
+            None,
+            "Turn right onto Main Street",
+            300.0,
+            30,
+            1000.0,
+            100,
+        )
+        .with_roads("Main Street", "Elm Avenue"),
+    ));
+    pump(&mut s, &mut hu, t0 + Duration::from_millis(10));
+    let step = &hu.nav_notifications.last().expect("a maneuver").steps[0];
+    assert_eq!(
+        step.instruction.as_ref().and_then(|t| t.text.as_deref()),
+        Some("Turn right onto Main Street")
+    );
+    assert_eq!(
+        step.road_info.as_ref().map(|r| r.road_names.clone()),
+        Some(vec!["Main Street".to_owned()])
+    );
+    let d = hu.nav_distances.last().expect("a distance");
+    assert_eq!(
+        d.current_road.as_ref().and_then(|t| t.text.as_deref()),
+        Some("Elm Avenue")
+    );
+    // The report says what was sent, never where.
+    let report = s.report().to_string();
+    assert!(
+        !report.contains("Main Street") && !report.contains("Elm Avenue"),
+        "{report}"
+    );
+}
+
 /// A live route's whole life on the wire: nothing before there is a route, `ACTIVE` and
 /// a maneuver once there is, a countdown held to the interval, a new notification only
 /// when the maneuver changes, `REROUTING` and back, and `INACTIVE` on arrival — with the
@@ -3200,6 +3252,134 @@ fn a_live_channel_with_no_route_withdraws_nothing_it_never_claimed() {
     pump(&mut s, &mut hu, t0 + Duration::from_millis(60));
     assert!(hu.nav_states.is_empty(), "{}", s.report());
     assert_eq!(hu.nav_focus_requests, vec![2, 1]);
+}
+
+/// P7.4: a route the driver ends (End route, Clear route, or the hold after arriving)
+/// withdraws the state and hands the cluster back **then**, not at the end of the
+/// session, so the vehicle's own navigation can have it between routes. The next route
+/// runs the start of the handshake again: it asks, and nothing goes on the cluster until
+/// the head unit grants it.
+///
+/// The simulator answers no request by itself here (`Silent`); every grant and every
+/// answer to the hand-back is sent by hand, so the test says exactly which one the source
+/// waited for.
+#[test]
+fn an_ended_route_hands_the_cluster_back_and_the_next_route_asks_again() {
+    let (mut s, mut hu, t0) = start(navigation_hu(Cluster::OnOpen, NavFocus::Silent), |c| {
+        c.projection.navigation = true;
+        c.projection.navigation_source = NavSource::Route;
+        c.projection.navigation_interval = Duration::from_millis(500);
+        c.projection.limit = Some(Duration::from_millis(5_000));
+    });
+    let media = s.media();
+    let mut source = Source::new(800, 480);
+    media.submit(CONFIG, 0, &source.config());
+    let (frame, flags) = source.frame(true);
+    media.submit(flags, 1_000, &frame);
+    let at = |ms: u64| t0 + Duration::from_millis(ms);
+    assert_eq!(hu.nav_focus_requests, vec![2]);
+    hu.send_nav_focus(Some(2));
+    pump(&mut s, &mut hu, at(1));
+
+    let link = s.guidance();
+    let route = |id: usize, maneuver: i32| {
+        RouteState::Guiding(Guidance::live(
+            id, maneuver, None, "Turn", 300.0, 30, 1000.0, 100,
+        ))
+    };
+    link.publish(route(1, 8));
+    pump(&mut s, &mut hu, at(10));
+    assert_eq!(hu.nav_states, vec![1], "{}", s.report());
+    assert_eq!(hu.nav_notifications.len(), 1);
+
+    // Ended: `INACTIVE`, then `NAV_FOCUS_NATIVE`, once, although the link says Ended on
+    // every visit until the next route.
+    link.publish(RouteState::Ended);
+    pump(&mut s, &mut hu, at(100));
+    assert_eq!(hu.nav_states, vec![1, 2], "{}", s.report());
+    assert_eq!(hu.nav_focus_requests, vec![2, 1], "not handed back");
+    pump(&mut s, &mut hu, at(200));
+    pump(&mut s, &mut hu, at(900));
+    assert_eq!(hu.nav_states, vec![1, 2]);
+    assert_eq!(hu.nav_focus_requests, vec![2, 1], "handed back twice");
+    let idle = at(900);
+    assert!(
+        s.next_deadline().is_none_or(|d| d > idle),
+        "an ended route left a past deadline: {}",
+        s.report()
+    );
+
+    // Prodigy echoes the hand-back, and a vehicle may answer it some way: the answer is
+    // recorded, and it is not a refusal of anything.
+    hu.send_nav_focus(Some(1));
+    pump(&mut s, &mut hu, at(950));
+    let text = s.report().to_string();
+    assert!(text.contains("navigation_focus_denials=0"), "{text}");
+    assert!(
+        text.contains(
+            "navigation_focus_handbacks=1 navigation_focus_handback_answers=1 \
+             navigation_focus_handback_type=1 (NAV_FOCUS_NATIVE)"
+        ),
+        "{text}"
+    );
+    assert!(text.contains("navigation_focus_released=true"), "{text}");
+
+    // Nothing takes the cluster back but a route: not the cluster announcing itself
+    // again, and not idle, which is what the app says for a route with no fix yet.
+    hu.send_cluster(true);
+    pump(&mut s, &mut hu, at(1_000));
+    link.publish(RouteState::Idle);
+    pump(&mut s, &mut hu, at(1_100));
+    assert_eq!(
+        hu.nav_focus_requests,
+        vec![2, 1],
+        "asked again with no route"
+    );
+    assert_eq!(hu.nav_states, vec![1, 2]);
+
+    // The next route asks again, and waits for the grant: no `ACTIVE`, no maneuver.
+    link.publish(route(2, 7));
+    pump(&mut s, &mut hu, at(1_200));
+    assert_eq!(hu.nav_focus_requests, vec![2, 1, 2], "{}", s.report());
+    pump(&mut s, &mut hu, at(1_800));
+    assert_eq!(hu.nav_states, vec![1, 2], "sent before the grant");
+    assert_eq!(hu.nav_notifications.len(), 1, "sent before the grant");
+    hu.send_nav_focus(Some(2));
+    pump(&mut s, &mut hu, at(1_900));
+    assert_eq!(hu.nav_states, vec![1, 2, 1], "{}", s.report());
+    assert_eq!(hu.nav_notifications.len(), 2);
+    assert_eq!(maneuver_of(hu.nav_notifications.last().unwrap()), Some(7));
+
+    // Held again, so the end of the session owes a hand-back again.
+    pump(&mut s, &mut hu, at(5_100));
+    assert_eq!(hu.nav_states, vec![1, 2, 1, 2], "{}", s.report());
+    assert_eq!(hu.nav_focus_requests, vec![2, 1, 2, 1]);
+    let text = s.report().to_string();
+    assert!(
+        text.contains("navigation_focus_requests=2 navigation_focus_responses=2"),
+        "{text}"
+    );
+    assert!(text.contains("navigation_focus_denials=0"), "{text}");
+    assert!(text.contains("navigation_focus_released=true"), "{text}");
+    assert!(hu.errors.is_empty(), "{:?}", hu.errors);
+}
+
+/// An ended route with nothing on the cluster and no focus ever asked for hands nothing
+/// back: the head unit is not told to take back something it never gave.
+#[test]
+fn an_ended_route_hands_back_nothing_that_was_never_asked_for() {
+    let (mut s, mut hu, t0) = start(navigation_hu(Cluster::Silent, NavFocus::Projected), |c| {
+        c.projection.navigation = true;
+        c.projection.navigation_source = NavSource::Route;
+    });
+    s.guidance().publish(RouteState::Ended);
+    pump(&mut s, &mut hu, t0 + Duration::from_millis(10));
+    assert!(hu.nav_focus_requests.is_empty(), "{}", s.report());
+    assert!(hu.nav_states.is_empty());
+    assert!(s
+        .report()
+        .to_string()
+        .contains("navigation_focus_handbacks=0"));
 }
 
 /// A fragmenting video keyframe and an audio buffer never overlap on the wire. Receivers

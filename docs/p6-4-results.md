@@ -239,7 +239,9 @@ it will hit the same trap.
   on a phone screen.
 - **The mirrored-longitude hint** has host tests only.
 
-## 5. Amendments this needs — proposed, not applied
+## 5. Amendments this needs
+
+**Applied 22 September 2026** to `spec.md` and `plan.md` (or to the non-governed file named), with the rest of the queue.
 
 These queue behind those already proposed by P5.5, the P6 plan §9, and P6.1–P6.3a.
 

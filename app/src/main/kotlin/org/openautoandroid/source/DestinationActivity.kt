@@ -21,6 +21,9 @@ import android.widget.Toast
 class DestinationActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // A share is the usual way a route starts while the connection screen is closed,
+        // so the clock that dates the route for Home's arrival time starts watching here too.
+        RouteClock.install()
         take(intent)
         finish()
     }

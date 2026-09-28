@@ -1,0 +1,217 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  OpenAutoAndroid dashboard map theme, day (P7.6). Original work in this workspace,
+  written against the VTM rendertheme schema; no VTM theme file is copied or modified.
+
+  The daylight partner of dashboard-dark.xml, for a panel a driver glances at in sun.
+  The ground is a warm light grey rather than white: a white pane beside the dark chrome
+  is the brightest thing in the cabin, and glare is what makes a glance take longer.
+  The carriageway is white with a grey casing, so the road network reads as the lightest
+  thing on the map; arterials are a warm yellow, motorways and trunk roads red, toll roads
+  a darker red, as at night, so a driver who knows one theme can read the other. Labels
+  are near-black on white haloes.
+
+  The route line is drawn by MapEngine, not here: a saturated cyan (ROUTE_COLOR) that
+  on a light ground needs the dark casing MapEngine puts under it in day mode. Nothing
+  in this file may use that cyan (tools/route-line-pixels.py counts it), and water is
+  kept a greyed light blue for the same reason. The vehicle marker is the chrome's blue with a rim; no
+  area here is a saturated blue for it to vanish into.
+
+  RULE COVERAGE MIRRORS dashboard-dark.xml exactly: the same match tree, the same
+  instructions, in the same order, with only colours changed. A feature class missing
+  here would disappear at dawn and come back at dusk. MapThemeTest in
+  tools/jni-host-test checks the two trees are the same shape.
+
+  ###########################################################################
+  ORDER IS LOAD-BEARING, as in the dark theme: VTM assigns each rendering
+  instruction a draw level from its position in this file, so every casing is
+  declared before every carriageway, in two passes over the same match tree.
+  See dashboard-dark.xml for the junction scars that doing it per road class
+  produces.
+  ###########################################################################
+-->
+<rendertheme xmlns="http://opensciencemap.org/rendertheme"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://opensciencemap.org/rendertheme https://raw.githubusercontent.com/mapsforge/vtm/master/resources/rendertheme.xsd"
+    version="1" map-background="#e9e7e1">
+
+    <!--###### TEXT ######-->
+    <!--
+      Sizes and priorities are the dark theme's, on purpose: size decides how many street
+      names survive (VTM drops a path label wider than its way), and priority (lower wins)
+      puts the road names first. Changing either by time of day would change which names
+      are on the map at dusk.
+    -->
+    <style-text id="road-name" k="name" fill="#262a31" stroke="#ffffff" stroke-width="2.0"
+        size="11" priority="20" font-family="medium" />
+    <style-text id="major-road-name" k="name" fill="#3b2408" stroke="#fffbef" stroke-width="2.2"
+        size="12" priority="10" font-family="medium" />
+    <style-text id="place-name" caption="true" k="name" fill="#1d232b" stroke="#f4f3ef"
+        stroke-width="2.2" size="15" priority="40" font-family="medium" />
+    <style-text id="water-name" caption="true" k="name" fill="#1f4a6b" stroke="#eef3f7"
+        stroke-width="1.8" size="12" priority="60" />
+
+    <!--###### LINE STYLES ######-->
+    <!-- Casings: a mid grey that separates a white carriageway from a light ground. -->
+    <style-line id="casing" cap="round" stroke="#a9a59c" width="1.6" />
+    <style-line id="casing-minor" use="casing" width="1.2" />
+    <style-line id="casing-tertiary" use="casing" width="1.9" />
+    <style-line id="casing-arterial" cap="round" stroke="#b38a3a" width="2.2" />
+    <style-line id="casing-motorway" cap="round" stroke="#8f2a20" width="2.9" />
+    <style-line id="casing-toll" cap="round" stroke="#5e1b14" width="2.9" />
+
+    <!-- Carriageways. -->
+    <style-line id="street" cap="round" stroke="#ffffff" width="0.95" />
+    <style-line id="street-minor" use="street" width="0.72" />
+    <style-line id="street-tertiary" use="street" width="1.2" />
+    <style-line id="arterial" cap="round" stroke="#f7d57e" width="1.5" />
+    <!-- Motorway and trunk: red, the same reading as at night. -->
+    <style-line id="motorway" cap="round" stroke="#df5446" width="2.05" />
+    <style-line id="motorway-link" use="motorway" width="1.5" />
+    <!-- Toll: a darker red, "same class, costs money". -->
+    <style-line id="toll" cap="round" stroke="#a5372b" width="2.05" />
+    <style-line id="toll-link" use="toll" width="1.5" />
+
+    <style-line id="track" cap="butt" stroke="#b29f7c" width="0.7" />
+    <style-line id="path" cap="butt" stroke="#8d877c" width="0.5" stipple="14"
+        stipple-stroke="#8d877c" stipple-width="0.5" />
+    <style-line id="rail" cap="butt" stroke="#8f8098" width="0.7" stipple="18"
+        stipple-stroke="#6f5f7a" stipple-width="0.7" />
+
+    <m e="way">
+
+        <!--###### PASS 1: AREAS ######-->
+        <m k="natural" v="water">
+            <area fill="#aac6dc" />
+        </m>
+        <m k="waterway" v="riverbank|dock">
+            <area fill="#aac6dc" />
+        </m>
+        <m k="landuse" v="forest|wood|grass|meadow|recreation_ground|village_green">
+            <area fill="#d2e2c6" />
+        </m>
+        <m k="leisure" v="park|garden|pitch|golf_course">
+            <area fill="#d2e2c6" />
+        </m>
+        <m k="natural" v="wood|scrub|heath">
+            <area fill="#d2e2c6" />
+        </m>
+        <m k="landuse" v="industrial|commercial|retail">
+            <area fill="#e1dcd6" />
+        </m>
+        <m k="amenity" v="parking">
+            <area fill="#deddd8" />
+        </m>
+        <m k="building" zoom-min="15">
+            <area fill="#d9d4cb" stroke="#bfb8ac" stroke-width="0.7" />
+        </m>
+        <m k="building:part" zoom-min="16">
+            <area fill="#d9d4cb" stroke="#bfb8ac" stroke-width="0.7" />
+        </m>
+        <m k="waterway" v="river|stream|canal">
+            <line stroke="#8fb2cf" width="0.8" />
+        </m>
+
+        <!--###### PASS 2: RAIL AND PATHS, under every road ######-->
+        <m k="railway" v="rail|light_rail|subway|tram" zoom-min="13">
+            <line use="rail" />
+        </m>
+        <m k="highway" v="footway|path|cycleway|steps|pedestrian" zoom-min="16">
+            <line use="path" />
+        </m>
+        <m k="highway" v="track" zoom-min="15">
+            <line use="track" />
+        </m>
+
+        <!--###### PASS 3: EVERY ROAD CASING ######-->
+        <!-- Smallest first, so a bigger road's casing still wins where they overlap. -->
+        <m k="highway">
+            <m v="service" zoom-min="15">
+                <line use="casing-minor" />
+            </m>
+            <m v="residential|unclassified|living_street|road" zoom-min="13">
+                <line use="casing" />
+            </m>
+            <m v="tertiary|tertiary_link" zoom-min="12">
+                <line use="casing-tertiary" />
+            </m>
+            <m v="secondary|secondary_link|primary|primary_link" zoom-min="10">
+                <line use="casing-arterial" />
+            </m>
+            <m v="motorway|motorway_link|trunk|trunk_link" zoom-min="8">
+                <!-- The Mapsforge writer stores toll=yes and toll=true as `tl_yes`, so
+                     both values are matched, and the second rule is the exact complement
+                     of the first (`-` is an absent key or any unlisted value). Without
+                     `tl_yes` every toll road draws no line at all; see the Texas drive
+                     note in dashboard-dark.xml. -->
+                <m k="toll" v="tl_yes|yes|true">
+                    <line use="casing-toll" />
+                </m>
+                <m k="toll" v="-|tl_yes|yes|true">
+                    <line use="casing-motorway" />
+                </m>
+            </m>
+        </m>
+
+        <!--###### PASS 4: EVERY ROAD SURFACE ######-->
+        <m k="highway">
+            <m v="service" zoom-min="15">
+                <line use="street-minor" />
+            </m>
+            <m v="residential|unclassified|living_street|road" zoom-min="13">
+                <line use="street" />
+            </m>
+            <m v="tertiary|tertiary_link" zoom-min="12">
+                <line use="street-tertiary" />
+            </m>
+            <m v="secondary|secondary_link|primary|primary_link" zoom-min="10">
+                <line use="arterial" />
+            </m>
+            <m v="motorway|trunk" zoom-min="8">
+                <m k="toll" v="tl_yes|yes|true">
+                    <line use="toll" />
+                </m>
+                <m k="toll" v="-|tl_yes|yes|true">
+                    <line use="motorway" />
+                </m>
+            </m>
+            <m v="motorway_link|trunk_link" zoom-min="10">
+                <m k="toll" v="tl_yes|yes|true">
+                    <line use="toll-link" />
+                </m>
+                <m k="toll" v="-|tl_yes|yes|true">
+                    <line use="motorway-link" />
+                </m>
+            </m>
+        </m>
+
+        <!--###### PASS 5: LABELS, above every surface ######-->
+        <m k="natural" v="water">
+            <text use="water-name" />
+        </m>
+        <m k="highway">
+            <m v="residential|unclassified|living_street|road|tertiary|tertiary_link" zoom-min="15">
+                <text use="road-name" />
+            </m>
+            <m v="service" zoom-min="17">
+                <text use="road-name" />
+            </m>
+            <m v="secondary|secondary_link|primary|primary_link" zoom-min="14">
+                <text use="major-road-name" />
+            </m>
+            <m v="motorway|trunk|motorway_link|trunk_link" zoom-min="13">
+                <text use="major-road-name" />
+            </m>
+        </m>
+    </m>
+
+    <!--###### PLACE LABELS ######-->
+    <m e="node">
+        <m k="place" v="city|town" zoom-min="8">
+            <text use="place-name" />
+        </m>
+        <m k="place" v="village|suburb|neighbourhood" zoom-min="13">
+            <text use="place-name" size="15" />
+        </m>
+    </m>
+</rendertheme>

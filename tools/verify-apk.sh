@@ -17,8 +17,13 @@ line "native-code: 'arm64-v8a'"
 # INTERNET (APP10: map data is operator-supplied), no Bluetooth and no microphone. Each
 # addition here is a deliberate, separately optional integration that degrades without
 # its grant (APP09); this list is the guard that makes adding a fifth a visible act.
+# P7.9 adds MANAGE_ONGOING_CALLS (signature|appop; docs/p7-backends-results.md §4.2 amends
+# docs/p7-plan.md §9 item 3). Declaring it grants nothing: it takes effect only after
+# `adb shell appops set org.openautoandroid.source MANAGE_ONGOING_CALLS allow`, and even
+# then only while the disabled CallCompanionService pinned below is enabled by the
+# operator's Call controls setting during a session.
 permissions=$(printf '%s\n' "$badging" | sed -n "s/^uses-permission: name='\([^']*\)'.*/\1/p" | LC_ALL=C sort | tr '\n' ' ')
-[ "$permissions" = "android.permission.ACCESS_COARSE_LOCATION android.permission.ACCESS_FINE_LOCATION android.permission.ACCESS_NETWORK_STATE android.permission.FOREGROUND_SERVICE android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE android.permission.POST_NOTIFICATIONS android.permission.READ_PHONE_STATE " ] \
+[ "$permissions" = "android.permission.ACCESS_COARSE_LOCATION android.permission.ACCESS_FINE_LOCATION android.permission.ACCESS_NETWORK_STATE android.permission.FOREGROUND_SERVICE android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE android.permission.MANAGE_ONGOING_CALLS android.permission.POST_NOTIFICATIONS android.permission.READ_PHONE_STATE " ] \
     || fail "unexpected permission set: $permissions"
 printf '%s\n' "$badging" | grep -q "uses-permission: name='android.permission.INTERNET'" \
     && fail "INTERNET permission present"
@@ -36,9 +41,9 @@ services=$(printf '%s\n' "$manifest" | awk '
     collecting { sub(/^ +/, ""); line = line " " $0 }
     END { if (collecting) print line }
 ')
-# Exactly two services, each pinned by name and by the attributes that make it safe.
+# Exactly three services, each pinned by name and by the attributes that make it safe.
 # Anything else appearing here is a packaging regression, not a detail.
-[ "$(printf '%s\n' "$services" | grep -c 'E: service ')" = 2 ] || fail "service count"
+[ "$(printf '%s\n' "$services" | grep -c 'E: service ')" = 3 ] || fail "service count"
 projection=$(printf '%s\n' "$services" | grep '"org.openautoandroid.source.ProjectionService"') \
     || fail "ProjectionService not declared"
 printf '%s\n' "$projection" | grep -q ':exported([^)]*)=false\( \|$\)' || fail "ProjectionService must not be exported"
@@ -58,6 +63,29 @@ printf '%s\n' "$manifest" | grep -q '"android.service.notification.NotificationL
 # Bound by the system, never started by us, so it declares no foreground service type.
 if printf '%s\n' "$media" | grep -q ':foregroundServiceType'; then
     fail "MediaAccessService must not declare a foreground service type"
+fi
+# P7.9's companion in-call service. Disabled in the manifest, so an idle app exposes
+# nothing to Telecom; guarded by BIND_INCALL_SERVICE (signature|privileged), which is what
+# makes exporting it safe; and never a call-screen UI, in or out of car mode.
+incall=$(printf '%s\n' "$services" | grep '"org.openautoandroid.source.CallCompanionService"') \
+    || fail "CallCompanionService not declared"
+printf '%s\n' "$incall" | grep -q ':enabled([^)]*)=false\( \|$\)' || fail "CallCompanionService must be disabled in the manifest"
+printf '%s\n' "$incall" | grep -q ':permission([^)]*)="android.permission.BIND_INCALL_SERVICE"' \
+    || fail "CallCompanionService must be guarded by BIND_INCALL_SERVICE"
+printf '%s\n' "$manifest" | grep -q '"android.telecom.InCallService"' || fail "CallCompanionService intent filter"
+if printf '%s\n' "$manifest" | grep -q -e '"android.telecom.IN_CALL_SERVICE_UI"' -e '"android.telecom.IN_CALL_SERVICE_CAR_MODE_UI"'; then
+    fail "CallCompanionService must not declare an in-call UI"
+fi
+if printf '%s\n' "$incall" | grep -q ':foregroundServiceType'; then
+    fail "CallCompanionService must not declare a foreground service type"
+fi
+# P7.5: package visibility for MediaBrowserService apps (and, below, TTS engines) only,
+# never a wider query.
+printf '%s\n' "$manifest" | grep -q '"android.media.browse.MediaBrowserService"' || fail "media browser <queries> entry"
+# P8.1: text-to-speech engines, found the same way (docs/p8-plan.md §3).
+printf '%s\n' "$manifest" | grep -q '"android.intent.action.TTS_SERVICE"' || fail "text-to-speech <queries> entry"
+if printf '%s\n' "$manifest" | grep -q 'E: package '; then
+    fail "<queries> must not name packages"
 fi
 printf '%s\n' "$manifest" | grep -q '"android.hardware.usb.action.USB_ACCESSORY_ATTACHED"' || fail "accessory attach filter"
 # Release builds shorten resource paths, so resolve the file through the resource table.

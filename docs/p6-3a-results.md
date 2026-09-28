@@ -206,7 +206,9 @@ Two consequences outlive this slice:
 `tools/android-build.sh` (green); `RoutingTest` on the host with five tiles, 103 checks;
 `MapData.checkHeader` against both real maps; one emulator lab run (§3.4).
 
-## 6. Amendments this needs — proposed, not applied
+## 6. Amendments this needs
+
+**Applied 22 September 2026** to `spec.md` and `plan.md` (or to the non-governed file named), with the rest of the queue.
 
 1. **P6 plan §7** — a **P6.3a** row: drop folder and seamless regions, after P6.3, no gate.
    Added at the operator's request; the plan did not foresee multi-region data.

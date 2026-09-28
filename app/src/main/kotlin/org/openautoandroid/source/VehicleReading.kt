@@ -138,6 +138,13 @@ data class VehicleReading(
     }
 
     /**
+     * `car_speed`, else `gps_speed`, in metres a second, each only where a candidate scale
+     * brought it into range; else null. Read from this one message: [Dashboard.guidanceSpeed]
+     * is the same order at the scale the whole drive supports, and is preferred to this.
+     */
+    fun speed(): Double? = carSpeed?.takeIf { it.validated }?.value ?: gpsSpeed?.takeIf { it.validated }?.value
+
+    /**
      * The gear's name, or the raw number when it is not one the enum knows.
      *
      * `Drive`, `Park` and `Reverse` are 100, 101 and 102 rather than continuing the 1..10

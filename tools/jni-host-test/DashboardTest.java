@@ -9,9 +9,15 @@ import java.util.List;
 import java.util.Map;
 import org.openautoandroid.source.Box;
 import org.openautoandroid.source.Dashboard;
+import org.openautoandroid.source.DashboardChoices;
 import org.openautoandroid.source.DashboardLayout;
+import org.openautoandroid.source.DashboardPalette;
+import org.openautoandroid.source.DashboardSaves;
+import org.openautoandroid.source.DayNightMode;
+import org.openautoandroid.source.Favorite;
 import org.openautoandroid.source.MapCamera;
 import org.openautoandroid.source.MapOrientation;
+import org.openautoandroid.source.MarkerColour;
 import org.openautoandroid.source.PhoneSnapshot;
 import org.openautoandroid.source.Scaled;
 import org.openautoandroid.source.SpeedUnit;
@@ -41,6 +47,14 @@ public final class DashboardTest {
         aMovingVehicleCarriesTheMapWithIt();
         theScaleComesFromTheDriveNotFromOneMessage();
         aLongPressPicksThePlaceUnderTheFinger();
+        theFavoritesTileListsPlacesAndScrolls();
+        theZoomBubblesSitBottomRightAboveTheCredit();
+        zoomPressesMoveOneLevelAndKeepFollowing();
+        theHeaderHasRoomForItsIconsSignalAndBattery();
+        headerIconsToggleThePauseAndCycleDayNight();
+        nightResolvesFromTheModeTheHeadUnitAndMemory();
+        theDisplayChoicesReachTheSnapshotAndReport();
+        bothPalettesHaveLegibleContrast();
         System.out.println("jni-host-test: ok " + passed + " dashboard checks");
     }
 
@@ -126,16 +140,6 @@ public final class DashboardTest {
         check(bearing != null && bearing.getValidated(), "Ford's bearing scales into range");
         check(bearing != null && Math.abs(bearing.getValue() - 103.553459) < 1e-6,
                 "103553459 is 103.55 degrees at 1e6");
-        Dashboard ford = dashboard();
-        ford.vehicle(reading);
-        check(!ford.nextFrame(0L).getUnvalidated(), "Ford's 1e6 bearing is confirmed, so not marked");
-        Map<String, String> labFields = new HashMap<>();
-        labFields.put("bearing", "1790");
-        labFields.put("latitude", "377749000");
-        labFields.put("longitude", "-1224194000");
-        Dashboard inferred = dashboard();
-        inferred.vehicle(VehicleReading.Companion.parse(labFields));
-        check(inferred.nextFrame(0L).getUnvalidated(), "the lab's 1e3 bearing is still marked inferred");
         check(bearing != null && bearing.getDivisor() == 1e6, "and the divisor is recorded, not hidden");
 
         check("P".equals(reading.gearName()), "gear 101 is Park, not an out-of-range number");
@@ -256,6 +260,9 @@ public final class DashboardTest {
 
     private static void mediaPressesReturnTheirAction() {
         Dashboard dashboard = dashboard();
+        // Something playing: since P7.5 an idle pane lists players instead of drawing the
+        // transport buttons (DashboardTripTest).
+        dashboard.nowPlaying(true, "playing", "Some App", "A Track", "An Artist");
         Box button = dashboard.getLayout().mediaButton(1);
         int x = button.getCenterX();
         int y = button.getCenterY();
@@ -581,6 +588,497 @@ public final class DashboardTest {
         String report = dashboard.report();
         check(report.contains("long_presses=1 "), "the pick is counted");
         check(!report.contains("51.5") && !report.contains("-0.11"), "and not located");
+    }
+
+    /**
+     * The first tile lists the saved places, three rows at a time. A press and release
+     * on a row picks its place, once; a finger that moves further than the slop scrolls
+     * the list instead and picks nothing; the list stops at its last row and keeps its
+     * place when it is replaced; and the report counts, never names.
+     */
+    private static void theFavoritesTileListsPlacesAndScrolls() {
+        DashboardLayout layout = new DashboardLayout(0, 0, 1920, 1080, true);
+        Box tile = layout.getTiles().get(DashboardLayout.FAVORITES_TILE);
+        Box list = layout.getFavoritesList();
+        int rowHeight = layout.getFavoriteRowHeight();
+        check("favorites".equals(DashboardLayout.Companion.getTILE_LABELS().get(DashboardLayout.FAVORITES_TILE)),
+                "the first tile under the media pane is the favorites");
+        check(list.getX() >= tile.getX() && list.getRight() <= tile.getRight(), "the list is inside the tile");
+        check(list.getY() >= tile.getY() + layout.tileTitleHeight(tile) && list.getBottom() <= tile.getBottom(),
+                "and under the tile's label");
+        check(rowHeight * DashboardLayout.FAVORITE_ROWS <= list.getHeight(), "three rows fit the list");
+        check(rowHeight >= 64, "a row is big enough to hit at arm's length at 1080p: " + rowHeight);
+        DashboardLayout ford = new DashboardLayout(37, 0, 726, 480, true);
+        check(ford.getFavoriteRowHeight() >= 40,
+                "and still a fingertip in Ford's 800x480 configuration: " + ford.getFavoriteRowHeight());
+
+        int x = list.getCenterX();
+        int row0 = list.getY() + rowHeight / 2;
+        int row1 = row0 + rowHeight;
+        check(layout.hitFavorite(x, list.getY(), 0, 2) == 0, "the top of the list is the first place");
+        check(layout.hitFavorite(x, row1, 0, 2) == 1, "the next row is the second");
+        check(layout.hitFavorite(x, row1 + rowHeight, 0, 2) < 0, "the empty row past the last place is nothing");
+        check(layout.hitFavorite(tile.getX() + 2, tile.getY() + 2, 0, 2) < 0, "the label strip is not a place");
+        check(layout.hitFavorite(x, list.getY(), rowHeight, 8) == 1, "scrolled a row, the top shows the second");
+        check(layout.favoritesMaxScroll(2) == 0, "two places do not scroll");
+        check(layout.favoritesMaxScroll(8) == 8 * rowHeight - list.getHeight(), "eight scroll by what does not fit");
+        check(layout.favoriteRow(1, 0).getY() == list.getY() + rowHeight, "rows stack from the top");
+        check(layout.favoriteRow(1, rowHeight).getY() == list.getY(), "and move up with the scroll");
+
+        List<Favorite> two = places(2);
+        Dashboard dashboard = following();
+        dashboard.favorites(two);
+        dashboard.mapCamera();
+        check(dashboard.touch("down", x, row1) == null, "a press on a row dispatches no transport");
+        check(dashboard.nextFrame(0L).getPressedFavorite() == 1, "and lights the row under the finger");
+        dashboard.touch("up", x, row1);
+        Favorite picked = dashboard.takeFavoritePick();
+        check(picked != null && picked.equals(two.get(1)), "press and release on a row picks its place");
+        check(dashboard.takeFavoritePick() == null, "a pick is taken once");
+        check(dashboard.nextFrame(0L).getPressedFavorite() < 0, "and the row goes dark on the lift");
+
+        dashboard.touch("down", x, row1);
+        dashboard.touch("up", x, row0);
+        check(dashboard.takeFavoritePick() == null, "lifting on a different row picks nothing");
+
+        dashboard.touch("down", x, row1);
+        dashboard.touch("move", x, row1 - 200);
+        dashboard.touch("up", x, row1 - 200);
+        check(dashboard.nextFrame(0L).getFavoritesScroll() == 0, "a list that fits does not scroll");
+        check(dashboard.takeFavoritePick() == null, "and a drag picks nothing");
+        check(dashboard.mapCamera().getLongitude() == -0.12, "a drag on the tile leaves the map where it was");
+
+        List<Favorite> eight = places(8);
+        dashboard.favorites(eight);
+        int max = layout.favoritesMaxScroll(8);
+        int near = list.getBottom() - 10;
+        dashboard.touch("down", x, near);
+        dashboard.touch("move", x, near - layout.getFavoriteSlop());
+        Dashboard.Snapshot held = dashboard.nextFrame(0L);
+        check(held.getFavoritesScroll() == 0 && held.getPressedFavorite() == 2, "within the slop it is still a press");
+        dashboard.touch("move", x, near - 150);
+        Dashboard.Snapshot mid = dashboard.nextFrame(0L);
+        check(mid.getFavoritesScroll() == 150, "the list follows the finger: " + mid.getFavoritesScroll());
+        check(mid.getPressedFavorite() < 0, "and nothing is lit while scrolling");
+        dashboard.touch("move", x, near - 5000);
+        check(dashboard.nextFrame(0L).getFavoritesScroll() == max, "the scroll stops at the last row");
+        dashboard.touch("up", x, near - 5000);
+        check(dashboard.takeFavoritePick() == null, "a scroll picks nothing");
+        check(dashboard.nextFrame(0L).getFavoritesScroll() == max, "and the list stays where it was left");
+
+        int bottomRow = list.getBottom() - rowHeight / 2;
+        dashboard.touch("down", x, bottomRow);
+        dashboard.touch("up", x, bottomRow);
+        Favorite last = dashboard.takeFavoritePick();
+        check(last != null && last.equals(eight.get(7)), "after scrolling, the row under the finger is the place it shows");
+
+        dashboard.touch("down", x, list.getY() + 10);
+        dashboard.touch("move", x, list.getY() + 10 + 10000);
+        dashboard.touch("up", x, list.getY() + 10 + 10000);
+        check(dashboard.nextFrame(0L).getFavoritesScroll() == 0, "dragging down comes back to the top");
+
+        dashboard.touch("down", x, near);
+        dashboard.touch("move", x, near - 5000);
+        dashboard.touch("up", x, near - 5000);
+        dashboard.favorites(places(4));
+        check(dashboard.nextFrame(0L).getFavoritesScroll() == layout.favoritesMaxScroll(4),
+                "a shortened list keeps its last rows in view");
+        dashboard.favorites(two);
+        check(dashboard.nextFrame(0L).getFavoritesScroll() == 0, "and one that fits is back at the top");
+
+        dashboard.touch("down", x, row0);
+        check(dashboard.nextFrame(0L).getPressedFavorite() == 0, "a press on the first row lights it");
+        dashboard.touch("cancel", x, row0);
+        check(dashboard.nextFrame(0L).getPressedFavorite() < 0, "a cancelled press lights nothing");
+        dashboard.touch("up", x, row0);
+        check(dashboard.takeFavoritePick() == null, "and picks nothing");
+
+        String report = dashboard.report();
+        check(report.contains("dashboard_favorites=2 dashboard_favorite_taps=2 dashboard_favorite_scrolls=4"),
+                "the report counts places, taps and scrolls: " + report);
+        check(!report.contains("Place") && !report.contains("30.2") && !report.contains("97.7"),
+                "and names no place");
+
+        Dashboard empty = dashboard();
+        empty.touch("down", x, row0);
+        empty.touch("up", x, row0);
+        check(empty.takeFavoritePick() == null, "an empty list picks nothing");
+        check(taps(empty)[DashboardLayout.FAVORITES_TILE] == 1, "though the tile itself still counts the tap");
+    }
+
+    /** The two sizes every layout rule is checked at: the lab's 1080p and Ford's 800x480. */
+    private static DashboardLayout[] sizes() {
+        return new DashboardLayout[] {
+            new DashboardLayout(0, 0, 1920, 1080, true),
+            new DashboardLayout(0, 0, 1920, 1080, false),
+            new DashboardLayout(37, 0, 726, 480, true),
+            new DashboardLayout(0, 0, 800, 480, false),
+        };
+    }
+
+    private static boolean overlaps(Box a, Box b) {
+        return a.getX() < b.getRight() && b.getX() < a.getRight()
+                && a.getY() < b.getBottom() && b.getY() < a.getBottom();
+    }
+
+    /**
+     * P7.2: + above minus in the pane's bottom-right corner, the recentre/compass size,
+     * above the ODbL credit, clear of it and of the bottom-left stack.
+     */
+    private static void theZoomBubblesSitBottomRightAboveTheCredit() {
+        List<String> actions = DashboardLayout.Companion.getZOOM_ACTIONS();
+        check(actions.size() == 2 && "zoom-in".equals(actions.get(0)) && "zoom-out".equals(actions.get(1)),
+                "plus, then minus");
+        for (DashboardLayout layout : sizes()) {
+            String at = " at " + layout.getWidth() + "x" + layout.getHeight();
+            Box map = layout.getMap();
+            Box plus = layout.zoomBubble(0);
+            Box minus = layout.zoomBubble(1);
+            check(plus.getWidth() == layout.getBubbleSize() && plus.getHeight() == layout.getBubbleSize(),
+                    "the same size as the recentre bubble" + at);
+            check(plus.getBottom() <= minus.getY(), "plus sits above minus, a gap apart" + at);
+            check(minus.getY() - plus.getBottom() >= layout.getMargin(), "a whole margin apart" + at);
+            for (int i = 0; i < 2; i++) {
+                Box bubble = layout.zoomBubble(i);
+                check(bubble.getX() >= map.getX() && bubble.getRight() <= map.getRight()
+                        && bubble.getY() >= map.getY() && bubble.getBottom() <= map.getBottom(),
+                        "zoom bubble " + i + " is inside the pane" + at);
+                check(bubble.getCenterX() > map.getCenterX() && bubble.getCenterY() > map.getCenterY(),
+                        "zoom bubble " + i + " is in the bottom-right quarter" + at);
+                check(bubble.getBottom() <= layout.getAttributionTop(),
+                        "zoom bubble " + i + " is above the credit's plate" + at);
+                check(actions.get(i).equals(layout.hitZoomBubble(bubble.getCenterX(), bubble.getCenterY())),
+                        "the centre of zoom bubble " + i + " is " + actions.get(i) + at);
+                check(layout.hitMapBubble(bubble.getCenterX(), bubble.getCenterY()) == null,
+                        "and not a left-stack bubble" + at);
+                for (int j = 0; j < 2; j++) {
+                    check(!overlaps(bubble, layout.mapBubble(j)),
+                            "zoom bubble " + i + " is clear of left bubble " + j + at);
+                }
+                check(layout.hitMedia(bubble.getCenterX(), bubble.getCenterY()) == null
+                        && layout.hitTile(bubble.getCenterX(), bubble.getCenterY()) < 0
+                        && layout.hitHeaderIcon(bubble.getCenterX(), bubble.getCenterY()) == null,
+                        "a zoom bubble is no other target" + at);
+            }
+            check(layout.hitZoomBubble(plus.getCenterX(), plus.getBottom()) == null,
+                    "the gap between them is not a control" + at);
+            // The credit's plate runs left from the pane's right edge. Its width is the
+            // font's; at 0.65 em a character (generous for Roboto) it still ends right of
+            // the bottom-left stack, so the plate never runs under the recentre bubble.
+            int credit = (int) Math.ceil(0.65 * layout.getAttributionTextSize() * 36);
+            check(map.getRight() - layout.getMargin() - credit > layout.mapBubble(0).getRight(),
+                    "the credit is clear of the bottom-left stack" + at);
+            check(layout.getAttributionTop() > layout.mapBubble(0).getY(),
+                    "and the credit's plate is lower than the zoom stack's bottom" + at);
+        }
+    }
+
+    /** One level a press, clamped to the pinch's range, and never a reason to let go. */
+    private static void zoomPressesMoveOneLevelAndKeepFollowing() {
+        Dashboard dashboard = following();
+        check(dashboard.mapCamera().getScale() == 65536.0, "zoom 16 to start");
+        zoom(dashboard, 0);
+        check(dashboard.mapCamera().getScale() == 131072.0, "plus is one level in");
+        check(dashboard.report().contains("following=true"), "and the map keeps following");
+        check(centre(dashboard).equals(marker(dashboard)), "with the vehicle still at the centre");
+        zoom(dashboard, 1);
+        zoom(dashboard, 1);
+        check(dashboard.mapCamera().getScale() == 32768.0, "minus is one level out");
+        check(dashboard.report().contains("dashboard_zoom_presses=3 "), "every press is counted");
+        check(dashboard.report().contains("zoom=15.0"), "and the report says where it ended");
+        check(dashboard.report().contains("dashboard_map_presses=0 "), "zoom presses are not map presses");
+
+        for (int i = 0; i < 10; i++) zoom(dashboard, 0);
+        check(dashboard.mapCamera().getScale() == 524288.0, "plus stops at the pinch's closest");
+        // Level 4, all of Texas with room around it; it was level 12 until James asked to see further.
+        for (int i = 0; i < 20; i++) zoom(dashboard, 1);
+        check(dashboard.mapCamera().getScale() == 16.0, "minus stops at the pinch's furthest");
+        check(dashboard.report().contains("zoom=4.0"), "which the report calls level 4");
+
+        // Press and release on the same bubble, as every other button.
+        Dashboard wander = following();
+        Box plus = wander.getLayout().zoomBubble(0);
+        Box minus = wander.getLayout().zoomBubble(1);
+        wander.touch("down", points(point(0, plus.getCenterX(), plus.getCenterY())));
+        check(wander.nextFrame(0L).getPressedZoom().equals("zoom-in"), "a press lights the bubble");
+        wander.touch("up", points(point(0, minus.getCenterX(), minus.getCenterY())));
+        check(wander.mapCamera().getScale() == 65536.0, "sliding from plus to minus zooms nothing");
+        check(wander.nextFrame(0L).getPressedZoom() == null, "and lights nothing after the lift");
+        wander.touch("down", points(point(0, plus.getCenterX(), plus.getCenterY())));
+        wander.touch("cancel", points(point(0, plus.getCenterX(), plus.getCenterY())));
+        wander.touch("up", points(point(0, plus.getCenterX(), plus.getCenterY())));
+        check(wander.mapCamera().getScale() == 65536.0, "a cancelled press zooms nothing");
+        // A finger that lands on a zoom bubble and slides is not a pan.
+        wander.touch("down", points(point(0, plus.getCenterX(), plus.getCenterY())));
+        wander.touch("move", points(point(0, plus.getCenterX() - 300, plus.getCenterY() - 300)));
+        wander.touch("up", points(point(0, plus.getCenterX() - 300, plus.getCenterY() - 300)));
+        check(wander.report().contains("following=true") && wander.report().contains("gestures=0"),
+                "sliding off a zoom bubble does not drag the map");
+    }
+
+    /**
+     * P7.3: the header's right side, from the right edge: battery, signal, then the two
+     * icons. None overlaps another, all fit in the header, and the text on the left has
+     * room for the clock, the speed and the compass even at 800x480.
+     */
+    private static void theHeaderHasRoomForItsIconsSignalAndBattery() {
+        List<String> actions = DashboardLayout.Companion.getHEADER_ACTIONS();
+        check(actions.size() == 2 && "pause".equals(actions.get(0)) && "day-night".equals(actions.get(1)),
+                "the pause, then day/night, left to right");
+        for (DashboardLayout layout : sizes()) {
+            String at = " at " + layout.getWidth() + "x" + layout.getHeight();
+            Box battery = layout.getHeaderBattery();
+            Box signal = layout.getHeaderSignal();
+            Box pause = layout.headerIcon(0);
+            Box dayNight = layout.headerIcon(1);
+            Box[] all = {pause, dayNight, signal, battery};
+            for (int i = 0; i < all.length; i++) {
+                Box box = all[i];
+                check(box.getY() >= layout.getY() && box.getBottom() <= layout.getY() + layout.getHeader(),
+                        "header item " + i + " is inside the header" + at);
+                check(box.getX() >= layout.getX() && box.getRight() <= layout.getX() + layout.getWidth(),
+                        "header item " + i + " is inside the frame" + at);
+                for (int j = i + 1; j < all.length; j++) {
+                    check(!overlaps(box, all[j]), "header items " + i + " and " + j + " do not overlap" + at);
+                    check(box.getRight() + layout.getMargin() <= all[j].getX(),
+                            "and are a margin apart, left to right" + at);
+                }
+            }
+            check(pause.getHeight() == layout.getHeader() && pause.getWidth() == layout.getHeader(),
+                    "an icon is a header-height square" + at);
+            check(battery.getRight() == layout.getX() + layout.getWidth() - layout.getMargin(),
+                    "the battery ends a margin from the right edge" + at);
+            check(layout.getHeaderTextRight() < pause.getX(), "the header's text stops short of the icons" + at);
+            // Clock, speed, needle and bearing at the drawing's sizes, at a generous
+            // 0.62 em a character: "88:88", "188 km/h", the needle, "NW 359 deg".
+            double big = layout.getHeader() * 0.52;
+            double small = layout.getHeader() * 0.24;
+            double text = layout.getMargin() + 0.62 * big * 5 + layout.getMargin() * 2
+                    + 0.62 * big * 8 + layout.getMargin() * 2 + big + 0.62 * small * 7;
+            check(layout.getX() + text < layout.getHeaderTextRight(),
+                    "the kept header text fits left of the icons: " + (int) text + at);
+            for (int i = 0; i < 2; i++) {
+                Box icon = layout.headerIcon(i);
+                check(actions.get(i).equals(layout.hitHeaderIcon(icon.getCenterX(), icon.getCenterY())),
+                        "the centre of icon " + i + " is " + actions.get(i) + at);
+                check(actions.get(i).equals(layout.hitHeaderIcon(icon.getX(), icon.getY())),
+                        "and so is its corner: a square target" + at);
+            }
+            check(layout.hitHeaderIcon(pause.getRight(), pause.getCenterY()) == null,
+                    "the gap between the icons is not a target" + at);
+            check(layout.hitHeaderIcon(signal.getCenterX(), signal.getCenterY()) == null
+                    && layout.hitHeaderIcon(battery.getCenterX(), battery.getCenterY()) == null,
+                    "the signal and the battery are not targets" + at);
+            check(layout.hitHeaderIcon(layout.getX() + layout.getMargin(), layout.getY() + 5) == null,
+                    "nor is the clock" + at);
+            check(layout.hitHeaderIcon(pause.getCenterX(), layout.getMap().getY() + 1) == null,
+                    "the icons stop at the header's bottom edge" + at);
+        }
+    }
+
+    /**
+     * Press and release on the same icon, as every button. The pause toggles and the
+     * day/night icon cycles Automatic, Day, Night; each hands its new value out to be
+     * saved, and the palette in use goes out whenever it changes.
+     */
+    private static void headerIconsToggleThePauseAndCycleDayNight() {
+        List<Object> saved = new ArrayList<>();
+        DashboardSaves saves = new DashboardSaves(
+                mode -> { saved.add(mode); return kotlin.Unit.INSTANCE; },
+                paused -> { saved.add("paused=" + paused); return kotlin.Unit.INSTANCE; },
+                night -> { saved.add("night=" + night); return kotlin.Unit.INSTANCE; });
+        Dashboard dashboard = new Dashboard(new DashboardLayout(0, 0, 1920, 1080, true), "123456",
+                ZoneId.of("UTC"), SpeedUnit.MPH, MapOrientation.NORTH_UP, o -> kotlin.Unit.INSTANCE,
+                new DashboardChoices(MarkerColour.BLUE, DayNightMode.AUTO, false, false, Boolean.TRUE), saves);
+        check(saved.isEmpty(), "a remembered night that is still night saves nothing");
+        dashboard.restriction("0", "true");
+        check(saved.isEmpty(), "nor does the head unit agreeing with it");
+
+        Box pause = dashboard.getLayout().headerIcon(0);
+        dashboard.touch("down", pause.getCenterX(), pause.getCenterY());
+        check("pause".equals(dashboard.nextFrame(0L).getPressedHeaderIcon()), "a press lights the icon");
+        check(!dashboard.nextFrame(0L).getNotificationsPaused(), "but changes nothing yet");
+        dashboard.touch("up", pause.getCenterX(), pause.getCenterY());
+        check(dashboard.nextFrame(0L).getNotificationsPaused(), "press and release pauses");
+        check(dashboard.nextFrame(0L).getPressedHeaderIcon() == null, "and the icon goes dark");
+        check(saved.equals(List.of("paused=true")), "the pause is handed out to be saved: " + saved);
+
+        Box dayNight = dashboard.getLayout().headerIcon(1);
+        dashboard.touch("down", dayNight.getCenterX(), dayNight.getCenterY());
+        dashboard.touch("up", pause.getCenterX(), pause.getCenterY());
+        check(dashboard.nextFrame(0L).getDayNight() == DayNightMode.AUTO && dashboard.nextFrame(0L).getNotificationsPaused(),
+                "sliding from one icon to the other presses neither");
+
+        press(dashboard, dayNight);
+        Dashboard.Snapshot day = dashboard.nextFrame(0L);
+        check(day.getDayNight() == DayNightMode.DAY && !day.getNight(), "one tap: Day, drawn day at night");
+        check(dashboard.isNight() == day.getNight(), "and the map is themed from the same value");
+        press(dashboard, dayNight);
+        check(dashboard.nextFrame(0L).getDayNight() == DayNightMode.NIGHT && dashboard.nextFrame(0L).getNight(),
+                "two: Night");
+        press(dashboard, dayNight);
+        check(dashboard.nextFrame(0L).getDayNight() == DayNightMode.AUTO && dashboard.nextFrame(0L).getNight(),
+                "three: Automatic, following the head unit's night");
+        press(dashboard, pause);
+        check(!dashboard.nextFrame(0L).getNotificationsPaused(), "a second tap on the pause lets them through");
+        check(saved.equals(List.of("paused=true", DayNightMode.DAY, "night=false", DayNightMode.NIGHT,
+                "night=true", DayNightMode.AUTO, "paused=false")),
+                "each mode and each palette change is handed out, in order: " + saved);
+
+        String report = dashboard.report();
+        check(report.contains("dashboard_day_night_presses=3"), "day/night presses are counted");
+        check(report.contains("dashboard_pause_presses=2 "), "pause presses are counted");
+        check(report.contains("dashboard_night_changes=2 "), "and palette switches: " + report);
+        check(taps(dashboard)[0] == 0 && taps(dashboard)[1] == 0, "a header press taps no tile");
+    }
+
+    private static void press(Dashboard dashboard, Box box) {
+        dashboard.touch("down", box.getCenterX(), box.getCenterY());
+        dashboard.touch("up", box.getCenterX(), box.getCenterY());
+    }
+
+    private static void zoom(Dashboard dashboard, int index) {
+        press(dashboard, dashboard.getLayout().zoomBubble(index));
+    }
+
+    /**
+     * P7.6: Automatic follows every change of the head unit's is_night; Day and Night
+     * hold. Before the head unit says anything, Automatic is the last session's palette,
+     * else night, never day: reading silence as day themed the map day at every night
+     * start and reloaded all of it a second later.
+     */
+    private static void nightResolvesFromTheModeTheHeadUnitAndMemory() {
+        DayNightMode auto = DayNightMode.AUTO;
+        check(Dashboard.Companion.resolveNight(auto, null, null), "no signal and no memory: night");
+        check(!Dashboard.Companion.resolveNight(auto, null, Boolean.FALSE), "no signal: the last session's day");
+        check(Dashboard.Companion.resolveNight(auto, null, Boolean.TRUE), "or its night");
+        check(!Dashboard.Companion.resolveNight(auto, Boolean.FALSE, Boolean.TRUE), "the head unit's word beats memory");
+        check(Dashboard.Companion.resolveNight(auto, Boolean.TRUE, Boolean.FALSE), "either way");
+        for (Boolean headUnit : new Boolean[] {null, Boolean.TRUE, Boolean.FALSE}) {
+            for (Boolean remembered : new Boolean[] {null, Boolean.TRUE, Boolean.FALSE}) {
+                check(!Dashboard.Companion.resolveNight(DayNightMode.DAY, headUnit, remembered), "Day holds day");
+                check(Dashboard.Companion.resolveNight(DayNightMode.NIGHT, headUnit, remembered), "Night holds night");
+            }
+        }
+
+        // Through the dashboard: silence, then every change, and the raw word kept.
+        List<Boolean> saved = new ArrayList<>();
+        DashboardSaves saves = new DashboardSaves(
+                mode -> kotlin.Unit.INSTANCE, paused -> kotlin.Unit.INSTANCE,
+                night -> { saved.add(night); return kotlin.Unit.INSTANCE; });
+        Dashboard fresh = new Dashboard(new DashboardLayout(0, 0, 1920, 1080, true), "123456",
+                ZoneId.of("UTC"), SpeedUnit.MPH, MapOrientation.NORTH_UP, o -> kotlin.Unit.INSTANCE,
+                new DashboardChoices(), saves);
+        check(fresh.isNight() && fresh.nextFrame(0L).getNight(), "a first session starts at night");
+        check(saved.equals(List.of(Boolean.TRUE)), "and records it, so the next start knows: " + saved);
+        check(fresh.report().contains("dashboard_head_unit_night=- "), "the report says nothing was heard yet");
+        fresh.restriction("0", "-");
+        check(fresh.isNight(), "a driving status alone is not a day signal");
+        check(fresh.report().contains("dashboard_night_events=0 "), "and not a night event");
+        fresh.restriction("0", "false");
+        check(!fresh.isNight() && !fresh.nextFrame(0L).getNight(), "is_night=false: day");
+        fresh.restriction("0", "true");
+        check(fresh.isNight(), "back to night");
+        fresh.restriction("0", "false");
+        fresh.restriction("0", "false");
+        check(!fresh.isNight(), "and day again: every change is followed, not only the first");
+        check(saved.equals(List.of(Boolean.TRUE, Boolean.FALSE, Boolean.TRUE, Boolean.FALSE)),
+                "each palette change is saved once, repeats are not: " + saved);
+        String report = fresh.report();
+        check(report.contains("dashboard_day_night=auto dashboard_night=false dashboard_head_unit_night=false "),
+                "the report keeps the mode, the palette and the head unit's own word: " + report);
+        check(report.contains("dashboard_night_events=4 dashboard_night_changes=3 "), "events and switches");
+        check(fresh.nextFrame(0L).getRestriction().equals("driving=0 night=false"),
+                "the restriction text is the head unit's, for the diagnostics line");
+
+        // Day held while the head unit says night: the report still records night.
+        Dashboard held = new Dashboard(new DashboardLayout(0, 0, 1920, 1080, true), "123456",
+                ZoneId.of("UTC"), SpeedUnit.MPH, MapOrientation.NORTH_UP, o -> kotlin.Unit.INSTANCE,
+                new DashboardChoices(MarkerColour.BLUE, DayNightMode.DAY, false, false, null), new DashboardSaves());
+        held.restriction("0", "true");
+        check(!held.isNight(), "Day draws day over a night head unit");
+        check(held.report().contains("dashboard_night=false dashboard_head_unit_night=true "),
+                "and the report says both");
+        // A remembered day starts a session in day, before any NIGHT_DATA.
+        Dashboard remembered = new Dashboard(new DashboardLayout(0, 0, 1920, 1080, true), "123456",
+                ZoneId.of("UTC"), SpeedUnit.MPH, MapOrientation.NORTH_UP, o -> kotlin.Unit.INSTANCE,
+                new DashboardChoices(MarkerColour.BLUE, DayNightMode.AUTO, false, false, Boolean.FALSE),
+                new DashboardSaves());
+        check(!remembered.isNight(), "a session after a day one starts in day");
+        check(remembered.report().contains("dashboard_remembered_night=false"), "and says why");
+    }
+
+    /** Marker colour, diagnostics and the scale mark reach the frame; the report names settings only. */
+    private static void theDisplayChoicesReachTheSnapshotAndReport() {
+        check(dashboard().nextFrame(0L).getMarkerColour() == MarkerColour.BLUE, "blue unless chosen");
+        check(!dashboard().nextFrame(0L).getDiagnostics(), "no debug line unless chosen");
+        Dashboard yellow = new Dashboard(new DashboardLayout(0, 0, 1920, 1080, true), "123456",
+                ZoneId.of("UTC"), SpeedUnit.MPH, MapOrientation.NORTH_UP, o -> kotlin.Unit.INSTANCE,
+                new DashboardChoices(MarkerColour.YELLOW, DayNightMode.AUTO, true, true, null), new DashboardSaves());
+        Dashboard.Snapshot frame = yellow.nextFrame(0L);
+        check(frame.getMarkerColour() == MarkerColour.YELLOW, "the saved colour reaches the snapshot");
+        check(frame.getDiagnostics(), "and the Diagnostics switch");
+        check(frame.getNotificationsPaused(), "and the pause as it was left");
+        // The renderer repaints the chrome only when the snapshot changes, so two
+        // dashboards that differ in nothing but the colour must draw different frames.
+        Dashboard blue = new Dashboard(new DashboardLayout(0, 0, 1920, 1080, true), "123456",
+                ZoneId.of("UTC"), SpeedUnit.MPH, MapOrientation.NORTH_UP, o -> kotlin.Unit.INSTANCE,
+                new DashboardChoices(MarkerColour.BLUE, DayNightMode.AUTO, true, true, null), new DashboardSaves());
+        Dashboard.Snapshot blueFrame = blue.nextFrame(0L);
+        check(!frame.equals(blueFrame), "a colour change alone is a chrome change");
+        String report = yellow.report();
+        check(report.contains("dashboard_marker=yellow dashboard_diagnostics=true dashboard_notifications_paused=true "),
+                "the report names the choices: " + report);
+
+        // The lab receiver sends bearing and speed in thousandths, which no drive has
+        // confirmed; Ford's 1e6 bearing has been, by eye.
+        Map<String, String> lab = new HashMap<>();
+        lab.put("bearing", "90000");
+        lab.put("car_speed", "13400");
+        check(Dashboard.Companion.scaleInferred(VehicleReading.Companion.parse(lab)), "the lab's 1e3 is inferred");
+        Map<String, String> ford = new HashMap<>();
+        ford.put("bearing", "103553459");
+        ford.put("car_speed", "0");
+        check(!Dashboard.Companion.scaleInferred(VehicleReading.Companion.parse(ford)), "Ford's 1e6 is confirmed");
+        yellow.vehicle(VehicleReading.Companion.parse(lab));
+        check(yellow.nextFrame(0L).getScaleInferred(), "and the snapshot carries it for the debug line");
+    }
+
+    /**
+     * P7.6: the light day set and the dark night set have the same roles and both keep
+     * text legible: body text at 7:1 on everything it is drawn on, secondary text, the
+     * accent and the warning at 4.5:1 on the tiles and the header.
+     */
+    private static void bothPalettesHaveLegibleContrast() {
+        DashboardPalette[] palettes = {DashboardPalette.Companion.getDAY(), DashboardPalette.Companion.getNIGHT()};
+        String[] names = {"day", "night"};
+        for (int i = 0; i < 2; i++) {
+            DashboardPalette p = palettes[i];
+            String n = names[i] + " ";
+            for (int ground : new int[] {p.getTile(), p.getHeader(), p.getButton(), p.getBackground()}) {
+                check(DashboardPalette.Companion.contrast(p.getText(), ground) >= 7.0, n + "text is 7:1 on its grounds");
+            }
+            for (int ground : new int[] {p.getTile(), p.getHeader()}) {
+                check(DashboardPalette.Companion.contrast(p.getDim(), ground) >= 4.5, n + "secondary text is 4.5:1");
+                check(DashboardPalette.Companion.contrast(p.getAccent(), ground) >= 4.5, n + "the accent is 4.5:1");
+                check(DashboardPalette.Companion.contrast(p.getWarning(), ground) >= 4.5, n + "the warning is 4.5:1");
+            }
+            check(DashboardPalette.Companion.contrast(p.getAttribution(), p.getAttributionPlate() | 0xFF000000) >= 7.0,
+                    n + "the credit is legible on its plate");
+        }
+        check(DashboardPalette.Companion.of(true) == DashboardPalette.Companion.getNIGHT()
+                && DashboardPalette.Companion.of(false) == DashboardPalette.Companion.getDAY(), "of() picks the set");
+        // Day is light and night is dark, not two dark schemes.
+        check(DashboardPalette.Companion.contrast(DashboardPalette.Companion.getDAY().getBackground(), 0xFFFFFFFF) < 1.6,
+                "the day background is light");
+        check(DashboardPalette.Companion.contrast(DashboardPalette.Companion.getNIGHT().getBackground(), 0xFF000000) < 1.6,
+                "the night background is dark");
+    }
+
+    private static List<Favorite> places(int count) {
+        List<Favorite> list = new ArrayList<>();
+        for (int i = 0; i < count; i++) list.add(new Favorite("Place " + i, 30.2 + i * 0.01, -97.7 - i * 0.01));
+        return list;
     }
 
     /** The compass's choice is reported for keeping, and a new session starts in it. */

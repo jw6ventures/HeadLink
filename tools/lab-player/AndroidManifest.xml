@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The emulator lab's stand-in player and caller (tools/lab-player.sh). Never shipped and
+     never installed on a phone: the emulator image has no launchable media player, and its
+     dialer posts no CallStyle notification, so without this the lab could exercise neither
+     P7.5's Resume nor P7.9's call-notification route. It also posts the ordinary
+     notifications P7.8's flex tile lists, and has a silent speech engine for P8.1. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="org.openautoandroid.labplayer"
+    android:versionCode="1"
+    android:versionName="lab">
+
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- CallStyle notifications must be a foreground service's or carry a full-screen
+         intent; the second needs no service. Granted to an app targeting 33. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+
+    <application android:label="Lab Player" android:allowBackup="false">
+        <!-- A launcher activity: what makes this a player the dashboard lists. -->
+        <activity android:name=".MainActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <service android:name=".PlayerService" android:exported="true">
+            <intent-filter>
+                <action android:name="android.media.browse.MediaBrowserService" />
+            </intent-filter>
+        </service>
+        <!-- Exported so adb can ring it; its answer, decline and hang-up intents are the
+             notification's own PendingIntents, as a dialer's are. -->
+        <receiver android:name=".CallReceiver" android:exported="true" />
+        <receiver android:name=".MessageReceiver" android:exported="true" />
+        <!-- P8.1: a silent stand-in speech engine (LabSpeechEngine), disabled here so no
+             other run has one; the speech script enables it with pm when the operator's
+             eSpeak NG is not in the cache. -->
+        <service android:name=".LabSpeechEngine" android:exported="true" android:enabled="false"
+            android:label="Lab speech">
+            <intent-filter>
+                <action android:name="android.intent.action.TTS_SERVICE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </service>
+    </application>
+</manifest>

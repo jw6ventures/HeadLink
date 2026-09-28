@@ -169,15 +169,22 @@ class MediaControl(
     }
 
     /**
-     * The highest-priority active session, or null when this app has no access to the
-     * list. The grant is checked every time: the operator can withdraw it in Settings
-     * mid-drive, and a `SecurityException` here must not end the session.
+     * The highest-priority active session that is a player's ([MediaSessions.pick]), or
+     * null when there is none or this app has no access to the list. The grant is checked
+     * every time: the operator can withdraw it in Settings mid-drive, and a
+     * `SecurityException` here must not end the session.
      */
     private fun controller(): MediaController? {
         val sessions = sessions ?: return null
         if (!MediaAccessService.enabled(context)) return null
         return try {
-            sessions.getActiveSessions(MediaAccessService.component(context)).firstOrNull()
+            val active = sessions.getActiveSessions(MediaAccessService.component(context))
+            val index = MediaSessions.pick(
+                active.map { it.packageName },
+                active.map { it.playbackState != null },
+                context.packageName,
+            )
+            active.getOrNull(index)
         } catch (e: SecurityException) {
             note("media session access refused: $e")
             null
@@ -194,7 +201,10 @@ class MediaControl(
     private fun publish() {
         if (!running) return
         val controller = controller()
-        access = controller != null
+        // The grant itself, not "a session was read": with nothing playing there is no
+        // session, and reporting that as no access put the idle pane's "notification
+        // access" hint up on a phone that had granted it (docs/p7-8-9-results.md §3.4).
+        access = MediaAccessService.enabled(context)
         val state = controller?.playbackState
         val metadata = controller?.metadata
         // No session at all — no grant, or nothing playing — is reported as stopped.
@@ -377,4 +387,30 @@ class MediaControl(
             NativeBridge.PLAYBACK_ERROR to "error",
         )
     }
+}
+
+/**
+ * Which active media sessions are a player's (dashboard part 2b). Pure, so the choice is
+ * host-tested (DashboardFlexTest).
+ *
+ * `getActiveSessions` lists more than players. During a call its first entry is Telecom's
+ * `HeadsetMediaButton` session, which exists only to catch a headset's button and never
+ * has a playback state; taking it made the media pane say "Phone Calls" with transport
+ * buttons for the length of every call (lab frame 20260924T163118Z/037). A session with
+ * no playback state has nothing to show or control, whoever owns it, so it is skipped
+ * too; and this app's own sessions, of which it has none, never count.
+ */
+object MediaSessions {
+    const val TELECOM = "com.android.server.telecom"
+
+    /** Whether a session from [packageName] is one to show and control. */
+    fun isPlayback(packageName: String, hasPlaybackState: Boolean, ownPackage: String): Boolean =
+        hasPlaybackState && packageName != TELECOM && packageName != ownPackage
+
+    /**
+     * The first of the sessions, in the platform's priority order, that [isPlayback]; its
+     * index, or -1. The lists are parallel: package and whether it has a playback state.
+     */
+    fun pick(packages: List<String>, hasPlaybackState: List<Boolean>, ownPackage: String): Int =
+        packages.indices.firstOrNull { isPlayback(packages[it], hasPlaybackState.getOrElse(it) { false }, ownPackage) } ?: -1
 }

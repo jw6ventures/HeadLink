@@ -1,6 +1,6 @@
 # POC implementation plan
 
-Based on [spec.md](spec.md), version 0.1, 15 September 2026. Slices P0.1 and P0.2 below are complete. The pre-hardware P2/P3 lab slice is complete as lab work only. Update 17 September UTC: saved Pixel 9/Ford reports provide G0/G1 evidence and clean native teardown. With the imported AA-17.6 source identity, G2 passed (report 3812ebff), and 0.2.3-lab passed factory G3 with a full hold and encrypted keepalive (report c2407cff). The P4 projection slice is then implemented and verified in the lab only (0.3.7-lab): channel opens, AV setup, focus, the MediaCodec encoder and owned scene, flow control, input, and sensors, with decoded-video and input evidence from the controlled receiver and from the app running on ART. Update 18 September UTC: 1920x1080 projection now displays on Ford SYNC 4.0 (report 709ffa9c) — the cause was this source answering `UPDATE_UI_CONFIG_REQUEST` with an empty body — and the P5.1 media-control, P5.2 sensor-harvest and P5.3 audio-out slices below are implemented and lab-verified. Update 19 September UTC: **G6 and G7 both pass on the factory head unit** (0.4.1-lab, reports a24db7e0 and 7f869585). It took three attempts: Ford refused audio focus on the first (f9ce185b, dc2c60ee), **granted** it on the second (5cb646ec, 9eb3a396) where this source discarded the grant by gating on an optional response field Ford sets false either way, and on the third the tone was audible from the vehicle speakers with zero underflows over 40.8 s. The same runs carried `sensors=all`, which supplies **P5.2's outstanding vehicle evidence**: LOCATION, CAR_SPEED, PARKING_BRAKE, GEAR, NIGHT_DATA, DRIVING_STATUS and GPS all carry values; FUEL_LEVEL and TRAILER are accepted and silent. **G4 and G5 remain open** (the five-minute, five-reconnection run has not been done), as does G8; **G6 and G7 are met**. Update 19 September UTC (later): the defect that made Ford SYNC 4.0's own "Android Auto" taskbar tile a no-op after the head unit took the screen for its Audio page, Settings, or the reversing camera is fixed and confirmed on the factory head unit (0.4.5-lab, report `c3ea4fd6`) — a video focus loss now sends a formal AV stop indication instead of merely pausing the stream, matching what Android Auto 17.6 itself does, and the tile successfully re-enters the session afterward (`ui_config_updates=2`, previously always 1 in every prior report). See [Ford re-attach investigation](docs/ford-focus-reattach-investigation.md) and docs/references.md. **G5 was blocked specifically because a session could not survive the head unit taking the screen; that blocker is now removed**, though the five-minute, five-reconnection run itself still has not been done. G4 remains open independently. See [P4 lab results](docs/p4-lab-results.md), [P5.3 lab results](docs/p5-3-lab-results.md), the [G4/G5 procedure](docs/g4-g5-procedure.md), and the [P5 plan](docs/p5-plan.md). The historical slice notes below describe their state at completion; remaining lifecycle tests and later gates are still open. See [authentication investigation](docs/ford-auth-investigation.md) for evidence and the supplied-identity trial.
+Based on [spec.md](spec.md), version 0.1, 15 September 2026. Slices P0.1 and P0.2 below are complete. The pre-hardware P2/P3 lab slice is complete as lab work only. Update 17 September UTC: saved Pixel 9/Ford reports provide G0/G1 evidence and clean native teardown. With the imported AA-17.6 source identity, G2 passed (report 3812ebff), and 0.2.3-lab passed factory G3 with a full hold and encrypted keepalive (report c2407cff). The P4 projection slice is then implemented and verified in the lab only (0.3.7-lab): channel opens, AV setup, focus, the MediaCodec encoder and owned scene, flow control, input, and sensors, with decoded-video and input evidence from the controlled receiver and from the app running on ART. Update 18 September UTC: 1920x1080 projection now displays on Ford SYNC 4.0 (report 709ffa9c) — the cause was this source answering `UPDATE_UI_CONFIG_REQUEST` with an empty body — and the P5.1 media-control, P5.2 sensor-harvest and P5.3 audio-out slices below are implemented and lab-verified. Update 19 September UTC: **G6 and G7 both pass on the factory head unit** (0.4.1-lab, reports a24db7e0 and 7f869585). It took three attempts: Ford refused audio focus on the first (f9ce185b, dc2c60ee), **granted** it on the second (5cb646ec, 9eb3a396) where this source discarded the grant by gating on an optional response field Ford sets false either way, and on the third the tone was audible from the vehicle speakers with zero underflows over 40.8 s. The same runs carried `sensors=all`, which supplies **P5.2's outstanding vehicle evidence**: LOCATION, CAR_SPEED, PARKING_BRAKE, GEAR, NIGHT_DATA, DRIVING_STATUS and GPS all carry values; FUEL_LEVEL and TRAILER are accepted and silent. **G4 and G5 remain open** (the five-minute, five-reconnection run has not been done), as does G8; **G6 and G7 are met**. Update 19 September UTC (later): the defect that made Ford SYNC 4.0's own "Android Auto" taskbar tile a no-op after the head unit took the screen for its Audio page, Settings, or the reversing camera is fixed and confirmed on the factory head unit (0.4.5-lab, report `c3ea4fd6`) — a video focus loss now sends a formal AV stop indication instead of merely pausing the stream, matching what Android Auto 17.6 itself does, and the tile successfully re-enters the session afterward (`ui_config_updates=2`, previously always 1 in every prior report). See [Ford re-attach investigation](docs/ford-focus-reattach-investigation.md) and docs/references.md. **G5 was blocked specifically because a session could not survive the head unit taking the screen; that blocker is now removed**, though the five-minute, five-reconnection run itself still has not been done. G4 remains open independently. See [P4 lab results](docs/p4-lab-results.md), [P5.3 lab results](docs/p5-3-lab-results.md), the [G4/G5 procedure](docs/g4-g5-procedure.md), and the [P5 plan](docs/p5-plan.md). The historical slice notes below describe their state at completion; remaining lifecycle tests and later gates are still open. See [authentication investigation](docs/ford-auth-investigation.md) for evidence and the supplied-identity trial. Update 22 September UTC: the queued spec and plan amendments from P5.5, the [P6 plan](docs/p6-plan.md) and its slice records, and the [A2DP proposal](docs/a2dp-supersedes-usb-audio-proposal.md) are **applied**. That added the P5.5 and P6 sections below, gates G8–G10 in spec §11.1, and a gate status record; it also fixed a stale claim above: **G4 passed on 17 September** (report da9398a5), not "open". **G9 passed on 21 September** (reports 1f4db62b, ad772b8a), and **G8 and G10 passed by operator observation on a drive the same day**: the route was followed on the projected map and on the cluster, the turn icons all made sense, and a deliberate deviation re-routed quickly enough on both. That drive's report is not yet filed. USB audio is deprioritised in favour of Bluetooth A2DP. **G5 is the only gate still open.**
 
 The required handshake POC ends at **G3: encrypted service discovery on the actual factory head unit**. The subsequent projection demonstration ends at **G5: live video, input, and repeat reconnection on that head unit**. Lab success must be reported separately from factory success. Check off implementation tasks after verification and acceptance gates only after collecting their required evidence.
 
@@ -8,7 +8,7 @@ The required handshake POC ends at **G3: encrypted service discovery on the actu
 
 - [ ] Preserve the ordinary-app constraints throughout: GrapheneOS owner profile, public APIs, no GMS/gearhead, Google account, root, hidden APIs, signature permissions, proprietary runtime libraries, or copied OEM/Google private keys.
 - [ ] Keep handshake and wired demonstration offline; allow INTERNET only in a separate lab flavor if necessary.
-- [ ] Defer maps, routing, media libraries, third-party audio capture, microphones, contacts, messaging, calls, voice assistants, wireless, arbitrary app mirroring, HUD/dashboard output, and vehicle control. *(P5.1 adds media **controls** — transport buttons and now-playing text for playback another app owns — which is not audio capture, not a media library, and not app mirroring; see spec §2.1 and §5.2.)*
+- [ ] Defer maps, routing, media libraries, third-party audio capture, microphones, contacts, messaging, calls, voice assistants, wireless, arbitrary app mirroring, HUD/dashboard output, and vehicle control. *(P5.1 adds media **controls** — transport buttons and now-playing text for playback another app owns — which is not audio capture, not a media library, and not app mirroring; see spec §2.1 and §5.2. Maps and routing were deferred from the POC and delivered in P5.5 and P6 below. Third-party audio capture is not pursued: Bluetooth A2DP already carries the phone's audio to the truck, spec §2.2.)*
 - [ ] Execute P0/P1 far enough to obtain a native build and first factory accessory/version trace before estimating dates or investing in projection UI. Then complete P2 → P3 → P4, validating each stage with an independent lab receiver before its factory trial.
 - [ ] Record protocol deviations as explicit compatibility profiles with reference commits, supporting captures, and regression fixtures; do not silently broaden compatibility behavior.
 
@@ -279,8 +279,9 @@ Exit: **handshake POC complete only when factory G3 passes**. For G3 failures, i
 Dependencies: P3 with usable capabilities. References: spec §§8, 10–11, 14.
 
 Lab slice completed 17 September 2026 (app 0.3.0-lab); see [P4 lab results](docs/p4-lab-results.md).
-**No head unit has projected anything: G4 and G5 are open**, and the vehicle lifecycle items
-below are unstarted. The procedure for the visit is [G4/G5](docs/g4-g5-procedure.md).
+*(Written at lab completion. Since then **G4 has passed**: 17 September, 0.3.4-lab, report
+da9398a5, [Ford P4 investigation](docs/ford-p4-investigation.md). **G5 is open**, and the
+vehicle lifecycle items below are unstarted.)* The procedure for the visit is [G4/G5](docs/g4-g5-procedure.md).
 
 - [x] Extend generated types/validation for channel open, AV setup/start/stop/ack/focus, input binding/events, and sensors only if necessary. *(65 more vendored schemas, the import closure of those messages; channel-scoped ID constants checked against the generated enums.)*
 - [x] Open discovered video/input channels asynchronously. Use baseline target-channel `0x0007`/`0x0008` routing with category bit `0x04` (complete encrypted flags `0x0F`), generated signed priority fields, and strict status/channel/state/deadline validation. *(Sequential requests, each with its own deadline; the event loop stays live, keepalive included.)*
@@ -292,11 +293,11 @@ below are unstarted. The procedure for the visit is [G4/G5](docs/g4-g5-procedure
 - [x] Set EGL presentation timestamps, use monotonic MediaCodec microsecond timestamps, and promptly drain/release every output buffer.
 - [x] Normalize output to Annex B; send SPS/PPS before first IDR and after restart. Separate untimestamped configuration (`0x0001`) from timestamped access units (`0x0000`, uint64 big-endian microseconds, bytes); validate receiver decoding in the lab. *(Length-prefixed input converted; the controlled receiver decoded every run with libavcodec and zero errors.)*
 - [x] Implement nonblocking JNI access-unit submission with documented copy/ownership, bounded queues, negotiated outstanding-unit window, and AV ack session/count validation. Keep control/input live under congestion and recover at a new IDR with decoder configuration rather than dropping arbitrary dependent frames.
-- [x] Complete input binding using advertised keycodes; route channel-scoped events and map coordinates through display IDs, negotiated dimensions, video dimensions, and margins. Handle pointer identity, down/move/up/cancel, and available button events without OS input injection. *(Settled at G4, report da9398a5: Ford sends coordinates in the selected video frame's pixels, not the 1920x882 area it advertises, so `TouchSpace::Frame` is the default. A 37px frame-versus-content origin question is left for an edge press on the next drive.)*
+- [x] Complete input binding using advertised keycodes; route channel-scoped events and map coordinates through display IDs, negotiated dimensions, video dimensions, and margins. Handle pointer identity, down/move/up/cancel, and available button events without OS input injection. *(Settled at G4, report da9398a5: Ford sends coordinates in the selected video frame's pixels, not the 1920x882 area it advertises, so `TouchSpace::Frame` is the default. A 37px frame-versus-content origin question is left for an edge press on the next drive. **Settled later** by the calibration in report 5c9ac430: the grid starts at the content rectangle's origin, so `TouchSpace::Content` is now the default — spec §8.3.)*
 - [x] Test all four buttons, corners, and center mapping; reject unmatched displays and invalid dimensions. Confirm each accepted input changes the next encoded scene. *(Lab: the receiver taps each button and checks the decoded picture; corners and center are checked against the sanitized Ford geometry in the session tests. On a head unit this is part of G5.)*
 - [x] If required for activation, subscribe only to advertised supported sensor types and use real restriction/night data. Keep unknown restriction state conservative and all vehicle tests stationary. *(Opt-in driving-status and night subscription, reported; no vehicle test yet. P5.2 generalised the pair into a configurable set without changing the opt-in default.)*
 - [x] Obtain controlled-receiver video decoding and input-exchange evidence before factory projection testing; test focus loss, encoder failures, congestion/ack stalls, and clean resource reset. *(Prodigy handlers with libavcodec: taps, focus loss, and an acknowledgement stall, from the harness and from the app on ART.)*
-- [ ] Show the independently encoded scene on the factory display with fresh token and changing counter for 60 seconds; capture operator observation/photo/video plus session evidence (**G4**).
+- [x] Show the independently encoded scene on the factory display with fresh token and changing counter for 60 seconds; capture operator observation/photo/video plus session evidence (**G4**). *(17 September, report da9398a5: 800x480@60, 61 s of projection, every unit acknowledged, and photographs of the display. 1920x1080 followed on 18 September, report 709ffa9c.)*
 - [ ] Demonstrate factory touch/button input changing the scene for five minutes; background the activity and test screen-off for five minutes with active projection/input and recorded USB policy.
 - [ ] Complete five cable detach/reattach cycles with fresh sessions/tokens and no app/phone restart, stale callbacks, or FD/encoder leaks; collect evidence together with the interaction run for **G5**.
 - [ ] Test detach during TLS, Stop from every state, and normal ignition/receiver interruption; verify the next connection works or document the precise firmware/platform limitation.
@@ -342,9 +343,13 @@ Exit: **a factory report whose `sensor_populated` line is the finding — obtain
 
 ### P5.3 audio out over USB
 
-Implemented and **lab-verified**, with the first vehicle attempt made and **G7 not met**
-([P5.3 lab results](docs/p5-3-lab-results.md)). This is the slice that cost the multi-stream
-refactor: the session had assumed one AV stream throughout.
+Implemented and **vehicle-verified**: G7 met on the third attempt (report `7f869585`;
+[P5.3 lab results](docs/p5-3-lab-results.md)). **Superseded as the route for the phone's
+general audio** by Bluetooth A2DP, which covers that goal with no code (spec §2.2,
+[A2DP proposal](docs/a2dp-supersedes-usb-audio-proposal.md)); this slice remains the route
+for audio the application owns, ships off by default, and gets no further investment. This
+is the slice that cost the multi-stream refactor: the session had assumed one AV stream
+throughout.
 
 - [x] Vendor `AudioFocus{Request,Response}Message` and `AudioFocus{State,Type}Enum` from the pinned open-android-auto tree and add the two message roots. *(No pin bump and no new upstream licence audit: the files are at `61eab61`. They were at the pin but outside the import closure, since nothing imported them; `AudioConfig`, `AudioType` and the AV setup/start/stop/ack messages were already in it.)*
 - [x] Hold a `StreamState` per AV stream — channel, window, outstanding, session id, focus, stop state — and route inbound AV messages by a channel → stream lookup instead of a video/input chain. *(A message id means what its channel says it means: 0x8003 is the video setup response on one channel and the audio setup response on another.)*
@@ -362,9 +367,78 @@ refactor: the session had assumed one AV stream throughout.
 
 Exit: **G7 on the factory head unit — met** (19 September 2026, report 7f869585).
 
-### P5.4–P5.5
+### P5.4 microphone
 
-Not started. The deferred microphone (§4) and the owned map (§5) are specified in the P5 plan and need their own slices. P5.5 still waits on P5.2's *vehicle* evidence, not just its code, so that the position source is a measurement rather than an assumption.
+Deferred, and not scheduled. `av_input` is the head unit's microphone streamed to the phone. It belongs with the voice-assistance stage (spec §2.1), and nothing else in the shell needs it. It stays closed under spec §5.2 and §8.1, and `RECORD_AUDIO` is not declared.
+
+### P5.5 owned map and dashboard
+
+Implemented, lab-verified, and **vehicle-verified** ([P5.5 results](docs/p5-5-results.md)). The dashboard replaces the POC test scene as the default: an owned map in one half, four tiles in the other, and a status header. `scene=demo` keeps the old scene, because its buttons and crosses are what the G5 touch calibration aims at.
+
+- [x] Pin VTM 0.25.0 from Maven Central in `verification-metadata.xml`: four components, with no vendoring and no JitPack. *(Reproducible builds, zero AndroidX and one ABI were re-measured; `verify-apk.sh` now pins the native set as `libaap_jni.so` + `libvtm-jni.so` and asserts that `INTERNET` is absent.)*
+- [x] Render VTM off-screen into the encoder surface, with no VTM source changes, and composite the chrome over it. The chrome is re-uploaded only when it changes. *(Assets are read through the classloader, since plain JARs put them on the classpath rather than in the AssetManager, and VTM's global GL state is saved and restored around the composite.)*
+- [x] Draw the dashboard chrome: clock, speed, compass, gear, restriction, satellites, and phone battery, network, signal and position source, plus ODbL attribution inside the map pane.
+- [x] Take position from the vehicle's LOCATION sensor first, falling back to the phone's location. Treat Ford's scales as inferred and range-checked rather than known. *(`gear=101` is Park; bearing reads at 1e6, confirmed on a drive; the satellite field names look swapped.)*
+- [x] Import operator-supplied Mapsforge `.map` files, add no network path, and record the four new permissions with their reasons (spec §5.2). *(A failed tile read is retried rather than cached empty; see `MapReadGuard`.)*
+- [x] Obtain controlled-receiver evidence: the map decoded from the H.264 stream in the emulator lab. *(The first run caught four defects no reading had: the missing `assets/` prefix, a tile source closed after validation, a redraw check that never ran before the first frame, and blend state lost to VTM.)*
+- [x] See the owned map render, pan and follow the vehicle's position on the factory display (**G8**). *(21 September, by operator observation on the G10 drive; the report is not yet filed.)*
+
+Exit: **G8 on the factory head unit — met** (21 September 2026).
+
+## P6 navigation
+
+Scope, research and slices are in the [P6 plan](docs/p6-plan.md). Every slice below has its own record. Each integration is opt-in and non-fatal, and none of them changes handshake behaviour (spec §13).
+
+### P6.0 navigation descriptor
+
+- [x] Parse and report the `navigation` descriptor. *(Ford advertises channel 11, type `NEXT_TURN_IMAGE`, and a 400 ms floor, and gives no image dimensions.)*
+
+### P6.1 a moving position in the lab
+
+Lab-verified ([P6.1 results](docs/p6-1-results.md)).
+
+- [x] Add a synthetic track player to the lab receiver, and a `track` script that checks the decoded map follows it by reading pixels. *(Its first run caught two defects: any drive longer than a minute was an invalid configuration, and a drive ending pointing north reported the wrong scale.)*
+
+### P6.2 navigation channel, scripted
+
+Lab- and vehicle-verified ([P6.2 results](docs/p6-2-results.md)).
+
+- [x] Vendor the navigation schema (9 files at the existing pin), and open channel 11 after input binding, opt-in and non-fatal.
+- [x] Request navigation focus on the control channel (13/14), send `NavigationState` and modern `0x8006`/`0x8007` no faster than the advertised interval, and release focus at the end.
+- [x] Add `navigation_force` to ask for focus without an `InstrumentClusterStart`, which Ford never sends (spec §8.1). *(On by default on the connection screen since 22 September 2026, together with the navigation box; lab runs still set it explicitly.)*
+- [x] Obtain controlled-receiver evidence both with and without an announced cluster. *(This caught Prodigy granting focus by echoing the request, the hand-back included, and a dashboard with no map data dying on its first frame.)*
+- [x] See a scripted maneuver on Ford's own cluster, with focus acquired and released cleanly (**G9**). *(21 September, reports 1f4db62b and ad772b8a: icon, road name and distance countdown, drawn with no image bytes.)*
+
+### P6.3 routing engine
+
+Host- and lab-verified ([P6.3 results](docs/p6-3-results.md)).
+
+- [x] Vendor BRouter 1.7.10 unmodified (`vendor/brouter/`), import `.rd5` tiles and the `car-vario` profile, and route on a background-priority thread of its own.
+- [x] Keep the report to totals (spec §10), and keep the keep rules for BRouter's path model ready in case minification is ever turned on. *(`app/proguard-rules.pro`, 22 September; checked against a minified build.)*
+- [x] Compute routes on the phone quickly enough to re-route mid-drive. *(Judged by the operator on the G10 drive: re-routing was quick enough. No compute time from the phone has been recorded. Time CPU work on the release build only; debug ran about 30× slower, P6.3a §3.5.)*
+
+### P6.3a drop folder and seamless regions
+
+Added at the operator's request; host- and lab-verified ([P6.3a results](docs/p6-3a-results.md)).
+
+- [x] Pick up map and routing data from a persisted SAF folder grant, draw every installed map as one, and route across tiles. *(Whether a border between two extracts draws cleanly has not been seen, because the lab's two maps do not touch.)*
+
+### P6.4 destinations and the route line
+
+Host- and lab-verified ([P6.4 results](docs/p6-4-results.md)).
+
+- [x] Accept destinations as `text/plain` and `geo:` shares (addresses via OsmAnd), typed coordinates, or a long press, and draw the route on the owned map. *(No real OsmAnd share from the Pixel has been read yet.)*
+
+### P6.5 guidance
+
+Host-, lab- and vehicle-verified ([P6.5 results](docs/p6-5-results.md)).
+
+- [x] Snap the vehicle to the route, count down to the next maneuver, detect deviation, re-route, and drive the cluster. Instruction text goes to the head unit only (spec §10).
+- [x] Follow a route offline on the factory display for a drive, with the map following position, correct maneuvers on the cluster, and a successful re-route after a deliberate deviation (**G10**). *(21 September, by operator observation: every turn icon made sense, and after the deliberate deviation both the cluster and the dashboard followed the new route. The report is not yet filed. The operator reported that the re-route "seemed to follow along pretty well". Whether it first routed back the way it came, as in the lab (P6.5 §4.2), was not reported.)*
+
+Exit: **G9 and G10 on the factory head unit — met** (21 September 2026).
+
+Standing job, from P6.2 §4.2: include a lab run **without** `LAB_MAP` in the routine set of runs before a release. That is the first-run operator's configuration, and it once hid a crash on the first frame.
 
 ## Final review and stopping decisions
 
@@ -372,4 +446,4 @@ Not started. The deferred microphone (§4) and the owned map (§5) are specified
 - [ ] Publish corresponding source/build instructions and notices with any distributed binary; describe Android Auto compatibility as a goal without claiming certification or universal vehicle support.
 - [ ] If ordinary-app accessory access is unavailable, stop this architecture and document whether a platform change would be required. If the HU requires unavailable proprietary source credentials, report that compatibility block without relaxing the project constraints.
 - [ ] Keep hardware-dependent tasks open until physical evidence exists; do not substitute mock responses, local TLS callbacks, phone-only counters, or emulator results for factory gates.
-- [ ] After P4 evidence, write a separate useful-MVP acceptance specification for the owned dashboard, navigation-engine spike, app-owned audio, optional integrations, and further lifecycle hardening. Do not include these features in POC completion criteria. *(Started: [docs/p5-plan.md](docs/p5-plan.md) scopes the package and the P5 section above tracks the accepted slices. P5.1 is implemented; the rest are not.)*
+- [ ] After P4 evidence, write a separate useful-MVP acceptance specification for the owned dashboard, navigation-engine spike, app-owned audio, optional integrations, and further lifecycle hardening. Do not include these features in POC completion criteria. *(Started: [docs/p5-plan.md](docs/p5-plan.md) and [docs/p6-plan.md](docs/p6-plan.md) scope the packages, and the P5 and P6 sections above track the accepted slices. P5.1–P5.3, P5.5 and P6.0–P6.5 are implemented; P5.4 is deferred. G6–G10 are met; the acceptance specification itself is not yet written.)*

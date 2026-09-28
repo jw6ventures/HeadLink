@@ -574,7 +574,10 @@ evidence; implementation tasks stay unchecked until vehicle evidence exists.
 - ~~Which of the nine advertised sensors carry real values?~~ **Seven of nine**
   (19 September): all but FUEL_LEVEL and TRAILER, which are accepted and silent. New
   question in its place: **what are the units?** `bearing`, `satellites_used` and `gear`
-  all carry values that do not read sensibly against the schema's names.
+  all carry values that do not read sensibly against the schema's names. **Explained
+  (P5.5 §4):** `gear=101` is Park, bearing is at a 1e6 scale (since confirmed by eye on a
+  drive), and the two satellite names look swapped. The code treats every scale as
+  inferred and range-checked.
 - ~~Does Ford honour `MediaPlaybackMetadata` at all?~~ **Yes** (19 September, G6).
 - ~~What `AudioConfig` does Ford actually advertise on channels 4–7?~~ **Answered**
   (19 September): 48000/16/2 on both media channels, 48000/16/1 on both speech channels.
@@ -604,15 +607,17 @@ evidence; implementation tasks stay unchecked until vehicle evidence exists.
 - Does Ford tolerate a fragmented video keyframe interleaved with audio frames, or does it
   abort assembly like the aasdk family does?
 - What album-art size limit does Ford accept? Still unasked: this source sends none.
-- Can VTM be pinned in a way `verification-metadata.xml` accepts — Maven Central 0.25.0, or
-  a vendored and checksummed JitPack build of 0.30.0? This is the one decision blocking the
-  renderer choice.
+- ~~Can VTM be pinned in a way `verification-metadata.xml` accepts?~~ **Answered (P5.5):
+  Maven Central 0.25.0**, with four components added and nothing vendored.
+  [P5.5 results](p5-5-results.md) §1.
 - What frame rate does VTM actually sustain drawing a real map into the encoder surface at
   1920x1080? Assume 30 fps until measured.
 - Is BRouter's car profile good enough for turn-by-turn, given its bicycle/foot heritage?
-- How much storage does a usable region cost with two datasets — mapsforge `.map` for
-  rendering plus BRouter `.rd5` for routing — and how does the user install them, given the
-  app has no INTERNET permission?
+  **Good enough for G10** (21 September): `car-vario` drove a real route with sensible turn
+  icons and a working re-route. It was never compared against the other car profile.
+- ~~How much storage does a usable region cost with two datasets, and how does the user
+  install them?~~ **Answered** ([P6 plan](p6-plan.md) §4, P6.3a): about 320 MB per region
+  pair, installed by explicit import or from a granted drop folder.
 
 ## 9. Research status
 

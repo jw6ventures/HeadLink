@@ -5,10 +5,16 @@ and tracked in [plan.md](plan.md). **G0–G3 passed on the Pixel 9 with a 2024 F
 SYNC 4.0 head unit** (report c2407cff: usable 800x480 video and input advertised, a 30 s
 hold, encrypted keepalive), using an imported source identity after the generated one was
 rejected with AUTH_COMPLETE -3; see the
-[authentication investigation](docs/ford-auth-investigation.md). The projection
-demonstration (P4) is implemented and verified **in the lab only**: **G4 and G5 are
-open**. See [P4 lab results](docs/p4-lab-results.md) and the
+[authentication investigation](docs/ford-auth-investigation.md). Since then **G4 and G6–G10 have
+passed on the same head unit**: 1080p projection, media controls, app-owned audio, the
+owned map, turn-by-turn on the instrument cluster, and offline navigation with a re-route
+(spec §11.1 has the reports). **G5 is open**: the five-minute run and five reconnections
+have not been done. See [P4 lab results](docs/p4-lab-results.md) and the
 [G4/G5 procedure](docs/g4-g5-procedure.md).
+
+**Phone audio goes over Bluetooth A2DP**, not over USB. The USB audio channel (P5.3) is for
+audio this app generates, and it is off by default. See spec §2.2 and the
+[A2DP proposal](docs/a2dp-supersedes-usb-audio-proposal.md).
 
 Current state:
 
