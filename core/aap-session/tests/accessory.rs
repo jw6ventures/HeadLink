@@ -99,6 +99,29 @@ fn version_exchange_then_tls_stop_over_blocking_socket() {
 }
 
 #[test]
+fn a_panic_while_driving_still_stops_the_io_threads() {
+    let (local, mut peer) = UnixStream::pair().unwrap();
+    let stop = Stop::new();
+    let worker_stop = stop.clone();
+    let worker = thread::spawn(move || {
+        let mut session = Session::new(Config::default(), 1, Instant::now());
+        run(
+            local.into(),
+            &mut session,
+            &worker_stop,
+            &Options::default(),
+            |_| panic!("progress callback failed"),
+        )
+    });
+    // The panic reaches the caller, as the JNI worker's catch_unwind expects ...
+    assert!(worker.join().is_err());
+    // ... but only after the reader, blocked on a silent peer, and the writer were
+    // stopped and the descriptor closed: nothing is left to refuse the next session.
+    assert!(!stop.io_threads_alive());
+    assert_peer_sees_eof(&mut peer);
+}
+
+#[test]
 fn stop_interrupts_a_read_blocked_on_a_silent_peer() {
     let (local, mut peer) = UnixStream::pair().unwrap();
     let (stop, worker) = spawn_session(local.into(), Config::default(), Options::default());

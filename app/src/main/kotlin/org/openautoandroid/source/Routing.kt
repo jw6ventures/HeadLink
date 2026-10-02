@@ -40,6 +40,9 @@ object Routing {
     var origin = "-"
         private set
 
+    /** [origin] for a re-route because the vehicle left the route. */
+    const val REROUTE = "reroute"
+
     /** [origin] for a re-route round a closure on the route ahead. */
     const val CLOSURE = "closure"
 
@@ -82,7 +85,8 @@ object Routing {
     /**
      * The route the map draws, read by the scene thread each frame. Replaced by the next
      * good route and cleared by a failed one: once a new destination was asked for, the
-     * old line is a route to somewhere the driver no longer wants to go.
+     * old line is a route to somewhere the driver no longer wants to go. A failed re-route
+     * keeps it: the destination is the same, and the line is still what [Guide] follows.
      */
     @Volatile
     var line: Route? = null
@@ -149,10 +153,13 @@ object Routing {
         }
         pending = 0
         val route = result.route
-        if (route == null && origin == CLOSURE && line != null) {
-            // A re-route round a closure that found nothing: the vehicle is still on the
-            // route it had, which stays on the map and in guidance rather than vanishing.
-            SessionController.note("re-route round a closure failed after ${result.computeMs} ms: ${result.error}")
+        if (route == null && (origin == CLOSURE || origin == REROUTE) && line != null) {
+            // A re-route that found nothing: the destination has not changed, so the route
+            // the vehicle had is still the way there. It stays on the map and in guidance
+            // rather than vanishing, so a driver who finds their own way back onto it is
+            // guided along it again; one still off it is re-routed again on Guide's clock.
+            val what = if (origin == CLOSURE) "re-route round a closure" else "re-route"
+            SessionController.note("$what failed after ${result.computeMs} ms: ${result.error}")
             Guide.onRouteFailed()
             return
         }

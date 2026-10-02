@@ -270,10 +270,12 @@ object Guide {
         ArrivalTime.shown(seconds, pace, learnPace, follower?.route?.let(Traffic::delaySeconds) ?: 0)
 
     /**
-     * The route asked for failed. Still off the route, so the next retry is on the clock. A
-     * re-route round a closure that failed leaves the vehicle on the route it had, which
-     * [Routing] keeps on the map: guidance carries on along it rather than saying
-     * "Rerouting" until the vehicle leaves it.
+     * The route asked for failed. [Routing] keeps a failed re-route's old route on the map,
+     * and it is still the one followed here. A re-route round a closure leaves the vehicle
+     * on that route: guidance carries on along it rather than saying "Rerouting" until the
+     * vehicle leaves it. An ordinary re-route stays "Rerouting" while the vehicle is still
+     * off the route, so the next retry is on the clock; a vehicle already back on it is
+     * guided along it at once, and one that gets back later is by [backOnRoute].
      */
     fun onRouteFailed() {
         if (rerouting) rerouteFailures++
@@ -281,7 +283,22 @@ object Guide {
             closureRerouting = false
             rerouting = false
             publish()
+        } else if (rerouting && last?.state == FollowState.ON_ROUTE) {
+            backOnRoute()
+            publish()
         }
+    }
+
+    /**
+     * The vehicle is on the followed route again with no re-route in flight: one that
+     * failed while it was off. Nothing else would end "Rerouting" — a retry is only asked
+     * for off the route — so the cluster, turn card and live alternatives would wait for
+     * a route that is never coming.
+     */
+    private fun backOnRoute() {
+        rerouting = false
+        closureRerouting = false
+        SessionController.note("back on the route after a failed re-route")
     }
 
     /**
@@ -367,7 +384,11 @@ object Guide {
         }
         LiveAlternatives.onFix(context, result, now)
         observe(previous, result)
-        if (result.state == FollowState.OFF_ROUTE) reroute(context, result, now)
+        if (result.state == FollowState.OFF_ROUTE) {
+            reroute(context, result, now)
+        } else if (rerouting && result.state == FollowState.ON_ROUTE && Routing.pending == 0L) {
+            backOnRoute()
+        }
         publish()
     }
 

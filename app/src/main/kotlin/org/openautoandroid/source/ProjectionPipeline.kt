@@ -178,8 +178,17 @@ class ProjectionPipeline(
     @Volatile
     private var running = false
 
+    /** Whether frames are drawn now. Written under [focusLock]; read by the draw loop. */
     @Volatile
     private var focused = true
+
+    /**
+     * What the head unit last said about the screen. Apart from [focused] while a rebuild
+     * is queued or running, so a loss that arrives in that window is not overridden when
+     * the rebuild finishes.
+     */
+    private var wantFocus = true
+    private val focusLock = Any()
 
     @Volatile
     private var failure: String? = null
@@ -246,7 +255,13 @@ class ProjectionPipeline(
         val started = java.util.concurrent.CountDownLatch(1)
         var setup: String? = null
         handler.post {
-            setup = startRenderer(surface, handler)
+            // Caught so the latch below always opens: an exception escaping here would
+            // kill the process from the scene thread while main waited on it.
+            setup = try {
+                startRenderer(surface, handler)
+            } catch (e: RuntimeException) {
+                "renderer start failed: $e"
+            }
             if (setup == null) {
                 startedNs = SystemClock.elapsedRealtimeNanos()
                 nextFrameNs = startedNs
@@ -258,8 +273,21 @@ class ProjectionPipeline(
         return setup?.also { release() }
     }
 
-    /** Renderer thread: draws one frame and schedules the next at the negotiated rate. */
+    /**
+     * Renderer thread: draws one frame and schedules the next at the negotiated rate. A
+     * frame that throws (the map engine, a bitmap, EGL) ends the attempt with a named
+     * reason, as an encoder failure does, rather than taking the process down from the
+     * scene thread mid-drive; no further frame is scheduled.
+     */
     private fun frame() {
+        try {
+            drawFrame()
+        } catch (e: RuntimeException) {
+            failScene("scene frame failed: $e")
+        }
+    }
+
+    private fun drawFrame() {
         if (!running) return
         val now = SystemClock.elapsedRealtimeNanos()
         if (focused) {
@@ -362,15 +390,34 @@ class ProjectionPipeline(
      * that is about to be torn down.
      */
     fun setFocused(projected: Boolean) {
-        val was = focused
-        val handler = handler
-        if (projected && !was && rebuildOnRegain && handler != null) {
-            // On the renderer thread, so it cannot interleave with a frame in flight: the
-            // draw loop never observes the moment where the encoder and EGL surface are gone.
-            handler.post { rebuild() }
-            return
+        synchronized(focusLock) {
+            wantFocus = projected
+            val handler = handler
+            if (projected && !focused && rebuildOnRegain && handler != null) {
+                // On the renderer thread, so it cannot interleave with a frame in flight: the
+                // draw loop never observes the moment where the encoder and EGL surface are
+                // gone. Drawing stays off until it finishes.
+                handler.post(::rebuildIfWanted)
+                return
+            }
+            focused = projected
         }
-        focused = projected
+    }
+
+    /**
+     * Renderer thread. A queued rebuild whose regain was taken back before it ran (the
+     * screen lost again) does nothing: the next regain queues its own. One queued behind a
+     * rebuild that already brought drawing back does nothing either.
+     */
+    private fun rebuildIfWanted() {
+        synchronized(focusLock) {
+            if (!wantFocus || focused) return
+        }
+        try {
+            rebuild()
+        } catch (e: RuntimeException) {
+            failRebuild("rebuild on focus regain failed: $e")
+        }
     }
 
     /** Renderer thread only. Replaces the encoder and EGL surface, then resumes drawing. */
@@ -398,7 +445,9 @@ class ProjectionPipeline(
         // the rebuild or the head unit sees a timestamp regression on the same AV session.
         // Android Auto keeps the session too — its flow controller is initialised once per
         // connection, not per focus gain.
-        focused = true
+        // Only if the screen is still ours: a loss during the rebuild stands, and the
+        // next regain finds drawing off and rebuilds again.
+        synchronized(focusLock) { focused = wantFocus }
     }
 
     /**
@@ -408,6 +457,12 @@ class ProjectionPipeline(
      */
     private fun failRebuild(detail: String) {
         rebuildError = detail
+        failScene(detail)
+    }
+
+    /** Renderer thread: stops drawing and ends the attempt with [detail], once. */
+    private fun failScene(detail: String) {
+        synchronized(focusLock) { focused = false }
         if (failure == null) {
             failure = detail
             onFailure(detail)

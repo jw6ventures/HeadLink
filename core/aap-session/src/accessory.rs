@@ -29,6 +29,7 @@ use std::{
         fd::{AsRawFd, OwnedFd, RawFd},
         unix::thread::JoinHandleExt,
     },
+    panic::{self, AssertUnwindSafe},
     ptr::null_mut,
     sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError},
     thread::{self, JoinHandle},
@@ -281,12 +282,21 @@ where
         spawn_io(&shared, &fd, signal, Role::Writer).map(|handle| writer = Some(handle))
     });
     drop(fd);
-    match spawned {
-        Err(e) => protocol.on_transport_closed(Some(&e), Instant::now()),
-        Ok(()) => drive(&shared, protocol, &mut progress),
-    }
-    progress(protocol);
+    // The I/O threads are stopped even if the protocol or `progress` panics: they never
+    // look at `stop`, so a panic carried past `stop_io` would leave them holding the
+    // descriptor, and every later session would be refused as stale I/O. The panic is
+    // resumed once they are stopped, for the caller to report.
+    let driven = panic::catch_unwind(AssertUnwindSafe(|| {
+        match spawned {
+            Err(e) => protocol.on_transport_closed(Some(&e), Instant::now()),
+            Ok(()) => drive(&shared, protocol, &mut progress),
+        }
+        progress(protocol);
+    }));
     stop_io(&shared, signal, options, reader, writer, &mut teardown);
+    if let Err(payload) = driven {
+        panic::resume_unwind(payload);
+    }
     teardown
 }
 

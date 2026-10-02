@@ -150,7 +150,7 @@ object Navigation {
             ),
             when {
                 closure -> Routing.CLOSURE
-                reroute -> "reroute"
+                reroute -> Routing.REROUTE
                 else -> source.label
             },
             from,

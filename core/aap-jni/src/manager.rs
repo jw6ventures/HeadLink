@@ -864,7 +864,8 @@ impl Worker {
             render(&self.config, session.report(), Some(&teardown), failures)
         }));
         let text = result.unwrap_or_else(|_| {
-            // Unexpected: I/O threads may still be running, which `STALE_IO` reports.
+            // Unexpected. `accessory::run` stopped the I/O threads before the panic reached
+            // here; one blocked past the stop budget is detached, which `STALE_IO` reports.
             self.stop.request();
             format!(
                 "session_uuid={}\ngeneration={generation}\nfinal_category=INTERNAL_ERROR\n\

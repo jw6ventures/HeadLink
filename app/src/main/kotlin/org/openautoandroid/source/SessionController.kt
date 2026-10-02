@@ -1,6 +1,8 @@
 package org.openautoandroid.source
 
 import android.hardware.usb.UsbAccessory
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import java.time.Instant
 import java.util.UUID
@@ -155,7 +157,8 @@ class Attempt(val generation: Long, val settings: AttemptSettings) {
 
 /**
  * Main-thread state shared by [ConnectionActivity] and [ProjectionService]. Holds no
- * Context. Listeners are notified synchronously after each change.
+ * Context. Listeners are notified synchronously after each change. [note] alone may be
+ * called from any thread; everything else is main-thread only.
  */
 object SessionController {
     const val EVENT_LIMIT = 200
@@ -300,8 +303,14 @@ object SessionController {
         log("completed=$milestone")
     }
 
+    /**
+     * Adds [text] to the event log. Any thread: the media, speech and feed threads note
+     * failures too, and the log and its listeners (which update views) are main-thread
+     * state, so a note from elsewhere is posted there rather than racing them.
+     */
     fun note(text: String) {
-        log(text)
+        val looper = Looper.getMainLooper()
+        if (looper.isCurrentThread) log(text) else Handler(looper).post { log(text) }
     }
 
     /** Applies a native report for [which]; stale attempts are ignored by the caller. */
