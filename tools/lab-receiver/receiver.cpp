@@ -2806,6 +2806,56 @@ int main(int argc, char** argv)
                 ++step;
                 break;
             }
+            case 103: {
+                // A regain taken straight back: focus lost, then handed back and lost again
+                // in one breath, as a head unit flicking between its own screens can. The
+                // source's encoder rebuild for the regain must not leave it drawing once the
+                // second loss has landed; the app side counts what it drew for nothing
+                // (projection_dropped_not_streaming, tools/emulator-lab.sh).
+                video->requestVideoFocus(false);
+                stepFrames = decoder.frames;
+                out << "receiver_focus=none\n";
+                out.flush();
+                ++step;
+                break;
+            }
+            case 104: {
+                static int quiet = 0;
+                if (++quiet < 10)
+                    return;
+                check(decoder.frames <= stepFrames + 2,
+                      QString("%1 pictures arrived after focus was dropped again")
+                          .arg(decoder.frames - stepFrames));
+                video->requestVideoFocus(true);
+                video->requestVideoFocus(false);
+                stepFrames = decoder.frames;
+                out << "receiver_focus=flicker\n";
+                out.flush();
+                ++step;
+                break;
+            }
+            case 105: {
+                static int quiet = 0;
+                if (++quiet < 120)
+                    return; // twelve seconds with the screen still the head unit's, for
+                            // the lab to read the source's own report twice meanwhile
+                check(decoder.frames <= stepFrames + 2,
+                      QString("%1 pictures arrived after a regain taken straight back")
+                          .arg(decoder.frames - stepFrames));
+                video->requestVideoFocus(true);
+                stepFrames = decoder.frames;
+                out << "receiver_focus=projected\n";
+                out.flush();
+                ++step;
+                break;
+            }
+            case 106: {
+                if (decoder.frames < stepFrames + 5)
+                    return;
+                check(decoder.errors == 0, "decode errors after focus returned after the flicker");
+                ++step;
+                break;
+            }
             case 200: {
                 // Withhold acknowledgements: the source's window fills and it recovers
                 // at an IDR once they are released.
@@ -4282,6 +4332,8 @@ int main(int argc, char** argv)
         check(decoder.errors == 0, QString("%1 decode errors").arg(decoder.errors));
         if (script == "taps")
             check(taps == 4 && step >= 9, QString("the tap script stopped at step %1").arg(step));
+        if (script == "focus")
+            check(step >= 7, QString("the focus script stopped at step %1").arg(step));
         if (script == "transport")
             check(step >= 4, QString("the transport script stopped at step %1").arg(step));
         if (script == "audio")

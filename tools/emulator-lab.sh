@@ -62,6 +62,14 @@
 # different destination, for a LAB_DRIVE of its own (the live alternatives need a trip long
 # enough to have some); the arrival and re-route checks then fail by design.
 #
+# LAB_REROUTE=fail (guidance only) is the re-route that finds nothing: once the first route
+# is computed the routing tile is moved out of the app's reach, so every re-route fails as
+# a real one does where BRouter cannot place the vehicle, and LAB_DRIVE defaults to
+# tools/lab-receiver/drives/lexington-return.csv, which misses the same turn, turns round
+# and rejoins the route it had. The cluster must go REROUTING and then ACTIVE again on the
+# old route, with no new route, and arrive; the app side checks the failures were counted,
+# none was computed, and that it said it was back on the route.
+#
 # LAB_FAVORITES="name@lat,lon;name@lat,lon" seeds the dashboard's favorites tile through
 # the lab intent before the attempt starts, so the captured frames show the list drawn
 # with rows in it (and, past three, its scrollbar). Nothing taps it: the tile's tap and
@@ -328,6 +336,12 @@ elif [ "$SCRIPT" = track ] || [ "$SCRIPT" = guidance ] || [ "$SCRIPT" = daynight
     exit 1
 fi
 DRIVE_ARGS=
+REROUTE_MODE=${LAB_REROUTE:-ok}
+case $REROUTE_MODE in ok|fail) ;; *) echo "emulator-lab: LAB_REROUTE is ok or fail" >&2; exit 1 ;; esac
+if [ "$REROUTE_MODE" = fail ] && [ "$SCRIPT" != guidance ]; then
+    echo "emulator-lab: LAB_REROUTE=fail is for the guidance script" >&2
+    exit 1
+fi
 if [ "$SCRIPT" = endroute ] && [ -z "${LAB_ROUTING:-}" ]; then
     echo "emulator-lab: the endroute script needs LAB_ROUTING" >&2
     exit 1
@@ -335,6 +349,7 @@ fi
 if [ "$SCRIPT" = guidance ] || [ "$SCRIPT" = voice ] || [ "$SCRIPT" = traffic ]; then
     [ -n "${LAB_ROUTING:-}" ] || { echo "emulator-lab: the $SCRIPT script needs LAB_ROUTING" >&2; exit 1; }
     if [ "$SCRIPT" = traffic ]; then drive=${LAB_DRIVE:-tools/lab-receiver/drives/traffic.csv}
+    elif [ "$REROUTE_MODE" = fail ]; then drive=${LAB_DRIVE:-tools/lab-receiver/drives/lexington-return.csv}
     else drive=${LAB_DRIVE:-tools/lab-receiver/drives/lexington.csv}; fi
     [ -f "$drive" ] || { echo "emulator-lab: no drive at $drive" >&2; exit 1; }
     cp "$drive" "$out/drive.csv"
@@ -518,7 +533,7 @@ podman run --rm --pod "$pod" --name "$name" --security-opt label=disable \
   -e ANDROID_EMULATOR_HOME=/cache/avd -e ANDROID_SDK_ROOT=/opt/android-sdk \
   -e PROJECTION_MS="$PROJECTION_MS" -e SOFTWARE_ENCODER="${LAB_SOFTWARE_ENCODER:-false}" \
   -e AUDIO="$AUDIO" -e NAVIGATION="$NAVIGATION" -e NAVIGATION_FORCE="$NAVIGATION_FORCE" \
-  -e NAVIGATION_CLUSTER="$NAVIGATION_CLUSTER" \
+  -e NAVIGATION_CLUSTER="$NAVIGATION_CLUSTER" -e REROUTE_MODE="$REROUTE_MODE" \
   -e LAB_SENSORS="${LAB_SENSORS:-all}" -e SCRIPT="$SCRIPT" -e ROUTE="$ROUTE" \
   -e DESTINATION="$DESTINATION" -e NAVIGATION_SCRIPT="$NAVIGATION_SCRIPT" \
   -e GUIDE_DEST="${LAB_GUIDE_DEST:-$([ "$SCRIPT" = traffic ] && echo 42.35510,-71.06560 || echo 42.44950,-71.23100)}" \
@@ -854,6 +869,12 @@ https://osmand.net/map?pin=$glat,$glon#16/$glat/$glon"
         done
         [ -n "$routed" ] || fail "no route came back for the shared destination"
         log "route computed; the receiver drives once the cluster is active"
+        if [ "$REROUTE_MODE" = fail ]; then
+            # Every request opens the tile afresh, so from here on each re-route fails.
+            segments=/data/data/$package/files/routing/segments
+            adb shell "mv $segments/W75_N40.rd5 $segments/W75_N40.rd5.away" || fail "routing tile move"
+            log "routing tile moved away: every re-route from here fails"
+        fi
         if [ "$SCRIPT" = endroute ]; then
             # P7.4a: the next route after End route. Once the app has noted the press, and
             # after the receiver has watched the cluster stay clear and pressed Resume, the
@@ -968,6 +989,31 @@ https://osmand.net/map?pin=42.44950,-71.23100#16/42.44950/-71.23100"
         adb shell am start -n $package/.ConnectionActivity --ez lab_traffic "$1" > /dev/null 2>&1 || fail "lab intent: traffic $1"
     }
     standin() { sed -n "s/.*standin_$1=\([0-9]*\).*/\1/p" /out/here/stats.txt; }
+    if [ "$SCRIPT" = focus ]; then
+        # The regain taken straight back, from the app side: while the head unit keeps the
+        # screen after it, the pipeline must say it is not drawing, and draw nothing. Read
+        # twice, three seconds apart, inside the twelve the receiver waits.
+        flicker=
+        for _ in $(seq 120); do
+            if grep -q "receiver_focus=flicker" /out/receiver.txt 2>/dev/null; then flicker=1; break; fi
+            sleep 1
+        done
+        [ -n "$flicker" ] || fail "the receiver never took a regain straight back"
+        snapshot flicker-1 false
+        snapshot flicker-2 false
+        grep -q "receiver_focus=projected" /out/receiver.txt \
+            && sed -n "/receiver_focus=flicker/,\$p" /out/receiver.txt | grep -q "receiver_focus=projected" \
+            && fail "the receiver handed the screen back before both reports were read"
+        for n in 1 2; do
+            [ "$(field projection_focused /out/app-report-flicker-$n.txt)" = false ] \
+                || fail "drawing was on while the head unit had the screen (report $n after the flicker)"
+        done
+        d1=$(field projection_dropped_not_streaming /out/app-report-flicker-1.txt)
+        d2=$(field projection_dropped_not_streaming /out/app-report-flicker-2.txt)
+        [ -n "$d1" ] && [ "$d1" = "$d2" ] \
+            || fail "pictures were drawn for nothing after the flicker: dropped not streaming $d1 then $d2"
+        log "after the flicker: projection_focused=false twice, dropped_not_streaming held at $d1"
+    fi
     if [ "$SCRIPT" = traffic ] && [ "$TRAFFIC_MODE" != off ]; then
         # Off until the receiver has the route and its picture without traffic (the colour
         # before, and the cluster time before), then on: the first fetch is at the next fix.
@@ -1344,6 +1390,12 @@ https://osmand.net/map?pin=42.44950,-71.23100#16/42.44950/-71.23100"
             log "navigation: the cluster channel was opened, focused and driven"
         fi
     fi
+    # The focus script: drawing came back for the last regain, after the flicker checked
+    # above while it ran.
+    if [ "$SCRIPT" = focus ]; then
+        grep -q "projection_focused=true" /out/app-report.txt || fail "drawing did not come back after the last regain"
+        grep -E "projection_(frames_rendered|rebuild_on_regain)" /out/app-report.txt | while read -r line; do log "$line"; done
+    fi
     # P6.5: the app own account of the drive, beside the receiver own decode of what the
     # cluster was told. The app can say it left the route and re-routed; only the receiver
     # can say the cluster heard it.
@@ -1351,8 +1403,18 @@ https://osmand.net/map?pin=42.44950,-71.23100#16/42.44950/-71.23100"
         grep -q "navigation_source=route " /out/app-report.txt || fail "the cluster was not driven by the route"
         grep -q "NAV_STATE_REROUTING" /out/app-report.txt || fail "the cluster was never told REROUTING"
         grep -Eq "navigation_arrivals=[1-9]" /out/app-report.txt || fail "the cluster was never told the drive arrived"
-        grep -Eq "guidance_reroutes=[1-9][0-9]* guidance_reroutes_done=[1-9]" /out/app-report.txt \
-            || fail "no re-route was asked for and computed: $(grep "^guidance_reroutes" /out/app-report.txt)"
+        if [ "$REROUTE_MODE" = fail ]; then
+            # Asked for and failed, never computed; back on the old route by the drive alone.
+            grep -Eq "guidance_reroutes=[1-9][0-9]* guidance_reroutes_done=0 guidance_reroute_failures=[1-9]" \
+                /out/app-report.txt \
+                || fail "re-routes were not asked for and failed: $(grep "^guidance_reroutes" /out/app-report.txt)"
+            grep -q "back on the route after a failed re-route" /out/app-report.txt \
+                || fail "guidance never said it was back on the route"
+            grep -q "guidance_routes=1 " /out/app-report.txt || fail "guidance followed more than the one route"
+        else
+            grep -Eq "guidance_reroutes=[1-9][0-9]* guidance_reroutes_done=[1-9]" /out/app-report.txt \
+                || fail "no re-route was asked for and computed: $(grep "^guidance_reroutes" /out/app-report.txt)"
+        fi
         grep -Eq "guidance_arrivals=1 " /out/app-report.txt || fail "guidance did not arrive exactly once"
         # Arriving puts the destination on top of the favorites (the lab destination is none).
         grep -q "arrived; destination added to the top of the favorites" /out/app-report.txt \
