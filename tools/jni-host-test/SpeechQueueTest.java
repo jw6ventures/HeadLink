@@ -316,7 +316,7 @@ public final class SpeechQueueTest {
         for (String secret : new String[] {"secret", "com.", "oaa-"}) {
             check(!report.contains(secret), "the report never carries " + secret);
         }
-        check(report.split("\n").length == 4, "four lines: notifications, prompts, P8.3's samples, focus");
+        check(report.split("\n").length == 5, "five lines: notifications, prompts, P10's weather alerts, P8.3's samples, focus");
     }
 
     private static DashNotification row(String title, String text) {

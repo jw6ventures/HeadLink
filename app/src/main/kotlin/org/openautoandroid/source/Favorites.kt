@@ -18,7 +18,7 @@ object Favorites {
     private var loaded: List<Favorite>? = null
     private val listeners = mutableListOf<(List<Favorite>) -> Unit>()
 
-    /** Every saved place, in the order they were added. */
+    /** Every saved place: added ones at the end, places arrived at on top ([addFirst]). */
     fun list(context: Context): List<Favorite> =
         loaded ?: Favorite.decode(prefs(context).getString(PLACES, null)).also { loaded = it }
 
@@ -30,6 +30,17 @@ object Favorites {
         val current = list(context)
         if (current.size >= Favorite.MAX) return false
         store(context, current + favorite)
+        return true
+    }
+
+    /**
+     * Puts [favorite] at the top, where the dashboard tile shows it first: the place the
+     * vehicle just arrived at ([Navigation.arrived]). False when the list is full, as [add].
+     */
+    fun addFirst(context: Context, favorite: Favorite): Boolean {
+        val current = list(context)
+        if (current.size >= Favorite.MAX) return false
+        store(context, listOf(favorite) + current)
         return true
     }
 

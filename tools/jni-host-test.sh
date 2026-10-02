@@ -11,8 +11,8 @@
 #   P7.6 also the zoom bubbles, the header's icons, signal and battery at 1080p and
 #   800x480, day/night resolution before and after the head unit's first NIGHT_DATA,
 #   and both chrome palettes' contrast.
-# * FavoritesTest: the saved places' stored form and bounds; the dashboard tile that lists
-#   them is under DashboardTest.
+# * FavoritesTest: the saved places' stored form and bounds, and which destination arrived
+#   at is already one of them; the dashboard tile that lists them is under DashboardTest.
 # * DashboardTripTest: P7.4 and P7.5 — the turn card and its maneuver icons, the trip
 #   panel in the favourites tile with End route, the marker moved down under the card, the
 #   idle media pane's player rows with Resume, and the empty favourites text, at 1080p,
@@ -65,6 +65,65 @@
 #   notification against a turn prompt, the second tap, the lead-in, one focus grant for
 #   utterances close together and always given back, no prompt in a call — its report's
 #   counts, and what a tapped notification is read as. TextToSpeech needs a phone.
+# * TrafficClientTest: P9.1's live traffic client and P9.2's response parsing - no request
+#   at all while the integration is off or keyless (the injected HTTP layer is never
+#   called), exactly the plan's two GETs with gzip, every request counted before it is sent,
+#   the monthly cap and its reset on the 1st (UTC), both HERE error shapes with the key never
+#   in a message, flow sub-segments and closed stretches without speed, gzip with or without
+#   the header, the base-URL override honoured only when debuggable, and that a snapshot is
+#   only its own box. Fixtures are hand-written in HERE's shape; HttpURLConnection and the
+#   preferences file need a phone.
+# * TrafficMatchTest: P9.2 - the boxes asked of HERE around the route ahead (padding, the
+#   look-ahead cut at the destination, cells under HERE's 1 degree limit), hand-written HERE
+#   stretches laid on a route (same carriageway, the other one 30 m off and reversed, a
+#   frontage road, an overpass, subSegments, a no-data gap, closures), the delay, and the
+#   nogos' placement (8 m, 30 m end margin, 150 m spacing, hard vs weighted, short closures,
+#   crossings, the cap). ROUTING_SEGMENTS with W100_N30.rd5 adds BRouter's route up I-35E in
+#   Dallas; without it the summary line says so.
+# * NogoRoutingTest: P9.5's traffic no-go points through RouteRequest and Router into the
+#   vendored BRouter, and TrafficCost's delay-to-cost conversion (car-vario's pw/cost0 and
+#   the link factor). ROUTING_SEGMENTS with W100_N30.rd5 adds real routes on I-35 in Austin
+#   and roads in Dallas and rural Texas: points reach BRouter, a closure blocks, a jam weighs
+#   about its delay, a vehicle on a closed road still gets out, nothing leaks into the next
+#   request, a jam cannot open a closure on the same link, the plan's overpass and
+#   frontage-road cases, and relative timings with 50/200/400 points; with W105_N30.rd5 as
+#   well, that the top-speed step-down keeps the points.
+# * DashboardTrafficTest: P9.3, P9.4 and P9.6 on the dashboard - which traffic runs colour
+#   the route line ahead (slow amber, queuing red, closed dashed dark red; none and free
+#   left to the route's own colour), merged and capped, cut at the vehicle in 50 m steps and
+#   never drawn on a route they were not matched to; the colours against both map grounds;
+#   "Traffic (c) HERE" by the attribution rule and its box clear of both bubble stacks and
+#   both cards; the trip panel's "+N min traffic" rounding and fit; the divided turn card in
+#   both layouts with Take and Keep at 1080p, Ford's 726x480 and 800x480 both sides; the
+#   map's fit to both routes; and the return to following on Take, Keep and withdrawal, but
+#   not over the driver's own pan. The VTM layers and the closure's stipple need the lab.
+# * TrafficFeedTest: P9.4-P9.6 at run time - the traffic loop run whole with an injected
+#   clock, queued threads and the real TrafficClient over a fake HTTP layer: no request
+#   without a followed route, with traffic off or keyless (the HTTP layer never called);
+#   the first fetch, the refresh cadence, retries, the monthly cap; one fetch after a
+#   re-route only when the last box no longer covers it, debounced; a response replaced
+#   whole, dropped when stale, off, keyless or at the route's end; the time as paced
+#   BRouter plus the delay ahead, free flow adding nothing and the pace never counting the
+#   delay; no-go points on every request, alternatives search and via route, with closures
+#   and jams laid on the route's own line; a closure ahead re-routing once and never on a
+#   route that opened closures; the offer at 3 minutes, Keep's suppression until 3 more,
+#   withdrawal past the split or when the saving goes, Take; Home's "+N min traffic"; and no
+#   place, road, reason or key in the report or event log. ROUTING_SEGMENTS with
+#   W100_N30.rd5 adds BRouter's I-35E route in Dallas: a closure laid on it is re-routed
+#   round, and a queue brings an offer.
+# * WeatherTest: P10's weather from Breezy - the provider's gzipped JSON read (every field,
+#   every optional one missing, unknown fields, not gzip, the wrong shape), the location
+#   chosen, the stale and far labels at their limits, alerts filtered and ordered, the
+#   provider-owner check, the read loop (no read at all with weather off, one at a time, each
+#   refusal, major 1, each alert asked to be spoken once), the flex tile's order with every
+#   source, the header item at 1080p, 726x480 and 800x480, the view's taps, timeout and call,
+#   the alert's dismissal, the alert speech rules, and no place, temperature or headline in
+#   a report. It also parses the lab stand-in's own scenarios (tools/breezy-standin/), whose
+#   pure Scenarios.java is compiled here too. Fixtures are in Breezy's shape from its source;
+#   no real blob from a phone has been read yet (docs/p10-plan.md P10.0).
+# LabDrive.java and LabTraffic.java are compiled here but not run: they are generators run
+# by hand, the second writing the P9 lab's stand-in HERE scenarios and traffic drive
+# (tools/here-standin/, docs/p9-lab-results.md).
 # See each test for scope; neither proves anything about ART or Android storage.
 set -eu
 classes=app/build/intermediates/built_in_kotlinc/release/compileReleaseKotlin/classes
@@ -79,7 +138,8 @@ cargo build -p aap-jni --release --offline --locked
 out=target/jni-host-test
 rm -rf "$out"
 mkdir -p "$out"
-javac -Xlint:all -Werror -d "$out" -cp "$classes:$stdlib:$brouter:$vtm" tools/jni-host-test/*.java
+javac -encoding UTF-8 -Xlint:all -Werror -d "$out" -cp "$classes:$stdlib:$brouter:$vtm" tools/jni-host-test/*.java \
+    tools/breezy-standin/src/org/breezyweather/standin/Scenarios.java
 java -cp "$out:$classes:$stdlib" ReportStoreTest
 java -cp "$out:$classes:$stdlib" TrustStoreTest
 java -cp "$out:$classes:$stdlib" DemoSceneTest
@@ -104,6 +164,12 @@ java -cp "$out:$classes:$stdlib" StatusTextTest
 java -cp "$out:$classes:$stdlib" SpeechQueueTest
 java -cp "$out:$classes:$stdlib:$brouter" VoicePromptsTest
 java -cp "$out" MapThemeTest
+java -cp "$out:$classes:$stdlib" TrafficClientTest
+java -cp "$out:$classes:$stdlib:$brouter" TrafficMatchTest "${ROUTING_SEGMENTS:-}"
+java -cp "$out:$classes:$stdlib:$brouter" NogoRoutingTest "${ROUTING_SEGMENTS:-}"
+java -cp "$out:$classes:$stdlib:$brouter:$vtm" DashboardTrafficTest
+java -cp "$out:$classes:$stdlib:$brouter" TrafficFeedTest "${ROUTING_SEGMENTS:-}"
+java -cp "$out:$classes:$stdlib" WeatherTest tools/breezy-standin/scenarios
 status=0
 java -Xcheck:jni --add-opens java.base/sun.nio.ch=ALL-UNNAMED -Djava.library.path=target/release \
     -cp "$out:$classes:$stdlib" JniContractTest > "$out/output.txt" 2>&1 || status=$?

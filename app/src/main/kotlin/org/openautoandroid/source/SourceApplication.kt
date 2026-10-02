@@ -29,6 +29,9 @@ class SourceApplication : Application() {
         // A destination and route set before the process was last closed (on the phone,
         // before walking out to the truck) come back, off the main thread.
         NavigationStore.install(this)
+        // Live traffic's loop (P9): idle, and making no connection, until a route is
+        // followed with traffic on and a key saved.
+        Traffic.install(this)
         IdentityWork.ensure(this, replace = false)
         CallControl.resetAtStartup(this)
     }

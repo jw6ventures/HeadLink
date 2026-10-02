@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug builds only (P9, docs/p9-plan.md §4, §8): lets live traffic reach the emulator
+     lab's stand-in HERE server over plain HTTP on the lab host. The release manifest has
+     no network security config, so a release build keeps Android's default of no
+     cleartext at all (tools/verify-apk.sh checks both). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:networkSecurityConfig="@xml/network_security_config" />
+</manifest>

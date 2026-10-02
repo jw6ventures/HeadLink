@@ -30,6 +30,12 @@ import kotlin.math.roundToInt
  * decides whether this moment gets a prompt; one it returns goes to [Speaker.guide], whose
  * gate (the trip panel's toggle, a call, the engine, Bluetooth) decides whether it is
  * heard. The speed each fix came with is for that timing only and is never reported.
+ *
+ * **Live traffic (P9.4, P9.5).** Every route followed and every fix placed goes to
+ * [Traffic] too. The time to the destination, everywhere it is shown, is BRouter's time
+ * ahead with the pace, plus the traffic delay ahead ([ArrivalTime]); the pace keeps
+ * learning from BRouter's own estimate only. A closure on the route ahead re-routes as
+ * leaving the route does ([rerouteForClosure]).
  */
 object Guide {
     /** How long a re-route may take before another is asked for, if still off the route. */
@@ -72,6 +78,9 @@ object Guide {
 
     /** Session to publish to while one projects; 0 for none. */
     private var handle = 0L
+
+    /** Whether a session is listening now: a projection is up (P9: traffic keeps a parked vehicle's route followed). */
+    val attached: Boolean get() = handle > 0L
     private var follower: RouteFollower? = null
     private var generation = 0L
     private var rerouting = false
@@ -87,6 +96,11 @@ object Guide {
         private set
     var rerouteFailures = 0
         private set
+    /** Re-routes started because live traffic found the route ahead closed (P9.5). */
+    var closureReroutes = 0
+        private set
+    /** Whether the re-route in flight is round a closure rather than for leaving the route. */
+    private var closureRerouting = false
     var arrivals = 0
         private set
     var published = 0L
@@ -127,6 +141,9 @@ object Guide {
     /** A fix at least [HEADING_BASE_M] behind the newest, and the travel bearing between them. */
     private var headingFrom: Pair<Double, Double>? = null
     private var heading: Double? = null
+
+    /** The application, from the first fix: arriving, which only a fix can do, needs it ([Navigation.arrived]). */
+    private var appContext: Context? = null
 
     /** Created on first use: the host tests load this class with no Android looper. */
     private val main by lazy { Handler(Looper.getMainLooper()) }
@@ -200,6 +217,7 @@ object Guide {
     /** [Routing] has a new route to follow: a first route, a new destination, or a re-route. */
     fun onRoute(route: Route) {
         generation++
+        closureRerouting = false
         routesFollowed++
         cancelArrivalEnd()
         // A re-route is the same drive, so what it taught about the pace stands.
@@ -212,6 +230,8 @@ object Guide {
             rerouting = false
             reroutesDone++
         }
+        // Traffic is laid on the new route before anything is published from it.
+        Traffic.onRoute(route)
         // Placed on the new route from the fix already in hand, so a re-route goes
         // straight from `REROUTING` to its first maneuver instead of through a moment of
         // having nothing to say.
@@ -219,6 +239,7 @@ object Guide {
             val result = follower.update(lat, lon, SystemClock.elapsedRealtime())
             observe(null, result)
             last = result
+            Traffic.onPosition(route, result)
         }
         publish()
     }
@@ -230,14 +251,61 @@ object Guide {
      * the same position the trip panel and the cluster count from. Main thread.
      */
     fun remaining(): Pair<Double, Int>? =
-        if (follower == null || rerouting) null else last?.step?.let { it.destinationMetres to paced(it.destinationSeconds) }
+        if (follower == null || rerouting) null else last?.step?.let { it.destinationMetres to shown(it.destinationSeconds) }
 
-    /** [seconds] of BRouter's estimate to the destination, as shown: with the pace learned, if asked for. */
-    private fun paced(seconds: Int): Int = if (learnPace) pace.apply(seconds) else seconds
+    /**
+     * Seconds of live traffic delay inside [remaining]'s time (P9.4), for Home's "+N min
+     * traffic"; 0 whenever [remaining] is null.
+     */
+    fun trafficDelay(): Int {
+        val follower = follower ?: return 0
+        return if (remaining() == null) 0 else Traffic.delaySeconds(follower.route)
+    }
 
-    /** The route asked for failed. Still off the route, so the next retry is on the clock. */
+    /**
+     * [seconds] of BRouter's estimate to the destination, as shown: with the pace learned, if
+     * asked for, and the traffic delay ahead on the followed route (P9.4, [ArrivalTime]).
+     */
+    private fun shown(seconds: Int): Int =
+        ArrivalTime.shown(seconds, pace, learnPace, follower?.route?.let(Traffic::delaySeconds) ?: 0)
+
+    /**
+     * The route asked for failed. Still off the route, so the next retry is on the clock. A
+     * re-route round a closure that failed leaves the vehicle on the route it had, which
+     * [Routing] keeps on the map: guidance carries on along it rather than saying
+     * "Rerouting" until the vehicle leaves it.
+     */
     fun onRouteFailed() {
         if (rerouting) rerouteFailures++
+        if (closureRerouting) {
+            closureRerouting = false
+            rerouting = false
+            publish()
+        }
+    }
+
+    /**
+     * Live traffic found the route ahead closed (P9.5, plan §7): re-route now, from the
+     * vehicle, with the closures as no-go points, as leaving the route does. False, and
+     * nothing asked, while a re-route is already in flight, or with no route or
+     * destination. [Traffic] makes sure it is asked once a closure.
+     */
+    fun rerouteForClosure(context: Context): Boolean {
+        if (follower == null || rerouting || Navigation.destination == null) return false
+        rerouting = true
+        closureRerouting = true
+        rerouteAt = SystemClock.elapsedRealtime()
+        reroutes++
+        closureReroutes++
+        SessionController.note("closure on the route ahead; re-routing")
+        Navigation.route(context, reroute = true, bearing = heading, closure = true)
+        publish()
+        return true
+    }
+
+    /** The traffic delay changed with no fix to carry it (a new response, a parked vehicle): tell everyone again. */
+    fun trafficChanged() {
+        if (follower != null) publish()
     }
 
     /**
@@ -252,6 +320,8 @@ object Guide {
         follower = null
         last = null
         rerouting = false
+        closureRerouting = false
+        Traffic.onRouteEnded()
         pace.reset()
         voice.reset()
         LiveAlternatives.clear()
@@ -265,6 +335,7 @@ object Guide {
      * used to time spoken prompts, never reported.
      */
     fun onFix(context: Context, latitude: Double, longitude: Double, source: String, speedMps: Double? = null) {
+        appContext = context.applicationContext
         lastFix = latitude to longitude
         lastSpeed = speedMps
         val from = headingFrom
@@ -282,7 +353,10 @@ object Guide {
         val result = follower.update(latitude, longitude, now)
         last = result
         // Learned whether or not it is shown, so turning it on mid-drive has a pace to use.
+        // BRouter's own seconds, never the shown ones with traffic in: the pace and the
+        // delay must not count the same jam twice (P9.4, plan §6).
         pace.onFix(generation, result.step?.destinationSeconds?.takeIf { result.state == FollowState.ON_ROUTE }, now)
+        Traffic.onPosition(follower.route, result)
         // Past the chosen alternative's via point, the best route is the chosen one again:
         // a re-route from here must not be sent back to it.
         viaAlongM?.let { at ->
@@ -314,6 +388,7 @@ object Guide {
             FollowState.ARRIVED -> if (previous != FollowState.ARRIVED) {
                 arrivals++
                 SessionController.note("arrived at the destination")
+                appContext?.let(Navigation::arrived)
                 scheduleArrivalEnd()
             }
             FollowState.OFF_ROUTE, FollowState.JOINING -> {}
@@ -377,7 +452,7 @@ object Guide {
                 // The cluster's own values: the icon is drawn from the type it is sent.
                 else -> UpcomingTurn(
                     step.instruction, step.metres, step.maneuver.type, step.maneuver.exit, step.onto,
-                    step.destinationMetres, paced(step.destinationSeconds), step.later,
+                    step.destinationMetres, shown(step.destinationSeconds), step.later,
                 )
             },
         )
@@ -413,7 +488,7 @@ object Guide {
                 stepMetres = step.metres,
                 stepSeconds = step.seconds,
                 destinationMetres = step.destinationMetres,
-                destinationSeconds = paced(step.destinationSeconds),
+                destinationSeconds = shown(step.destinationSeconds),
             )
         }
         if (code == NativeBridge.NOW_PLAYING_CHANGED) published++
@@ -437,7 +512,8 @@ object Guide {
         )
         appendLine(
             "guidance_reroutes=$reroutes guidance_reroutes_done=$reroutesDone " +
-                "guidance_reroute_failures=$rerouteFailures guidance_arrivals=$arrivals " +
+                "guidance_reroute_failures=$rerouteFailures guidance_closure_reroutes=$closureReroutes " +
+                "guidance_arrivals=$arrivals " +
                 "guidance_arrival_ends=$arrivalEnds " +
                 "guidance_max_on_route_offset_m=${maxOnRouteOffsetM.roundToInt()}",
         )
@@ -479,7 +555,8 @@ class UpcomingTurn @JvmOverloads constructor(
     val destinationMetres: Double? = null,
     /**
      * Time to the destination from here: BRouter's, with the Routing screen's adjustment
-     * and, when Learn my pace is on, the drive's pace. The arrival clock is now plus this.
+     * and, when Learn my pace is on, the drive's pace, plus live traffic's delay ahead (P9.4).
+     * The arrival clock is now plus this.
      */
     val destinationSeconds: Int? = null,
     /** The maneuvers after this one ([RouteFollower.LATER_STEPS] at most). */

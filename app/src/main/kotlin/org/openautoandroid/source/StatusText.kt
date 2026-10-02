@@ -121,11 +121,16 @@ object StatusText {
      * null with no destination and no route.
      *
      * [metres] and [seconds] are the route's, [arrival] the clock time already formatted
-     * in the phone's own 12- or 24-hour style (the caller has the locale), or null when
+     * in the saved 12- or 24-hour style ([ClockFormat]), or null when
      * it is not known — the phrase is then left out rather than guessed. [waiting] is a
      * destination held for want of a position, [computing] a search in flight, and
      * [failed] a route that did not come back.
+     *
+     * [trafficSeconds] is live traffic's delay inside [seconds] (P9.4): "+N min traffic"
+     * follows the arrival, rounded as the dashboard's trip panel rounds it
+     * ([trafficLabel]), and nothing under half a minute.
      */
+    @JvmOverloads
     fun routeSummary(
         destination: String?,
         waiting: Boolean,
@@ -135,6 +140,7 @@ object StatusText {
         seconds: Int?,
         arrival: String?,
         unit: SpeedUnit,
+        trafficSeconds: Int = 0,
     ): String? {
         val head = if (destination.isNullOrBlank()) "Route" else "Routing to $destination"
         return when {
@@ -146,8 +152,19 @@ object StatusText {
             else -> buildString {
                 append(head).append(" · ").append(unit.distance(metres)).append(" · ").append(duration(seconds))
                 if (arrival != null) append(" · arrive ").append(arrival)
+                trafficLabel(trafficSeconds)?.let { append(" · ").append(it) }
             }
         }
+    }
+
+    /**
+     * "+7 min traffic" for [seconds] of traffic delay, or null under half a minute: the
+     * nearest minute, the same rule as the trip panel's label (`Dashboard.trafficDelayLabel`),
+     * so the phone and the car say the same.
+     */
+    fun trafficLabel(seconds: Int): String? {
+        val minutes = Math.round(seconds / 60.0)
+        return if (minutes >= 1) "+$minutes min traffic" else null
     }
 
     /** Minutes, rounded, with hours from an hour up; under a minute says so. */
@@ -186,6 +203,15 @@ enum class SetupItem(val title: String, val detail: String, val fix: String) {
         "Routes start from the vehicle's position. Allowed, the phone's own position works too.",
         "Allow location",
     ),
+    /**
+     * P10 (docs/p10-plan.md §4): Show weather is on, but Breezy Weather has not granted its
+     * provider permission. Never listed with Show weather off: weather adds nothing then.
+     */
+    WEATHER_PERMISSION(
+        "Weather permission not granted",
+        "Weather is on, but Breezy Weather's data can't be read.",
+        "Grant",
+    ),
     NO_PINS("No head unit trusted yet", "Plug in and tap Trust.", "Trust and connect"),
     /** Not in the plan's list: the session's own notification, which holds its Stop. */
     SESSION_NOTIFICATIONS(
@@ -211,7 +237,13 @@ object SetupCheck {
      * last known position needs, or null when there is no position to ask about. Routing
      * from the vehicle's own position needs no phone location, so [location] is an item of
      * its own rather than a condition of the routing ones.
+     *
+     * [weatherWanted] is Show weather (P10) and [weatherPermission] whether Breezy
+     * Weather's permission is held; the item follows the phone's own permissions, after
+     * location. Both default to asking nothing, so a caller that predates P10 lists what
+     * it always did.
      */
+    @JvmOverloads
     fun items(
         maps: Int,
         tiles: Set<String>,
@@ -221,12 +253,15 @@ object SetupCheck {
         location: Boolean,
         pins: Int,
         sessionNotifications: Boolean,
+        weatherWanted: Boolean = false,
+        weatherPermission: Boolean = true,
     ): List<SetupItem> = buildList {
         if (maps == 0) add(SetupItem.NO_MAP)
         if (tiles.isEmpty()) add(SetupItem.NO_ROUTING)
         else if (hereTile != null && hereTile !in tiles) add(SetupItem.NO_ROUTING_HERE)
         if (notificationAccessWanted && !notificationAccess) add(SetupItem.NOTIFICATION_ACCESS)
         if (!location) add(SetupItem.LOCATION)
+        if (weatherWanted && !weatherPermission) add(SetupItem.WEATHER_PERMISSION)
         if (pins == 0) add(SetupItem.NO_PINS)
         if (!sessionNotifications) add(SetupItem.SESSION_NOTIFICATIONS)
     }

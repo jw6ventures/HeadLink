@@ -1,0 +1,7 @@
+# Written by tools/jni-host-test/LabTraffic.java over W75_N40.rd5; what the app's own code finds on
+# the host for each scenario, which the lab run checks the emulator against.
+route_m=19659 route_s=1863
+a_delay_s=513 a_queue_delay_s=495 a_slow_delay_s=17 a_saving_s=385
+a2_delay_s=1143 a2_saving_s=1016
+side_delay_s=17
+b_closure_from_m=250 b_closure_to_m=480

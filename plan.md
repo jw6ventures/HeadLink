@@ -440,6 +440,14 @@ Exit: **G9 and G10 on the factory head unit — met** (21 September 2026).
 
 Standing job, from P6.2 §4.2: include a lab run **without** `LAB_MAP` in the routine set of runs before a release. That is the first-run operator's configuration, and it once hid a crash on the first frame.
 
+## P10 weather
+
+Scope, decisions and slices are in the [P10 plan](docs/p10-plan.md) (added 30 September 2026, when implementation began). The research behind it is [docs/weather-research.md](docs/weather-research.md). Weather is read from Breezy Weather's content provider on the phone, off by default, with no network access.
+
+- [ ] P10.0: read Breezy's provider on the Pixel and confirm the plan's field names from a real blob. *(Not done: no phone was attached when P10.1–P10.3 were built. The fixtures come from Breezy's source.)*
+- [x] P10.1–P10.3: the permission, receiver and `<queries>`; the Weather card; the provider-owner check, reader and parser; the header item and tapped view; alerts in the flex tile, dismissed and spoken. *(Host-tested and lab-verified against a stand-in Breezy. See the P10 results record.)*
+- [ ] P10.4: see real weather on the Pixel, then on SYNC 4.
+
 ## Final review and stopping decisions
 
 - [ ] Review the spec's APP01–APP06 and APP10 requirements against implementation and physical evidence; record unmet requirements and tested setup limitations explicitly.

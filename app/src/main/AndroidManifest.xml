@@ -1,14 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- USB accessory acquisition, connectedDevice foreground service, and session
      notification (spec §5.2 baseline). TLS, authentication, and discovery add no
-     permission. No INTERNET or other permissions.
+     permission. From P9, INTERNET too, for live traffic alone; see its entry below.
 
      P5.1 adds no <uses-permission>. Head-unit transport buttons reach whatever is
      playing through AudioManager.dispatchMediaKeyEvent, which declares none. Reporting
      what is playing needs MediaAccessService below to be enabled by the operator in
      system Settings: that is a binding the operator makes, not a permission this app can
      request, and the integration works without it (spec §5.2, APP09). -->
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-feature
         android:name="android.hardware.usb.accessory"
@@ -20,8 +21,8 @@
 
     <!-- P5.5, the owned map and its dashboard header. Each is separately optional and
          the feature degrades to "—" without it (APP09); none is requested unless the
-         operator turns that integration on, and there is still no INTERNET permission,
-         so map data stays operator-supplied (APP10).
+         operator turns that integration on. Map data stays operator-supplied (APP10):
+         the INTERNET declared below is for live traffic, never for maps or routing.
 
          ACCESS_NETWORK_STATE is a normal permission and reports the transport type only
          — wifi, cell or none. ACCESS_FINE_LOCATION is the position *fallback*: the
@@ -39,6 +40,19 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
 
+    <!-- P9: live traffic from HERE (docs/p9-plan.md §2, APP10 as amended 28 September
+         2026). The one opt-in integration that uses the network. It is off by default,
+         and with it off the app makes no network connection: TrafficClient opens no
+         socket unless the operator has turned Traffic on and saved their own HERE key
+         (host-tested, TrafficClientTest). With it on, it contacts only HERE's traffic
+         API host, only while a route is being followed, and keeps nothing it receives
+         beyond the next response. The handshake, projection, maps and routing never use
+         it. INTERNET is an install-time permission the operator cannot revoke on stock
+         Android (GrapheneOS's Network toggle can), which is why the guarantee is in the
+         code. Cleartext is allowed only in debug builds, for the lab's stand-in server
+         (src/debug/res/xml/network_security_config.xml). -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <!-- P7.9: optional full call controls (docs/p7-plan.md §5.8; §9 item 3 as amended in
          docs/p7-backends-results.md §4.2). signature|appop: declaring it grants nothing,
          and the permission itself is never granted to this app (it is not platform-signed;
@@ -53,6 +67,15 @@
          hang up; no mute, no keypad). CALL_COMPANION_APP is not declared: Telecom has not
          bound on it since Android 11. -->
     <uses-permission android:name="android.permission.MANAGE_ONGOING_CALLS" />
+
+    <!-- P10: weather from Breezy Weather (docs/p10-plan.md, spec.md 5.2 as amended). A
+         third-party dangerous permission, Breezy's own: asked for only when the operator
+         turns Settings, Weather, Show weather on, and the weather item degrades to a dash
+         without it (APP09). It lets Breezy's content provider answer; it is not a network
+         permission, and weather never uses the network (APP10 is untouched). Before each
+         read WeatherFeed checks the provider belongs to org.breezyweather, since any app
+         could declare this permission name if Breezy were not installed. -->
+    <uses-permission android:name="org.breezyweather.READ_PROVIDER" />
 
     <!-- P7.5: the idle media pane lists player apps that can be resumed with no session
          left, through Android's media resumption (docs/p7-plan.md §5.5). This makes apps
@@ -70,6 +93,9 @@
         <intent>
             <action android:name="android.intent.action.TTS_SERVICE" />
         </intent>
+        <!-- P10: Breezy Weather's provider, so its authority resolves on targetSdk 30 and
+             later. Names Breezy's authority only; no other app becomes visible. -->
+        <provider android:authorities="org.breezyweather.provider.weather" />
     </queries>
 
     <application
@@ -153,6 +179,21 @@
                 <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>
         </service>
+        <!-- P10: Breezy Weather's update notifier (docs/p10-plan.md §3). Breezy lists the
+             apps that declare this under Settings, Modules, and sends the broadcast to the
+             ones the operator ticks. Exported and guarded by no permission, because Breezy
+             sends it with none; it carries no weather, only a cue to read the provider
+             again, so a forged one can cause no more than a harmless extra read, and only
+             while a projection is attached with Show weather on. Lint's ExportedReceiver
+             is waived here for that reason: a permission would stop Breezy reaching it. -->
+        <receiver
+            android:name=".WeatherNotifierReceiver"
+            android:exported="true"
+            tools:ignore="ExportedReceiver">
+            <intent-filter>
+                <action android:name="org.breezyweather.ACTION_UPDATE_NOTIFIER" />
+            </intent-filter>
+        </receiver>
         <!-- P7.9: optional call controls (docs/p7-plan.md §5.8). Disabled here, and
              enabled by CallControl only while a session projects with the operator's
              Call controls setting on; disabled again at the end of the session and on

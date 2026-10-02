@@ -213,6 +213,29 @@ public final class RoutePreviewTest {
                 "and survives scaling and naming");
         P.writeChoice(file, 9L, sample());
         check(P.readChoice(file).getSecond().getVia() == null, "a route with none reads back with none");
+
+        // P9 (review): whether traffic shaped a route, and whether it goes through a closure,
+        // cross the file, so "Traffic © HERE" is still owed after a restart.
+        Route shaped = new Route(new double[] {30.0, 30.01}, new double[] {-97.0, -97.0}, 1112, 60, new int[0], new int[0],
+                new int[0], new float[] {0f, 60f}, new int[0], new String[0], 121, null, 12, true);
+        P.writeChoice(file, 9L, shaped);
+        Route shapedBack = P.readChoice(file).getSecond();
+        check(shapedBack.getTrafficShaped() && shapedBack.getClosuresOpened(), "a traffic-shaped route through a closure reads back as one");
+        check(!P.readChoice(writeAndRead(file, sample())).getSecond().getTrafficShaped(), "one without reads back without");
+        // A version 2 file, written before P9 (the same bytes less the two flags), is still read.
+        P.writeChoice(file, 9L, shaped);
+        byte[] bytes = Files.readAllBytes(file.toPath());
+        byte[] old = Arrays.copyOf(bytes, bytes.length - 2);
+        old[3] = 2;
+        Files.write(file.toPath(), old);
+        Route oldBack = P.readChoice(file).getSecond();
+        check(!oldBack.getTrafficShaped() && !oldBack.getClosuresOpened() && oldBack.getDistanceM() == 1112,
+                "a version 2 file reads back, without the flags it never had");
+    }
+
+    private static File writeAndRead(File file, Route route) throws IOException {
+        P.writeChoice(file, 9L, route);
+        return file;
     }
 
     /**

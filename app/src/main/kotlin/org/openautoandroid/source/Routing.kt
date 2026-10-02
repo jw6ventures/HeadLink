@@ -33,10 +33,20 @@ object Routing {
         private set
 
     /**
-     * Which source set the last request's destination: a [DestinationSource] label, or
-     * `reroute` when [Guide] asked because the vehicle left the route (P6.5).
+     * Which source set the last request's destination: a [DestinationSource] label,
+     * `reroute` when [Guide] asked because the vehicle left the route (P6.5), or [CLOSURE]
+     * when live traffic found the route ahead closed (P9.5).
      */
     var origin = "-"
+        private set
+
+    /** [origin] for a re-route round a closure on the route ahead. */
+    const val CLOSURE = "closure"
+
+    /** Routes computed with live traffic's no-go points (P9.5), and those that had to open a closure. */
+    var trafficRoutes = 0
+        private set
+    var closuresOpened = 0
         private set
 
     /** Where the last request started: `vehicle`, `phone`, `typed` or `lab`. */
@@ -138,19 +148,36 @@ object Routing {
             return
         }
         pending = 0
+        val route = result.route
+        if (route == null && origin == CLOSURE && line != null) {
+            // A re-route round a closure that found nothing: the vehicle is still on the
+            // route it had, which stays on the map and in guidance rather than vanishing.
+            SessionController.note("re-route round a closure failed after ${result.computeMs} ms: ${result.error}")
+            Guide.onRouteFailed()
+            return
+        }
         last = result
-        line = result.route
+        line = route
         token++
-        result.route?.let { Guide.onRoute(it) } ?: Guide.onRouteFailed()
+        if (route != null && route.trafficShaped) trafficRoutes++
+        if (route != null && route.closuresOpened) closuresOpened++
+        route?.let { Guide.onRoute(it) } ?: Guide.onRouteFailed()
         NavigationStore.changed()
         // No coordinates, only totals: the event log is part of the saved report.
         SessionController.note(
             result.route?.let { route ->
                 "route computed in ${result.computeMs} ms on ${result.thread}: ${route.distanceM} m, " +
                     "${route.seconds} s, ${route.points} points, ${route.maneuverIndices.size} maneuvers" +
-                    lowered(route)
+                    lowered(route) + traffic(route)
             } ?: "route failed after ${result.computeMs} ms on ${result.thread}: ${result.error}",
         )
+    }
+
+    /** How many traffic points the search had (P9.5), and whether it had to open a closure: counts, not places. */
+    private fun traffic(route: Route): String = when {
+        route.closuresOpened -> "; ${route.nogoCount} traffic points, through a closure (no way round it)"
+        route.trafficShaped -> "; ${route.nogoCount} traffic points"
+        else -> ""
     }
 
     /** Said when BRouter could not finish at the chosen top speed and the route was timed lower. */
@@ -265,7 +292,8 @@ object Routing {
         appendLine(
             "routing_requests=$requests routing_origin=$origin routing_start=$start " +
                 "routing_pending=${pending != 0L} routing_superseded=$superseded " +
-                "routing_alternatives_chosen=$alternativesChosen routing_restored=${NavigationStore.restored}",
+                "routing_alternatives_chosen=$alternativesChosen routing_restored=${NavigationStore.restored} " +
+                "routing_traffic_routes=$trafficRoutes routing_closures_opened=$closuresOpened",
         )
         appendLine(options?.report() ?: "routing_options=-")
         append(Navigation.report())
@@ -286,7 +314,8 @@ object Routing {
                 "routing_distance_m=${route.distanceM} routing_seconds=${route.seconds} " +
                     "routing_points=${route.points} routing_maneuvers=${route.maneuverIndices.size} " +
                     "routing_roundabout_exits=${route.exitNumbers.count { it != 0 }} " +
-                "routing_top_speed_used_kmh=${route.topSpeedKmh}",
+                "routing_top_speed_used_kmh=${route.topSpeedKmh} routing_traffic_points=${route.nogoCount} " +
+                "routing_through_closure=${route.closuresOpened}",
             )
             // How many stretches the map named, never which names: a road name says where.
             appendLine(

@@ -184,6 +184,11 @@ public final class StatusTextTest {
         return SETUP.items(maps, tiles, here, wanted, access, location, pins, notifications);
     }
 
+    /** Everything else in place, and P10's two weather parameters as given. */
+    private static List<SetupItem> weather(boolean location, boolean on, boolean permission) {
+        return SETUP.items(1, Set.of("W100_N30.rd5"), null, true, true, location, 1, true, on, permission);
+    }
+
     private static void setupChecklist() {
         Set<String> tiles = Set.of("W100_N30.rd5");
         check(items(1, tiles, "W100_N30.rd5", true, true, true, 1, true).isEmpty(), "everything in place is Ready");
@@ -196,6 +201,20 @@ public final class StatusTextTest {
         check(items(1, Set.of(), "W100_N30.rd5", true, true, true, 1, true).equals(List.of(SetupItem.NO_ROUTING)),
                 "no tiles at all is the one item, not two");
         check(items(1, tiles, null, false, false, true, 1, true).isEmpty(), "access is only missing when something wants it");
+        // P10 (docs/p10-plan.md section 4): only while Show weather is on, after location.
+        check(weather(true, true, false).equals(List.of(SetupItem.WEATHER_PERMISSION)),
+                "weather on without Breezy's permission is the one item");
+        check(weather(true, true, true).isEmpty(), "weather on with the permission is Ready");
+        check(weather(true, false, false).isEmpty(), "weather off adds nothing, permission or not");
+        check(weather(true, false, true).isEmpty(), "weather off with the permission adds nothing either");
+        check(weather(false, true, false).equals(List.of(SetupItem.LOCATION, SetupItem.WEATHER_PERMISSION)),
+                "it follows location");
+        check(SETUP.items(0, Set.of(), null, true, false, false, 0, false, true, false).equals(List.of(
+                SetupItem.NO_MAP, SetupItem.NO_ROUTING, SetupItem.NOTIFICATION_ACCESS, SetupItem.LOCATION,
+                SetupItem.WEATHER_PERMISSION, SetupItem.NO_PINS, SetupItem.SESSION_NOTIFICATIONS)),
+                "everything missing with weather on, in order");
+        check(SetupItem.WEATHER_PERMISSION.getTitle().equals("Weather permission not granted")
+                && SetupItem.WEATHER_PERMISSION.getFix().equals("Grant"), "the plan's words and one Grant button");
         check(SETUP.notificationAccessWanted(true, false, false, false), "media info wants it");
         check(SETUP.notificationAccessWanted(false, true, false, false), "dashboard notifications want it");
         check(SETUP.notificationAccessWanted(false, false, true, false), "call controls without the grant want it");

@@ -21,6 +21,17 @@ data class Favorite(val name: String, val latitude: Double, val longitude: Doubl
         const val MAX = 50
 
         /**
+         * A destination this close to a saved place is that place: a share of the same
+         * address from another app lands a few metres from where it was saved, and within
+         * this a second row would only repeat the first.
+         */
+        const val SAME_PLACE_M = 50.0
+
+        /** Whether one of [favorites] is at ([latitude], [longitude]), within [SAME_PLACE_M]. */
+        fun saved(favorites: List<Favorite>, latitude: Double, longitude: Double): Boolean =
+            favorites.any { RouteFollower.distance(it.latitude, it.longitude, latitude, longitude) <= SAME_PLACE_M }
+
+        /**
          * The stored form: one place a line, `latitude<TAB>longitude<TAB>name`. The name
          * is last because it is the one field that can hold spaces, and it can hold no
          * tab or line break because [cleanName] removes every control character.

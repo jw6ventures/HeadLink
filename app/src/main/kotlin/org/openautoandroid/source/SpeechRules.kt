@@ -24,13 +24,16 @@ enum class SpeechMedia(val key: String, val label: String) {
     }
 }
 
-/** The two things the phone says (P8 plan §0), each with its report prefix. */
+/** The things the phone says (P8 plan §0, P10 plan §6), each with its report prefix. */
 enum class SpeechKind(val prefix: String) {
     /** A dashboard notification row, tapped (§8). */
     NOTIFICATION("notifications_read"),
 
     /** A turn prompt from the followed route (§5), spoken through [Speaker.guide]. */
     GUIDANCE("voice_prompts"),
+
+    /** P10: a weather alert's headline, once per alert per session (docs/p10-plan.md §6). */
+    ALERT("weather_alerts"),
 }
 
 /**
@@ -41,14 +44,23 @@ enum class SpeechSkip(val key: String, val kinds: Set<SpeechKind>) {
     /** "Read aloud when tapped" is off. */
     OFF("off", setOf(SpeechKind.NOTIFICATION)),
 
-    /** The trip panel's voice toggle is off (wired by P8.2). */
-    TOGGLE_OFF("toggle_off", setOf(SpeechKind.GUIDANCE)),
+    /** The trip panel's voice toggle is off (wired by P8.2); P10's alerts heed it too. */
+    TOGGLE_OFF("toggle_off", setOf(SpeechKind.GUIDANCE, SpeechKind.ALERT)),
 
     /** A phone call is ringing or connected (plan §14.1; see [SpeechQueue.guide]). */
-    IN_CALL("in_call", setOf(SpeechKind.GUIDANCE)),
+    IN_CALL("in_call", setOf(SpeechKind.GUIDANCE, SpeechKind.ALERT)),
 
     /** A notification tapped while a turn prompt plays is dropped, not queued (decision 7). */
     GUIDANCE_PLAYING("guidance_playing", setOf(SpeechKind.NOTIFICATION)),
+
+    /** P10: a notification tapped while a weather alert is spoken is dropped the same way. */
+    ALERT_PLAYING("alert_playing", setOf(SpeechKind.NOTIFICATION)),
+
+    /**
+     * P10: an alert waiting its turn behind a turn prompt or another alert was still
+     * waiting when the projection ended (plan §6).
+     */
+    SESSION_END("session_end", setOf(SpeechKind.ALERT)),
 
     /** No engine, one still initialising, or one without an English voice (§3). */
     NO_ENGINE("no_engine", SpeechKind.entries.toSet()),
@@ -72,6 +84,9 @@ enum class SpeechEnd(val key: String) {
 
     /** Cut off by a turn prompt (decision 7), or a prompt by a newer prompt. */
     INTERRUPTED_BY_GUIDANCE("interrupted_by_guidance"),
+
+    /** P10: a notification being read, cut off by a weather alert (plan §6). */
+    INTERRUPTED_BY_ALERT("interrupted_by_alert"),
 
     /** The A2DP output went away mid-utterance (§4's race). */
     BLUETOOTH_LOST("bluetooth_lost"),
@@ -142,13 +157,14 @@ enum class SampleOutcome(val key: String) {
             SpeechSkip.IN_CALL -> IN_CALL
             SpeechSkip.NO_FOCUS -> NO_FOCUS
             // A sample is not gated by Read aloud or the toggle, and is itself guidance.
-            SpeechSkip.OFF, SpeechSkip.TOGGLE_OFF, SpeechSkip.GUIDANCE_PLAYING -> STOPPED
+            SpeechSkip.OFF, SpeechSkip.TOGGLE_OFF, SpeechSkip.GUIDANCE_PLAYING, SpeechSkip.ALERT_PLAYING,
+            SpeechSkip.SESSION_END -> STOPPED
         }
 
         /** How a sample that started came to an end, as an outcome. */
         fun of(end: SpeechEnd): SampleOutcome = when (end) {
             SpeechEnd.COMPLETED -> SPOKEN
-            SpeechEnd.INTERRUPTED_BY_GUIDANCE -> INTERRUPTED
+            SpeechEnd.INTERRUPTED_BY_GUIDANCE, SpeechEnd.INTERRUPTED_BY_ALERT -> INTERRUPTED
             SpeechEnd.BLUETOOTH_LOST -> BLUETOOTH_LOST
             SpeechEnd.FOCUS_LOST -> FOCUS_LOST
             SpeechEnd.ERROR -> ERROR
@@ -191,6 +207,14 @@ sealed interface SpeechAction {
 
     /** Say nothing. Already counted. */
     data class Skip(val reason: SpeechSkip) : SpeechAction
+
+    /**
+     * P10: a weather alert that must wait its turn (plan §6): a turn prompt or another
+     * alert is being spoken, or earlier alerts are already waiting. Held by the queue in
+     * the order asked; [SpeechQueue.waiting] hands them out one at a time as each
+     * utterance ends.
+     */
+    data class Wait(val key: String) : SpeechAction
 }
 
 /**
@@ -210,6 +234,12 @@ class SpeechQueue {
 
     private var current: Utterance? = null
     private var nextId = 0L
+
+    /**
+     * P10: the alerts waiting their turn, by key, first asked first. An alert never cuts
+     * another off, so two that qualify in one read are said one after the other.
+     */
+    private val pendingAlerts = ArrayDeque<String>()
 
     /** When the last utterance ended, or null before the first. */
     private var lastEndMillis: Long? = null
@@ -231,6 +261,7 @@ class SpeechQueue {
     private val ends = Array(SpeechKind.entries.size) { IntArray(SpeechEnd.entries.size) }
     private val skips = Array(SpeechKind.entries.size) { IntArray(SpeechSkip.entries.size) }
     private val stages = LinkedHashMap<String, Int>()
+    private var waits = 0
     private var focusRequests = 0
     private var focusDenied = 0
     private var focusAbandons = 0
@@ -250,6 +281,10 @@ class SpeechQueue {
      * [Speaker] can say so on the phone. Set by [Speaker]; it posts rather than acting here.
      */
     var sampleEnded: ((SpeechEnd) -> Unit)? = null
+
+    /** P10: the keys of the alerts waiting their turn, the next to go first. */
+    val waitingAlerts: List<String>
+        get() = pendingAlerts.toList()
 
     /** The key of the notification being read, for its row to stay lit (§8); else null. */
     val reading: String?
@@ -280,6 +315,7 @@ class SpeechQueue {
         }
         if (!readAloud) return skip(SpeechKind.NOTIFICATION, SpeechSkip.OFF)
         if (playing?.kind == SpeechKind.GUIDANCE) return skip(SpeechKind.NOTIFICATION, SpeechSkip.GUIDANCE_PLAYING)
+        if (playing?.kind == SpeechKind.ALERT) return skip(SpeechKind.NOTIFICATION, SpeechSkip.ALERT_PLAYING)
         gate(conditions)?.let { return skip(SpeechKind.NOTIFICATION, it) }
         return speak(SpeechKind.NOTIFICATION, key, null, nowMillis)
     }
@@ -299,6 +335,57 @@ class SpeechQueue {
         if (conditions.inCall) return skip(SpeechKind.GUIDANCE, SpeechSkip.IN_CALL)
         gate(conditions)?.let { return skip(SpeechKind.GUIDANCE, it) }
         return speak(SpeechKind.GUIDANCE, null, stage, nowMillis)
+    }
+
+    /**
+     * P10: a weather alert newly in force (docs/p10-plan.md §6), asked for once per alert
+     * per session by [WeatherFeed], and only with Speak weather alerts on. In this order:
+     *  * the trip panel's voice toggle off: `toggle_off`, not retried when it is turned on;
+     *  * a call: `in_call`, as for turn prompts (§14.1);
+     *  * the gate: no engine or no A2DP output, not retried either;
+     *  * a turn prompt or another alert being spoken, or alerts already waiting: it waits
+     *    ([SpeechAction.Wait]) at the back of the line, and goes when its turn comes, as
+     *    each utterance ends; it never cuts a prompt or another alert off;
+     *  * otherwise it is said, cutting off a notification being read.
+     * A turn prompt arriving while an alert is said cuts the alert off, as it would anything;
+     * the alerts waiting then go after that prompt, before the next one.
+     */
+    fun alert(key: String, nowMillis: Long, conditions: SpeechConditions): SpeechAction {
+        requests[SpeechKind.ALERT.ordinal]++
+        alertBlocked(conditions)?.let { return skip(SpeechKind.ALERT, it) }
+        if (alertMustWait() || pendingAlerts.isNotEmpty()) {
+            // Asked for once per alert per session, so a repeat is only held once.
+            if (key !in pendingAlerts) {
+                pendingAlerts.addLast(key)
+                waits++
+            }
+            return SpeechAction.Wait(key)
+        }
+        return speak(SpeechKind.ALERT, key, null, nowMillis)
+    }
+
+    /**
+     * P10: the next alert that waited, now that no prompt or alert is being said, gated
+     * afresh (the toggle, a call, Bluetooth may all have changed while it waited); null
+     * when none waits or one is still being said. The caller speaks it or has it counted
+     * by this, and asks again until this returns null or something is being said, so the
+     * line drains one utterance at a time.
+     */
+    fun waiting(nowMillis: Long, conditions: SpeechConditions): SpeechAction? {
+        if (pendingAlerts.isEmpty() || alertMustWait()) return null
+        val key = pendingAlerts.removeFirst()
+        alertBlocked(conditions)?.let { return skip(SpeechKind.ALERT, it) }
+        return speak(SpeechKind.ALERT, key, null, nowMillis)
+    }
+
+    /** P10: a turn prompt (a sample included) or an alert is being said. */
+    private fun alertMustWait(): Boolean = current?.kind == SpeechKind.GUIDANCE || current?.kind == SpeechKind.ALERT
+
+    /** Why an alert cannot be said now: the toggle, a call, then the gate. */
+    private fun alertBlocked(conditions: SpeechConditions): SpeechSkip? = when {
+        !guidanceOn -> SpeechSkip.TOGGLE_OFF
+        conditions.inCall -> SpeechSkip.IN_CALL
+        else -> gate(conditions)
     }
 
     /**
@@ -334,7 +421,12 @@ class SpeechQueue {
      */
     fun began(speak: SpeechAction.Speak, nowMillis: Long) {
         current?.let {
-            ended(it, if (speak.kind == SpeechKind.GUIDANCE) SpeechEnd.INTERRUPTED_BY_GUIDANCE else SpeechEnd.REPLACED, nowMillis)
+            val end = when (speak.kind) {
+                SpeechKind.GUIDANCE -> SpeechEnd.INTERRUPTED_BY_GUIDANCE
+                SpeechKind.ALERT -> SpeechEnd.INTERRUPTED_BY_ALERT
+                SpeechKind.NOTIFICATION -> SpeechEnd.REPLACED
+            }
+            ended(it, end, nowMillis)
         }
         current = Utterance(speak.id, speak.kind, speak.key, speak.sample)
         if (speak.sample) {
@@ -403,6 +495,11 @@ class SpeechQueue {
      * must be given back at once. Returns whether one was held.
      */
     fun end(nowMillis: Long): Boolean {
+        // P10: alerts still waiting their turn are not said; each is counted.
+        while (pendingAlerts.isNotEmpty()) {
+            pendingAlerts.removeFirst()
+            skip(SpeechKind.ALERT, SpeechSkip.SESSION_END)
+        }
         interrupt(SpeechEnd.SESSION_END, nowMillis)
         return release()
     }
@@ -435,6 +532,11 @@ class SpeechQueue {
             if (PromptStage.entries.none { it.label == stage }) append(" voice_prompts_spoken_$stage=$count")
         }
         appendOutcomes(SpeechKind.GUIDANCE)
+        append('\n')
+        // P10: weather alerts, on a line of their own; counts only, never a headline.
+        val a = SpeechKind.ALERT.ordinal
+        append("weather_alerts_requests=${requests[a]} weather_alerts_started=${started[a]} weather_alerts_waited=$waits")
+        appendOutcomes(SpeechKind.ALERT)
         append('\n')
         // P8.3: samples on a line of their own, so no prompt count includes one.
         append("voice_samples_requests=$sampleRequests voice_samples_started=$samplesStarted")

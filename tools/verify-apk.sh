@@ -14,24 +14,43 @@ line "minSdkVersion:'33'"
 line "targetSdkVersion:'36'"
 line "native-code: 'arm64-v8a'"
 # The spec §5.2 baseline plus P5.5's four optional dashboard grants. Still notably no
-# INTERNET (APP10: map data is operator-supplied), no Bluetooth and no microphone. Each
-# addition here is a deliberate, separately optional integration that degrades without
-# its grant (APP09); this list is the guard that makes adding a fifth a visible act.
+# Bluetooth and no microphone. Each addition here is a deliberate, separately optional
+# integration that degrades without its grant (APP09); this list is the guard that makes
+# adding another a visible act.
 # P7.9 adds MANAGE_ONGOING_CALLS (signature|appop; docs/p7-backends-results.md §4.2 amends
 # docs/p7-plan.md §9 item 3). Declaring it grants nothing: it takes effect only after
 # `adb shell appops set org.openautoandroid.source MANAGE_ONGOING_CALLS allow`, and even
 # then only while the disabled CallCompanionService pinned below is enabled by the
 # operator's Call controls setting during a session.
+# P10 adds org.breezyweather.READ_PROVIDER (spec §5.2 as amended, docs/p10-plan.md §9):
+# Breezy Weather's own dangerous permission, asked for only when Show weather is turned
+# on; it lets Breezy's provider answer, and is not a network permission.
+# P9 adds INTERNET for live traffic alone (APP10 as amended 28 September 2026,
+# docs/p9-plan.md §2): off by default, and no socket opens unless the operator turns it on
+# with their own HERE key (host-tested in TrafficClientTest; this script cannot see that).
 permissions=$(printf '%s\n' "$badging" | sed -n "s/^uses-permission: name='\([^']*\)'.*/\1/p" | LC_ALL=C sort | tr '\n' ' ')
-[ "$permissions" = "android.permission.ACCESS_COARSE_LOCATION android.permission.ACCESS_FINE_LOCATION android.permission.ACCESS_NETWORK_STATE android.permission.FOREGROUND_SERVICE android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE android.permission.MANAGE_ONGOING_CALLS android.permission.POST_NOTIFICATIONS android.permission.READ_PHONE_STATE " ] \
+[ "$permissions" = "android.permission.ACCESS_COARSE_LOCATION android.permission.ACCESS_FINE_LOCATION android.permission.ACCESS_NETWORK_STATE android.permission.FOREGROUND_SERVICE android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE android.permission.INTERNET android.permission.MANAGE_ONGOING_CALLS android.permission.POST_NOTIFICATIONS android.permission.READ_PHONE_STATE org.breezyweather.READ_PROVIDER " ] \
     || fail "unexpected permission set: $permissions"
-printf '%s\n' "$badging" | grep -q "uses-permission: name='android.permission.INTERNET'" \
-    && fail "INTERNET permission present"
 
 printf '%s\n' "$badging" | grep -qx "  uses-feature: name='android.hardware.usb.accessory'" \
     || fail "required uses-feature android.hardware.usb.accessory"
 
 manifest=$(aapt2 dump xmltree --file AndroidManifest.xml "$apk")
+# Nothing leaves the phone through backup or device transfer: the HERE key (P9), the
+# identity, the pins and the reports. allowBackup off, and the rules that exclude every
+# domain for Android 12's device transfer, which ignores allowBackup.
+printf '%s\n' "$manifest" | grep -q ':allowBackup([^)]*)=false\( \|$\)' || fail "allowBackup must be false"
+printf '%s\n' "$manifest" | grep -q ':dataExtractionRules(' || fail "dataExtractionRules missing"
+# Cleartext never in a release build. A debuggable build may carry the network security
+# config that lets live traffic reach the lab's stand-in server on the lab host (P9 §8).
+if printf '%s\n' "$manifest" | grep -q ':usesCleartextTraffic([^)]*)=true'; then
+    fail "usesCleartextTraffic must not be set"
+fi
+if ! printf '%s\n' "$badging" | grep -q '^application-debuggable'; then
+    if printf '%s\n' "$manifest" | grep -q ':networkSecurityConfig('; then
+        fail "a release build must not carry a network security config"
+    fi
+fi
 # Each service element flattened to one line carrying its own attributes. A nested
 # element (intent-filter) starts a new "E:" line and so ends the block, which is what we
 # want: only the service's own attributes decide whether it is safely declared.
@@ -87,6 +106,12 @@ printf '%s\n' "$manifest" | grep -q '"android.intent.action.TTS_SERVICE"' || fai
 if printf '%s\n' "$manifest" | grep -q 'E: package '; then
     fail "<queries> must not name packages"
 fi
+# P10: Breezy Weather's provider authority, and no other provider (docs/p10-plan.md §9).
+printf '%s\n' "$manifest" | grep -q 'A: http://schemas.android.com/apk/res/android:authorities([^)]*)="org.breezyweather.provider.weather"' \
+    || fail "Breezy Weather provider <queries> entry"
+[ "$(printf '%s\n' "$manifest" | grep -c ':authorities(')" = 1 ] || fail "only Breezy's authority may be queried or declared"
+# P10: the update notifier's receiver, exported, listening for Breezy's action alone.
+printf '%s\n' "$manifest" | grep -q '"org.breezyweather.ACTION_UPDATE_NOTIFIER"' || fail "weather notifier receiver"
 printf '%s\n' "$manifest" | grep -q '"android.hardware.usb.action.USB_ACCESSORY_ATTACHED"' || fail "accessory attach filter"
 # Release builds shorten resource paths, so resolve the file through the resource table.
 filter_path=$(aapt2 dump resources "$apk" | awk '$NF == "xml/accessory_filter" { getline; print $3; exit }')

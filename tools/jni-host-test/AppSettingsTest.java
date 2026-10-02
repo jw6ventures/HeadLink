@@ -6,6 +6,9 @@
 // SavedSettings, PerAttempt, AutoStart, MarkerColour and DayNightMode are pure Kotlin; the
 // SharedPreferences file around them, the attach intent, and the foreground-service start
 // need a device.
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
@@ -13,8 +16,10 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import org.openautoandroid.source.AlertLevel;
 import org.openautoandroid.source.AttemptSettings;
 import org.openautoandroid.source.AutoStart;
+import org.openautoandroid.source.ClockFormat;
 import org.openautoandroid.source.DayNightMode;
 import org.openautoandroid.source.MarkerColour;
 import org.openautoandroid.source.PerAttempt;
@@ -26,6 +31,7 @@ import org.openautoandroid.source.SpeechMedia;
 import org.openautoandroid.source.SpeedUnit;
 import org.openautoandroid.source.Stage;
 import org.openautoandroid.source.VoiceSettings;
+import org.openautoandroid.source.WeatherSettings;
 
 public final class AppSettingsTest {
     private static int passed;
@@ -39,7 +45,9 @@ public final class AppSettingsTest {
         theStoredFormReadsBackWhole();
         aStoredValueNoLongerOfferedReadsAsTheDefault();
         voiceGuidanceIsStoredWhole();
+        weatherIsStoredWhole();
         markerColoursHaveStableKeysAndARim();
+        clockFormatWritesTimes();
         dayNightCyclesAndResolves();
         autoStartNeedsEveryCondition();
         autoStartSaysWhyNotInOrder();
@@ -150,6 +158,37 @@ public final class AppSettingsTest {
         check(odd.getVoice().equals(new VoiceSettings()), "an unknown timing, detail or wrong type reads as the default");
     }
 
+    /**
+     * P10 (docs/p10-plan.md section 4): Show weather off by default (APP09), alerts spoken
+     * and shown from Severe; the three keys round trip, the level by name, and an unknown
+     * level or a wrong type reads as the default.
+     */
+    private static void weatherIsStoredWhole() {
+        WeatherSettings d = new SavedSettings().getWeather();
+        check(d.equals(new WeatherSettings()), "weather: the model's defaults");
+        check(!d.getEnabled(), "show weather: off");
+        check(d.getSpeakAlerts(), "speak weather alerts: on");
+        check(d.getAlertLevel() == AlertLevel.SEVERE, "alerts shown from severe");
+        Map<String, Object> defaults = new SavedSettings().toStored();
+        check(Boolean.FALSE.equals(defaults.get("weather_enabled")) && Boolean.TRUE.equals(defaults.get("weather_speak_alerts"))
+                && "severe".equals(defaults.get("weather_alert_level")), "and stored so on a first launch");
+        SavedSettings changed = stored("weather_enabled", true, "weather_speak_alerts", false, "weather_alert_level", "minor");
+        check(changed.getWeather().equals(new WeatherSettings(true, false, AlertLevel.MINOR)),
+                "every weather key read: " + changed.getWeather());
+        Map<String, Object> form = changed.toStored();
+        check("minor".equals(form.get("weather_alert_level")), "the level stored by name");
+        check(SavedSettings.Companion.fromStored(form).equals(changed), "the weather settings read back whole");
+        for (AlertLevel level : AlertLevel.values()) {
+            check(stored("weather_alert_level", level.getKey()).getWeather().getAlertLevel() == level,
+                    "the key round-trips: " + level);
+        }
+        SavedSettings odd = stored("weather_alert_level", "apocalyptic", "weather_enabled", "yes", "weather_speak_alerts", 1);
+        check(odd.getWeather().equals(new WeatherSettings()), "an unknown level or wrong type reads as the default");
+        check(AlertLevel.Companion.getLABELS().size() == 4
+                && AlertLevel.Companion.getLABELS().get(AlertLevel.SEVERE.ordinal()).equals("Severe"),
+                "the card offers four, in AlertLevel's order");
+    }
+
     /** Each condition connect() applied before P7.1, one stop-after at a time. */
     private static void stageConditionsSurviveTheMove() {
         PerAttempt all = new PerAttempt(true, true, true, true, true);
@@ -232,19 +271,20 @@ public final class AppSettingsTest {
                 "software_encoder", true, "video_preference", "800x480", "encoder_fps", 60,
                 "scene_area", SessionSettings.SCENE_AREA_FRAME, "scene", SessionSettings.SCENE_DEMO,
                 "map_on_left", false, "speed_unit", "km/h", "auto_start", false, "diagnostics", true,
-                "marker_colour", "magenta", "day_night", "night", "notifications_on_dashboard", true,
+                "marker_colour", "magenta", "clock_format", "12", "day_night", "night", "notifications_on_dashboard", true,
                 "notification_exclusions", excluded, "notifications_paused", true, "call_controls", true,
                 "read_aloud", false, "speech_media", "duck");
         SavedSettings d = new SavedSettings();
         // Every field moved off its default, so a key that failed to read would show.
         check(!changed.getProfile().equals(d.getProfile()) && changed.getKeyframeSeconds() == 60
                 && changed.getSpeedUnit() == SpeedUnit.KMH && changed.getMarkerColour() == MarkerColour.MAGENTA
+                && changed.getClockFormat() == ClockFormat.H12
                 && changed.getDayNight() == DayNightMode.NIGHT && changed.getNotificationExclusions().equals(excluded)
                 && !changed.getAutoStart() && changed.getCallControls() && !changed.getMapOnLeft()
                 && !changed.getReadAloud() && changed.getSpeechMedia() == SpeechMedia.DUCK,
                 "every key read: " + changed);
         Map<String, Object> form = changed.toStored();
-        check(form.size() == 51, "51 fields stored, one key each: " + form.size());
+        check(form.size() == 55, "55 fields stored, one key each: " + form.size());
         check(SavedSettings.Companion.fromStored(form).equals(changed), "the stored form reads back whole");
         check(SavedSettings.Companion.fromStored(d.toStored()).equals(d), "and so do the defaults");
         for (Object value : form.values()) {
@@ -252,7 +292,8 @@ public final class AppSettingsTest {
                     "only types SharedPreferences holds: " + value);
         }
         check("km/h".equals(form.get("speed_unit")) && "magenta".equals(form.get("marker_colour"))
-                && "night".equals(form.get("day_night")) && "duck".equals(form.get("speech_media")), "choices are stored by name, not by position");
+                && "night".equals(form.get("day_night")) && "duck".equals(form.get("speech_media"))
+                && "12".equals(form.get("clock_format")), "choices are stored by name, not by position");
     }
 
     private static void aStoredValueNoLongerOfferedReadsAsTheDefault() {
@@ -260,7 +301,7 @@ public final class AppSettingsTest {
         SavedSettings odd = stored(
                 "profile", "legacy-9", "stop_after", "moon", "keyframe_seconds", 7, "encoder_fps", 45,
                 "video_preference", "4000x3000", "sensors", "some", "speed_unit", "knots",
-                "marker_colour", "plaid", "day_night", "dusk", "speech_media", "shout");
+                "marker_colour", "plaid", "clock_format", "13", "day_night", "dusk", "speech_media", "shout");
         check(odd.equals(d), "unknown choices read as the defaults: " + odd);
         SavedSettings wrongTypes = stored("profile", 3, "audio", "yes", "keyframe_seconds", "60",
                 "notification_exclusions", "com.example.a");
@@ -292,6 +333,31 @@ public final class AppSettingsTest {
         check(MarkerColour.Companion.getLABELS().size() == 7
                 && MarkerColour.Companion.getLABELS().get(0).equals(MarkerColour.BLUE.getLabel()),
                 "the screen offers all seven, blue first");
+    }
+
+    private static void clockFormatWritesTimes() {
+        ZoneId utc = ZoneOffset.UTC;
+        long evening = Instant.parse("2026-09-30T18:40:59Z").toEpochMilli();
+        long morning = Instant.parse("2026-09-30T00:05:00Z").toEpochMilli();
+        long noon = Instant.parse("2026-09-30T12:00:00Z").toEpochMilli();
+        check(ClockFormat.Companion.getDEFAULT() == ClockFormat.H24 && new SavedSettings().getClockFormat() == ClockFormat.H24,
+                "24-hour by default, as the dashboard drew before the choice");
+        check("18:40".equals(ClockFormat.H24.time(evening, utc)) && "00:05".equals(ClockFormat.H24.time(morning, utc)),
+                "24-hour times: " + ClockFormat.H24.time(evening, utc));
+        check("6:40 PM".equals(ClockFormat.H12.time(evening, utc)) && "12:05 AM".equals(ClockFormat.H12.time(morning, utc))
+                && "12:00 PM".equals(ClockFormat.H12.time(noon, utc)), "12-hour times: " + ClockFormat.H12.time(evening, utc));
+        check("18:40".equals(ClockFormat.H24.clock(evening, utc)) && "6:40".equals(ClockFormat.H12.clock(evening, utc)),
+                "the header clock has no marker: " + ClockFormat.H12.clock(evening, utc));
+        check("18:00".equals(ClockFormat.H24.hour(evening, utc)) && "6 PM".equals(ClockFormat.H12.hour(evening, utc))
+                && "12 AM".equals(ClockFormat.H12.hour(morning, utc)), "hours: " + ClockFormat.H12.hour(evening, utc));
+        check(ClockFormat.Companion.split("6:40 PM").equals(new kotlin.Pair<>("6:40", "PM"))
+                && ClockFormat.Companion.split("18:40").equals(new kotlin.Pair<String, String>("18:40", null))
+                && ClockFormat.Companion.split("—").equals(new kotlin.Pair<String, String>("—", null)),
+                "the marker splits off a 12-hour time only");
+        check(ClockFormat.Companion.of(null) == ClockFormat.H24 && ClockFormat.Companion.of("12") == ClockFormat.H12,
+                "stored keys read back");
+        check(ClockFormat.Companion.getLABELS().size() == 2
+                && ClockFormat.Companion.getLABELS().get(0).equals(ClockFormat.H24.getLabel()), "the screen offers both, 24-hour first");
     }
 
     private static double luminance(int argb) {

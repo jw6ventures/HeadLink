@@ -134,6 +134,12 @@ object Speaker {
     private var sampleOwnsEngine = false
     private val sampleTimeout = Runnable { if (sampleId == null) sampleOver(SampleOutcome.ENGINE_TIMEOUT) }
 
+    /**
+     * P10: the words of the alerts waiting their turn ([SpeechQueue.waitingAlerts]), by
+     * key. Each is held only until it is said or dropped; never logged.
+     */
+    private val waitingText = HashMap<String, String>()
+
     /** Set by [MediaAccessService]; null while the listener is not connected. */
     @Volatile
     var textSource: NotificationTextSource? = null
@@ -170,6 +176,8 @@ object Speaker {
             if (queue.interrupt(SpeechEnd.BLUETOOTH_LOST, now())) {
                 tts?.stop()
                 lingerThenAbandon()
+                // Weather alerts waiting their turn meet the gate now, and are counted.
+                releaseWaiting()
                 readingChanged()
             }
         }
@@ -250,6 +258,7 @@ object Speaker {
         }
         tts = null
         ready = false
+        waitingText.clear()
         audio?.unregisterAudioDeviceCallback(devices)
         audio = null
         readingChanged()
@@ -282,6 +291,8 @@ object Speaker {
                 queue.textFetched(full = words != null, cut = composed.truncated)
                 if (say(action, composed.text)) SessionController.note("notification read aloud")
             }
+            // A read never waits: only a weather alert does.
+            is SpeechAction.Wait -> Unit
         }
         readingChanged()
     }
@@ -300,14 +311,59 @@ object Speaker {
     }
 
     /**
-     * Stops a turn prompt being spoken, for the toggle going off (§6). A notification
-     * being read is left alone: the toggle is guidance's only.
+     * P10: a weather alert newly in force, from [WeatherFeed] (docs/p10-plan.md §6):
+     * "Weather alert. " and its headline, through the gate and the voice toggle. One that
+     * must wait its turn, behind a turn prompt or another alert, is held here and said
+     * when its turn comes, in the order asked. The note says what happened, never the
+     * headline.
+     */
+    fun alert(alert: WeatherAlert) {
+        if (sampleOwnsEngine || tts == null) return
+        val text = WeatherText.spoken(alert)
+        when (val action = queue.alert(alert.id, now(), conditions())) {
+            is SpeechAction.Speak -> if (say(action, text)) SessionController.note("weather alert spoken")
+            is SpeechAction.Skip -> SessionController.note("weather alert not spoken (${action.reason.key})")
+            is SpeechAction.Wait -> {
+                waitingText[action.key] = text
+                SessionController.note("weather alert waiting its turn")
+                // Nothing may be being said any more (an earlier release was refused focus),
+                // in which case the line goes now rather than at the next utterance's end.
+                releaseWaiting()
+            }
+            is SpeechAction.Stop -> Unit
+        }
+        readingChanged()
+    }
+
+    /**
+     * P10: the next alert waiting its turn, once no prompt or alert is being said. One that
+     * is skipped (the toggle, a call or the gate changed while it waited) is counted and the
+     * next is tried, so the line stops only at one being said or at its end.
+     */
+    private fun releaseWaiting() {
+        while (true) {
+            val key = queue.waitingAlerts.firstOrNull() ?: break
+            val action = queue.waiting(now(), conditions()) ?: break
+            val text = waitingText.remove(key)
+            when (action) {
+                is SpeechAction.Speak -> if (text != null && say(action, text)) SessionController.note("weather alert spoken")
+                is SpeechAction.Skip -> SessionController.note("weather alert not spoken (${action.reason.key})")
+                else -> Unit
+            }
+        }
+        if (queue.waitingAlerts.isEmpty()) waitingText.clear()
+    }
+
+    /**
+     * Stops a turn prompt being spoken, for the toggle going off (§6), and since P10 a
+     * weather alert, which the toggle also governs. A notification being read is left alone.
      */
     fun stopGuidance() {
-        if (queue.speaking != SpeechKind.GUIDANCE) return
+        if (queue.speaking != SpeechKind.GUIDANCE && queue.speaking != SpeechKind.ALERT) return
         if (queue.interrupt(SpeechEnd.STOPPED, now())) {
             tts?.stop()
             lingerThenAbandon()
+            releaseWaiting()
         }
     }
 
@@ -375,7 +431,7 @@ object Speaker {
                 }
             }
             is SpeechAction.Skip -> sampleOver(SampleOutcome.of(action.reason))
-            is SpeechAction.Stop -> Unit
+            is SpeechAction.Stop, is SpeechAction.Wait -> Unit
         }
         readingChanged()
     }
@@ -432,6 +488,8 @@ object Speaker {
     private fun finished(id: String, end: SpeechEnd) {
         if (!queue.finished(id, end, now())) return
         lingerThenAbandon()
+        // P10: the next weather alert waiting its turn goes now, before the next prompt.
+        releaseWaiting()
         readingChanged()
     }
 

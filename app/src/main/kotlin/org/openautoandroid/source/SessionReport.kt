@@ -100,6 +100,10 @@ object SessionReport {
             appendLine("[routing]")
             appendLine(Routing.report(context).trimEnd())
             appendLine()
+            // P9: counts, minutes and booleans; never a box, a road, a reason or the key.
+            appendLine("[traffic]")
+            appendLine(Traffic.report().trimEnd())
+            appendLine()
             appendLine("[native_session]")
             appendLine(SessionController.nativeReport.ifEmpty { "-" }.trimEnd())
             appendLine()

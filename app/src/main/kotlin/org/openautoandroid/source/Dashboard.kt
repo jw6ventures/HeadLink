@@ -1,8 +1,6 @@
 package org.openautoandroid.source
 
-import java.time.Instant
 import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 
 /** A rectangle in video frame coordinates. Plain JVM, so tools/jni-host-test can check it. */
 data class Box(val x: Int, val y: Int, val width: Int, val height: Int) {
@@ -21,6 +19,28 @@ data class AlternativeMark(val id: Long, val latitude: Double, val longitude: Do
 data class AlternativeBubble(val id: Long, val box: Box, val label: String, val pressed: Boolean)
 
 /**
+ * The offer as the divided turn card draws it (P9.6, docs/p9-plan.md §7): "Faster: −7 min",
+ * the reason, and which of Take and Keep a finger is on. Words only, so the chrome repaints
+ * when what it says changes and not when the traffic loop republishes the same offer.
+ */
+data class OfferCard(val id: Long, val label: String, val reason: String, val pressed: String?)
+
+/** Take or Keep pressed on offer [id] (P9.6): [take] is Take. */
+data class OfferAnswer(val id: Long, val take: Boolean)
+
+/**
+ * How the turn card divides while a faster way round is offered (P9.6). The plan leaves the
+ * choice to lab renders at the truck's pane size (§11), so both are built.
+ */
+enum class OfferLayout(val key: String) {
+    /** The turn card as it always is, with the offer in a band of its own beneath it. */
+    STACKED("stacked"),
+
+    /** One card: the turn at the left, two fifths wide, the offer at the right. */
+    SIDE_BY_SIDE("side-by-side"),
+}
+
+/**
  * Layout of the projected dashboard inside the video content rectangle (spec §8.2): a
  * status header across the top, an owned map filling one half below it, and the other
  * half holding the media pane over two tiles, the first of which lists the saved places —
@@ -31,12 +51,14 @@ data class AlternativeBubble(val id: Long, val box: Box, val label: String, val 
  * and getting it wrong is only discoverable from the driver's seat — the same reason
  * `scene_area` is a setting rather than a constant.
  */
-class DashboardLayout(
+class DashboardLayout @JvmOverloads constructor(
     val x: Int,
     val y: Int,
     val width: Int,
     val height: Int,
     val mapOnLeft: Boolean,
+    /** How the turn card divides for an offer (P9.6); [defaultOfferLayout] unless a test asks. */
+    val offerLayout: OfferLayout = defaultOfferLayout,
 ) {
     val margin: Int = maxOf(2, width / 96)
 
@@ -221,6 +243,41 @@ class DashboardLayout(
      * card since P7.4, and the room it leaves stays empty (plan §5.1).
      */
     val headerTextRight: Int get() = headerIcon(0).x - margin
+
+    /**
+     * P10: the weather item (docs/p10-plan.md §5.1), a margin left of Ⓟ: full header height,
+     * like the icons, and a fixed 2.2 headers wide, so the clock and the speed never move as
+     * the temperature changes. The glyph and the text sit half a margin in from each other
+     * and the box's edge: with whole margins, "-12°C" did not fit by the generous
+     * [EM_PER_CHARACTER] estimate, and a wider box left Ford's 726x480 header too little
+     * room for the clock, speed and bearing (WeatherTest). Drawn, and a target, only while
+     * Show weather is on.
+     */
+    val headerWeather: Box = run {
+        val w = header * 22 / 10
+        val right = headerIcon(0).x - margin
+        Box(right - w, y, w, header)
+    }
+
+    /** How far right the header's text may run: short of the weather item while it is shown. */
+    fun headerTextRight(weather: Boolean): Int = if (weather) headerWeather.x - margin else headerTextRight
+
+    /** Whether a point is on the weather item. It cannot reach Ⓟ: a margin lies between them. */
+    fun hitHeaderWeather(px: Int, py: Int): Boolean = headerWeather.contains(px, py)
+
+    /** The weather item's condition glyph, a square at its left, and its temperature's text size. */
+    val headerWeatherGlyph: Int = header * 6 / 10
+    val headerWeatherTextSize: Float = header * 0.42f
+
+    /**
+     * The temperature as the item has room for it (plan §5.1): [full], "78°F", else [short],
+     * "78°". Judged by [EM_PER_CHARACTER], a generous width, so what is chosen here fits
+     * whatever the font; the drawing still cuts rather than overruns.
+     */
+    fun headerWeatherText(full: String, short: String): String {
+        val room = headerWeather.width - headerWeatherGlyph - margin
+        return if (EM_PER_CHARACTER * headerWeatherTextSize * full.length <= room) full else short
+    }
 
     /** The tile at a point in frame coordinates, or -1. */
     fun hitTile(px: Int, py: Int): Int = tiles.indexOfFirst { it.contains(px, py) }
@@ -565,6 +622,134 @@ class DashboardLayout(
     fun hitPlayer(px: Int, py: Int, count: Int, hint: Boolean): Int =
         (0 until minOf(count, PLAYER_ROWS)).firstOrNull { playerRow(it, hint).contains(px, py) } ?: -1
 
+    // --- P9: live traffic (docs/p9-plan.md §6, §7) ----------------------------------
+
+    /**
+     * "Traffic © HERE" (P9.3, plan §1 clause 6.4 a): a line above the ODbL credit, in the
+     * same size and on the same kind of plate, ending a margin short of the − bubble.
+     *
+     * Not beside the ODbL credit on its own line: at 726x480 the two together are wider
+     * than the room between the corner stacks. Not above it at the pane's edge either, where
+     * the zoom stack is. Here it is clear of both stacks, of the turn card and of the offer,
+     * at every display the project renders (DashboardTrafficTest). The width is estimated at
+     * [EM_PER_CHARACTER]; the drawing measures the real text and right-aligns it inside.
+     */
+    val trafficAttribution: Box = run {
+        val pad = maxOf(1, attributionTextSize * 3 / 10)
+        val w = (EM_PER_CHARACTER * attributionTextSize * TRAFFIC_ATTRIBUTION.length).toInt() + 2 * pad
+        val h = attributionTextSize + 2 * pad
+        val right = zoomBubble(ZOOM_ACTIONS.size - 1).x - margin
+        val bottom = attributionTop - maxOf(1, margin / 2)
+        Box(right - w, bottom - h, w, h)
+    }
+
+    /**
+     * Text size of the trip panel's "+7 min traffic" (P9.4, plan §6), on the caption line
+     * above the arrival time: the caption's own 0.22 of the summary, brought down if need be
+     * so "+12 min traffic" fits beside a six-character time remaining. The drawing measures
+     * the real text and leaves "arrive ·" in front of it only where that fits too.
+     */
+    val tripTrafficTextSize: Float = run {
+        val h = tripSummary.height
+        val room = tripSummary.width - margin - 6 * EM_PER_CHARACTER * 0.3f * h
+        minOf(0.22f * h, room / (EM_PER_CHARACTER * TRAFFIC_LABEL_CHARACTERS))
+    }
+
+    /**
+     * The turn card while an offer is up (P9.6, plan §7 "The offer"): the whole plate, taller
+     * than [turnCard], whose part [offerTurn] keeps the next turn and part [offerPart] holds
+     * the offer. Stacked, the turn part *is* [turnCard], so guidance does not move at all;
+     * the offer band under it is three quarters of the card's height, and never less than a
+     * map bubble with a margin round it, so Take and Keep are at least a bubble tall.
+     * Side by side, the card grows until the offer's two lines and a bubble-tall row of
+     * buttons fit in three fifths of its width.
+     */
+    val offerCard: Box = run {
+        val h = turnCard.height
+        val tall = when (offerLayout) {
+            OfferLayout.STACKED -> h + maxOf(bubbleSize + 2 * margin, h * 3 / 4)
+            OfferLayout.SIDE_BY_SIDE -> maxOf(h, margin + h / 2 + bubbleSize + margin)
+        }
+        Box(turnCard.x, turnCard.y, turnCard.width, tall)
+    }
+
+    /** The next turn's part of the divided card. */
+    val offerTurn: Box = when (offerLayout) {
+        OfferLayout.STACKED -> turnCard
+        OfferLayout.SIDE_BY_SIDE -> Box(offerCard.x, offerCard.y, offerCard.width * 2 / 5, offerCard.height)
+    }
+
+    /**
+     * The maneuver icon in [offerTurn]: [turnIcon] stacked; side by side, a square across
+     * the part's top, three fifths of the card tall at most, with the distance under it.
+     */
+    val offerTurnIcon: Box = when (offerLayout) {
+        OfferLayout.STACKED -> turnIcon
+        OfferLayout.SIDE_BY_SIDE -> {
+            val inset = maxOf(1, margin / 2)
+            val side = maxOf(0, minOf(offerTurn.width - 2 * inset, offerTurn.height * 3 / 5))
+            Box(offerTurn.x + (offerTurn.width - side) / 2, offerTurn.y + inset, side, side)
+        }
+    }
+
+    /**
+     * Whether the divided card still has room for the street (plan §7: "the street name
+     * dropped if there is no room"). Stacked it keeps its whole line; side by side the turn
+     * part is two fifths of a card whose width the icon already takes most of.
+     */
+    val offerTurnStreet: Boolean = offerLayout == OfferLayout.STACKED
+
+    /** The offer's part of the divided card. */
+    val offerPart: Box = when (offerLayout) {
+        OfferLayout.STACKED -> Box(offerCard.x, turnCard.bottom, offerCard.width, offerCard.bottom - turnCard.bottom)
+        OfferLayout.SIDE_BY_SIDE -> Box(offerTurn.right, offerCard.y, offerCard.right - offerTurn.right, offerCard.height)
+    }
+
+    /**
+     * Take (index 0) and Keep (1), in [OFFER_ACTIONS] order, left to right at the offer's
+     * right (stacked) or across its bottom (side by side). Each at least a map bubble tall
+     * and half as wide again, the size a head-unit target has had since P5.5, and a margin
+     * apart, so a square target cannot reach its neighbour.
+     */
+    fun offerButton(index: Int): Box {
+        val part = offerPart
+        return when (offerLayout) {
+            OfferLayout.STACKED -> {
+                val h = maxOf(0, part.height - 2 * margin)
+                val w = maxOf(bubbleSize * 3 / 2, part.width / 5)
+                val fromRight = OFFER_ACTIONS.size - 1 - index
+                Box(part.right - margin - w - fromRight * (w + margin), part.y + margin, w, h)
+            }
+            OfferLayout.SIDE_BY_SIDE -> {
+                val w = maxOf(0, (part.width - 3 * margin) / 2)
+                Box(part.x + margin + index * (w + margin), part.bottom - margin - bubbleSize, w, bubbleSize)
+            }
+        }
+    }
+
+    /** Where "Faster: −7 min" and the reason go: the offer's part, less its buttons. */
+    val offerText: Box = run {
+        val part = offerPart
+        val inset = maxOf(1, margin / 2)
+        when (offerLayout) {
+            OfferLayout.STACKED -> Box(part.x + margin, part.y + inset, maxOf(0, offerButton(0).x - margin - part.x - margin), maxOf(0, part.height - 2 * inset))
+            OfferLayout.SIDE_BY_SIDE -> Box(part.x + margin, part.y + inset, maxOf(0, part.width - 2 * margin), maxOf(0, offerButton(0).y - inset - part.y - inset))
+        }
+    }
+
+    /** The offer's action at a point, "take" or "keep", or null. */
+    fun hitOfferButton(px: Int, py: Int): String? =
+        OFFER_ACTIONS.indices.firstOrNull { offerButton(it).contains(px, py) }?.let { OFFER_ACTIONS[it] }
+
+    /**
+     * Where the map frames both routes while an offer is up (plan §7): the pane under the
+     * divided card, inset by a margin, so neither route is hidden behind the card.
+     */
+    val offerView: Box = run {
+        val top = offerCard.bottom + margin
+        Box(map.x + margin, top, maxOf(0, map.width - 2 * margin), maxOf(0, map.bottom - margin - top))
+    }
+
     /**
      * Text size for the empty favourites tile's two lines (P7.5, plan §5.7), sized so the
      * longer one fits the list's width rather than being cut off, as "none saved — add
@@ -581,7 +766,8 @@ class DashboardLayout(
             "map=${map.x},${map.y}+${map.width}x${map.height} bubble=$bubbleSize " +
             "media=${media.x}:${media.y}+${media.width}x${media.height} " +
             "art=${albumArt.width}x${albumArt.height} " +
-            "tiles=" + tiles.joinToString(",") { "${it.x}:${it.y}+${it.width}x${it.height}" }
+            "tiles=" + tiles.joinToString(",") { "${it.x}:${it.y}+${it.width}x${it.height}" } +
+            " offer=${offerLayout.key}"
 
     companion object {
         /** The configurable tiles under the media pane; media is not one of them. */
@@ -628,6 +814,29 @@ class DashboardLayout(
 
         /** A generous width of one character, in ems, for sizing text that must not be cut. */
         const val EM_PER_CHARACTER = 0.62f
+
+        /** The divided card's targets, left to right (P9.6). */
+        val OFFER_ACTIONS = listOf("take", "keep")
+
+        /** HERE's credit (P9.3); [TrafficDisplay.ATTRIBUTION]. */
+        const val TRAFFIC_ATTRIBUTION = TrafficDisplay.ATTRIBUTION
+
+        /** "+12 min traffic": the longest delay label [tripTrafficTextSize] is sized for. */
+        const val TRAFFIC_LABEL_CHARACTERS = 15
+
+        /**
+         * Which way the card divides in layouts made from now on (P9.6). The plan leaves it
+         * to the lab's renders (§11); side by side is the default because it fits the truck's
+         * panes better. At 726x480 it takes 99 px of the 413 px pane where stacked takes 143,
+         * leaving 293 px of map under the card for the two routes against 249, and its Take
+         * and Keep are 91x44 against 67x47. It is also the plan's own description, "the next
+         * turn keeps the left part". What it costs is the street name and a smaller icon (59
+         * px against 76); stacked keeps the turn exactly as it is. Setting this before
+         * projection starts renders stacked instead, for the lab to show James both.
+         */
+        @JvmStatic
+        @Volatile
+        var defaultOfferLayout: OfferLayout = OfferLayout.SIDE_BY_SIDE
     }
 }
 
@@ -745,7 +954,7 @@ data class TripStep(val maneuver: Int, val exit: Int, val distance: String)
  * route with no fix on it yet); End route is drawn whatever they are.
  */
 data class TripPanel(
-    /** The clock time of arrival, "18:40", or null. */
+    /** The clock time of arrival, "18:40" or "6:40 PM", or null. */
     val arrival: String?,
     /** Time remaining, "12 min", or null. */
     val remaining: String?,
@@ -762,6 +971,11 @@ data class TripPanel(
     val voiceWarning: Boolean = false,
     /** A finger is on the voice toggle. */
     val voicePressed: Boolean = false,
+    /**
+     * "+7 min traffic" (P9.4, plan §6): the traffic delay already added into [remaining]
+     * and [arrival], labelled; null when it rounds to under a minute or there is no figure.
+     */
+    val traffic: String? = null,
 )
 
 /**
@@ -787,6 +1001,12 @@ data class DashboardChoices @JvmOverloads constructor(
     val rememberedNight: Boolean? = null,
     /** The trip panel's voice toggle as last left (P8.2); saved, so a muted route stays muted. */
     val voiceGuidance: Boolean = true,
+    /** P10: Show weather: the header's weather item, its tapped view and alerts in the tile. */
+    val weather: Boolean = false,
+    /** P10: Alerts shown from: the lowest severity that takes the flex tile. */
+    val alertLevel: AlertLevel = AlertLevel.DEFAULT,
+    /** 12- or 24-hour: the header clock, the arrival time and the weather's times. */
+    val clockFormat: ClockFormat = ClockFormat.DEFAULT,
 )
 
 /**
@@ -977,6 +1197,17 @@ class Dashboard @JvmOverloads constructor(
         /** The key a finger is on, as an index into [FlexRules.KEYPAD_KEYS], or -1. */
         val pressedKey: Int = -1,
         val pressedKeypadClose: Boolean = false,
+        // P9: live traffic (docs/p9-plan.md §6, §7).
+        /** "Traffic © HERE" is owed ([TrafficDisplay.attributed]) and drawn in the map's corner. */
+        val trafficAttributed: Boolean = false,
+        /** A faster way round, dividing the turn card with Take and Keep; or null. */
+        val offer: OfferCard? = null,
+        /** P10: the header's weather item; null while Show weather is off. */
+        val weatherHeader: WeatherHeader? = null,
+        /** P10: the tapped weather view, while the flex tile shows it. */
+        val weatherView: WeatherPanel? = null,
+        /** P10: the weather alert, while the flex tile shows it. */
+        val weatherAlert: WeatherAlertCard? = null,
     ) {
         /** Leaves out everything drawn from the phone's own data, in case a snapshot is ever printed. */
         override fun toString(): String = "Snapshot(frame=$frame flex=${flex.key} keypad=$keypadOpen)"
@@ -1018,6 +1249,7 @@ class Dashboard @JvmOverloads constructor(
     private var dayNight = choices.dayNight
     private val rememberedNight = choices.rememberedNight
     private val markerColour = choices.markerColour
+    private val clockFormat = choices.clockFormat
     private val diagnostics = choices.diagnostics
     private var notificationsPaused = choices.notificationsPaused
 
@@ -1151,6 +1383,56 @@ class Dashboard @JvmOverloads constructor(
     private var keypadAutoCloses = 0L
     private var keypadPresses = 0L
 
+    // P9: live traffic (docs/p9-plan.md §6, §7). The traffic loop publishes what to show;
+    // these are what the dashboard made of it. Counts only in the report: never a place.
+    private var trafficDisplay: TrafficDisplay = TrafficDisplay.EMPTY
+
+    /** The route being followed, as the map draws it: where the offer's view starts from. */
+    private var followedRoute: Route? = null
+
+    /**
+     * The offer Take or Keep answered, hidden from then on although the traffic loop has not
+     * yet published a display without it, so the card becomes whole the moment it is pressed.
+     */
+    private var answeredOffer: Long? = null
+    private var pressedOffer: String? = null
+    private var pressedOfferId = 0L
+    private var offerAnswer: OfferAnswer? = null
+    private var trafficDisplays = 0L
+    private var attributedFrames = 0L
+    private var offersShown = 0L
+    private var offersTaken = 0L
+    private var offersKept = 0L
+    private var offersWithdrawn = 0L
+    private var offerFits = 0L
+    private var offerRefollows = 0L
+
+    // P10: weather (docs/p10-plan.md §5). What the feed last read, held for drawing only;
+    // the report counts how the item and the views were used, never what they said.
+    private var weatherOn = choices.weather
+    private var alertLevel = choices.alertLevel
+    private var weatherState = WeatherState.NONE
+    private var weatherOpen = false
+    private var weatherOpenedAt = 0L
+    private var pressedWeather = false
+    /** The press on the header item came down during a call: it does nothing, and is counted. */
+    private var pressedWeatherInCall = false
+    /** Which weather source a finger came down on in the flex tile, or null. */
+    private var pressedWeatherTile: FlexSource? = null
+    private var pressedWeatherAlert: String? = null
+    /** Alerts dismissed with a tap, for this session; an upgrade under a new id shows again. */
+    private val dismissedAlerts = HashSet<String>()
+    private val shownAlerts = HashSet<String>()
+    private var lastNowMillis = 0L
+    private var weatherOpens = 0L
+    private var weatherClosesTap = 0L
+    private var weatherClosesView = 0L
+    private var weatherClosesTimeout = 0L
+    private var weatherClosesCall = 0L
+    private var weatherTapsInCall = 0L
+    private var alertsDismissed = 0L
+    private var weatherFar = false
+
     @Synchronized
     fun vehicle(reading: VehicleReading) {
         vehicleEvents++
@@ -1188,6 +1470,35 @@ class Dashboard @JvmOverloads constructor(
         upcomingTurn = turn
     }
 
+    /**
+     * P10: what the weather feed read last (docs/p10-plan.md §3), whole, on every read; the
+     * empty state when a projection ends or weather goes off. Main thread.
+     */
+    @Synchronized
+    fun weather(state: WeatherState) {
+        weatherState = state
+    }
+
+    /**
+     * P10: Show weather or Alerts shown from changed mid-session (the lab, or the phone's
+     * card). Off takes the item and both views away at once.
+     */
+    @Synchronized
+    fun weatherChoices(on: Boolean, level: AlertLevel) {
+        weatherOn = on
+        alertLevel = level
+        if (!on) {
+            weatherOpen = false
+            pressedWeather = false
+            pressedWeatherInCall = false
+            pressedWeatherTile = null
+        }
+    }
+
+    /** P10: the weather view is open (for the lab and the tests). */
+    @Synchronized
+    fun weatherOpen(): Boolean = weatherOpen
+
     /** The live alternatives to put bubbles on; empty takes them away. */
     @Synchronized
     fun alternatives(marks: List<AlternativeMark>) {
@@ -1199,6 +1510,84 @@ class Dashboard @JvmOverloads constructor(
     @Synchronized
     fun takeAlternativePick(): Long? = alternativePick.also { alternativePick = null }
 
+    /**
+     * What the map shows of traffic now (P9.3, P9.4, P9.6), from the traffic loop, whole,
+     * whenever the traffic, the delay or the offer changes. Main thread, through
+     * [ProjectionPipeline.traffic]; the scene thread reads it back with [trafficDisplay].
+     *
+     * An offer arriving divides the turn card and, if the map is following the vehicle,
+     * fits the map to both routes. Its going — withdrawn by the loop, replaced by another,
+     * or answered here — makes the card whole and puts the map back on the vehicle, unless
+     * the driver has moved the map since ([MapControl.fitted]). A map the driver had
+     * already moved when the offer came is left where they put it.
+     */
+    @Synchronized
+    fun traffic(display: TrafficDisplay) {
+        trafficDisplays++
+        val before = shownOffer()
+        trafficDisplay = display
+        if (display.offer?.id != answeredOffer) answeredOffer = null
+        val after = shownOffer()
+        if (after?.id == before?.id) return
+        if (before != null) {
+            offersWithdrawn++
+            endOffer()
+        }
+        if (after != null) beginOffer(after)
+    }
+
+    /** The traffic display the map draws from. Scene thread, each frame. */
+    @Synchronized
+    fun trafficDisplay(): TrafficDisplay = trafficDisplay
+
+    /** The offer on show, answered ones excepted: the one the map draws the proposal of. */
+    @Synchronized
+    fun shownOffer(): TrafficOffer? = trafficDisplay.offer?.takeIf { it.id != answeredOffer }
+
+    /**
+     * The route the map is drawing ([Routing.line]), from the scene thread when it changes:
+     * the offer's view frames the rest of it from the vehicle.
+     */
+    @Synchronized
+    fun followedRoute(route: Route?) {
+        followedRoute = route
+    }
+
+    /** Take or Keep, pressed since the last call, once; or null. The caller takes it (P9.6). */
+    @Synchronized
+    fun takeOfferAnswer(): OfferAnswer? = offerAnswer.also { offerAnswer = null }
+
+    private fun beginOffer(offer: TrafficOffer) {
+        offersShown++
+        pressedOffer = null
+        // A finger already on the card came down on the whole turn card, and lifts on Take or
+        // Keep: that must not answer an offer the driver had not seen when pressing.
+        pressedOfferId = 0L
+        if (!mapControl.following && !mapControl.fitted) return
+        // The rest of the followed route from the vehicle, and the whole proposal, which
+        // starts near the vehicle; the vehicle itself too, so it is never off the view.
+        val lats = ArrayList<DoubleArray>()
+        val lons = ArrayList<DoubleArray>()
+        val position = followPosition()
+        followedRoute?.let { route ->
+            val from = position?.let { TrafficLines.nearestIndex(route, it.first, it.second) } ?: 0
+            lats += route.latitudes.copyOfRange(from, route.points)
+            lons += route.longitudes.copyOfRange(from, route.points)
+        }
+        lats += offer.route.latitudes
+        lons += offer.route.longitudes
+        position?.let {
+            lats += doubleArrayOf(it.first)
+            lons += doubleArrayOf(it.second)
+        }
+        if (mapControl.fit(lats, lons, layout.map, layout.offerView)) offerFits++
+    }
+
+    private fun endOffer() {
+        pressedOffer = null
+        if (mapControl.unfit()) offerRefollows++
+    }
+
     /** Each alternative's bubble where the map puts it now; one off the pane is not drawn and takes no press. */
     private fun alternativeBubbles(): List<AlternativeBubble> = alternatives.mapNotNull { mark ->
         mapControl.marker(layout.map, mark.latitude to mark.longitude)?.let { (x, y) ->
@@ -1209,6 +1598,10 @@ class Dashboard @JvmOverloads constructor(
     /** The alternative whose bubble is at a point, the last drawn (topmost) first, or null. */
     private fun hitAlternative(px: Int, py: Int): Long? =
         alternativeBubbles().lastOrNull { it.box.contains(px, py) }?.id
+
+    /** Whether a point is on the turn card, or on the divided card while an offer is up. */
+    private fun onCard(px: Int, py: Int): Boolean =
+        (turnCard() != null && layout.turnCard.contains(px, py)) || (shownOffer() != null && layout.offerCard.contains(px, py))
 
     /**
      * Whether End route was pressed since the last call (P7.4), once. The caller ends the
@@ -1339,6 +1732,13 @@ class Dashboard @JvmOverloads constructor(
             // A finger on a notification when the call took the tile would otherwise
             // lift onto Answer or Decline and be read as a tap on a row.
             notificationList.cancel()
+            pressedWeatherTile = null
+            pressedWeatherAlert = null
+            // P10 (plan §5.2): a call closes the weather view, which does not come back.
+            if (weatherOpen) {
+                weatherOpen = false
+                weatherClosesCall++
+            }
         }
         if (keypadOpen && !state.canDial) {
             keypadAutoCloses++
@@ -1482,6 +1882,7 @@ class Dashboard @JvmOverloads constructor(
     @JvmOverloads
     fun touch(action: String, pointers: List<TouchPoint>, nowMillis: Long = System.currentTimeMillis()): String? {
         touches++
+        lastNowMillis = nowMillis
         val first = pointers.firstOrNull() ?: return null
         val px = first.x
         val py = first.y
@@ -1505,15 +1906,24 @@ class Dashboard @JvmOverloads constructor(
                 if (action == "down") {
                     pressedMapBubble = layout.hitMapBubble(px, py)
                     pressedZoom = layout.hitZoomBubble(px, py)
-                    // Under the map's own bubbles: a control drawn over an alternative wins.
-                    pressedAlternative = if (pressedMapBubble == null && pressedZoom == null) hitAlternative(px, py) else null
+                    // P9.6: the divided card and its two targets own every press on it.
+                    val onCard = onCard(px, py)
+                    val offer = shownOffer()
+                    pressedOffer = if (offer != null) layout.hitOfferButton(px, py) else null
+                    pressedOfferId = offer?.id ?: 0L
+                    // Under the map's own bubbles: a control drawn over an alternative wins,
+                    // and so does the card over one that has slid under it.
+                    pressedAlternative = if (pressedMapBubble == null && pressedZoom == null && !onCard) hitAlternative(px, py) else null
                     pressedHeaderIcon = layout.hitHeaderIcon(px, py)
+                    // P10: the weather item. During a call it does not light (plan §5.2).
+                    val onWeather = weatherOn && layout.hitHeaderWeather(px, py)
+                    pressedWeatherInCall = onWeather && call.phase != CallPhase.NONE
+                    pressedWeather = onWeather && !pressedWeatherInCall
                     pressedEndRoute = upcomingTurn != null && layout.hitEndRoute(px, py)
                     pressedVoice = upcomingTurn != null && layout.hitVoiceToggle(px, py)
                     pressedPlayer = if (idle) layout.hitPlayer(px, py, players.size, !mediaAccess) else -1
                     // A finger on the turn card is on the card, not on the map under it.
-                    mapGesture = pressedMapBubble == null && pressedZoom == null && pressedAlternative == null &&
-                        !(turnCard() != null && layout.turnCard.contains(px, py))
+                    mapGesture = pressedMapBubble == null && pressedZoom == null && pressedAlternative == null && !onCard
                     // The favourites are not drawn during a trip, so they take no presses.
                     if (upcomingTurn == null && layout.favoritesList.contains(px, py)) {
                         favoriteList.down(py, layout.hitFavorite(px, py, favoriteList.scroll, favorites.size))
@@ -1528,6 +1938,11 @@ class Dashboard @JvmOverloads constructor(
                     if (flex == FlexSource.NOTIFICATIONS && layout.notificationsList.contains(px, py)) {
                         notificationList.down(py, layout.hitNotification(px, py, notificationList.scroll, notifications.size))
                     }
+                    // P10: the weather view and the alert are each one target, the whole tile.
+                    val weatherTile = (flex == FlexSource.WEATHER || flex == FlexSource.WEATHER_ALERT) &&
+                        layout.flexTile.contains(px, py)
+                    pressedWeatherTile = if (weatherTile) flex else null
+                    pressedWeatherAlert = if (weatherTile && flex == FlexSource.WEATHER_ALERT) shownAlert(nowMillis)?.id else null
                 }
             }
             "move" -> {
@@ -1544,7 +1959,20 @@ class Dashboard @JvmOverloads constructor(
                 val voice = upcomingTurn != null && layout.hitVoiceToggle(px, py)
                 val player = if (mediaIdle()) layout.hitPlayer(px, py, players.size, !mediaAccess) else -1
                 val callAction = if (flexSource() == FlexSource.CALL) layout.hitCallAction(px, py, FlexRules.actions(call)) else null
-                val alternative = if (bubble == null && zoom == null) hitAlternative(px, py) else null
+                val alternative = if (bubble == null && zoom == null && !onCard(px, py)) hitAlternative(px, py) else null
+                val offer = shownOffer()
+                val offerHit = if (offer != null) layout.hitOfferButton(px, py) else null
+                val wasOffer = pressedOffer
+                pressedOffer = null
+                if (offer != null && offerHit != null && offerHit == wasOffer && offer.id == pressedOfferId) {
+                    // Press and release on the same target of the same offer. The card is
+                    // made whole now; the caller follows the choice through takeOfferAnswer.
+                    val take = offerHit == "take"
+                    if (take) offersTaken++ else offersKept++
+                    offerAnswer = OfferAnswer(offer.id, take)
+                    answeredOffer = offer.id
+                    endOffer()
+                }
                 val wasAlternative = pressedAlternative
                 pressedAlternative = null
                 if (alternative != null && alternative == wasAlternative) {
@@ -1581,6 +2009,7 @@ class Dashboard @JvmOverloads constructor(
                     if (resumeFailed == chosen.key) resumeFailed = null
                 }
                 if (callAction != null && callAction == wasCallAction) callPress(callAction)
+                weatherUp(px, py, nowMillis)
                 val wasTile = pressedTile
                 val wasMedia = pressedMedia
                 val wasBubble = pressedMapBubble
@@ -1639,6 +2068,11 @@ class Dashboard @JvmOverloads constructor(
                 pressedHeaderIcon = null
                 pressedCallAction = null
                 pressedAlternative = null
+                pressedOffer = null
+                pressedWeather = false
+                pressedWeatherInCall = false
+                pressedWeatherTile = null
+                pressedWeatherAlert = null
                 favoriteList.cancel()
                 notificationList.cancel()
             }
@@ -1724,8 +2158,62 @@ class Dashboard @JvmOverloads constructor(
         }
     }
 
+    /**
+     * P10: a finger lifted. Press and release on the same target, as for every button: the
+     * header item opens or closes the view, except during a call, when it only counts; the
+     * open view closes on a tap; the alert is dismissed for the session.
+     */
+    private fun weatherUp(px: Int, py: Int, nowMillis: Long) {
+        val onWeather = weatherOn && layout.hitHeaderWeather(px, py)
+        val wasWeather = pressedWeather
+        val wasInCall = pressedWeatherInCall
+        val wasTile = pressedWeatherTile
+        val wasAlert = pressedWeatherAlert
+        pressedWeather = false
+        pressedWeatherInCall = false
+        pressedWeatherTile = null
+        pressedWeatherAlert = null
+        if (onWeather && wasInCall) {
+            weatherTapsInCall++
+        } else if (onWeather && wasWeather) {
+            if (call.phase != CallPhase.NONE) {
+                weatherTapsInCall++
+            } else if (weatherOpen) {
+                weatherOpen = false
+                weatherClosesTap++
+            } else {
+                weatherOpen = true
+                weatherOpenedAt = nowMillis
+                weatherOpens++
+            }
+        }
+        if (wasTile == null || !layout.flexTile.contains(px, py) || flexSource(nowMillis) != wasTile) return
+        when (wasTile) {
+            FlexSource.WEATHER -> {
+                weatherOpen = false
+                weatherClosesView++
+            }
+            FlexSource.WEATHER_ALERT -> {
+                val shown = shownAlert(nowMillis)
+                if (shown != null && shown.id == wasAlert) {
+                    dismissedAlerts += shown.id
+                    alertsDismissed++
+                }
+            }
+            else -> Unit
+        }
+    }
+
+    /** P10: the alert the tile would show now, or null (plan §5.3). */
+    private fun shownAlert(nowMillis: Long): WeatherAlert? {
+        if (!weatherOn) return null
+        val reading = weatherState.reading ?: return null
+        return WeatherRules.qualifying(reading.data.alerts, nowMillis, alertLevel, dismissedAlerts).firstOrNull()
+    }
+
     /** What the flex tile shows now ([FlexRules.source]). */
-    private fun flexSource(): FlexSource = FlexRules.source(call, notificationsPaused, notifications.size)
+    private fun flexSource(nowMillis: Long = lastNowMillis): FlexSource =
+        FlexRules.source(call, notificationsPaused, notifications.size, weatherOn && weatherOpen, shownAlert(nowMillis) != null)
 
     /** The single-pointer form, for a caller that has nothing to pinch with. */
     @Synchronized
@@ -1785,6 +2273,12 @@ class Dashboard @JvmOverloads constructor(
     @Synchronized
     fun nextFrame(nowMillis: Long): Snapshot {
         frames++
+        lastNowMillis = nowMillis
+        // P10 (plan §5.2): an untouched weather view closes by itself.
+        if (weatherOpen && nowMillis - weatherOpenedAt >= WeatherRules.VIEW_TIMEOUT_MS) {
+            weatherOpen = false
+            weatherClosesTimeout++
+        }
         val vehiclePosition = vehicle.position()
         val phonePosition = phone.latitude?.let { lat -> phone.longitude?.let { lat to it } }
         val source = when {
@@ -1807,13 +2301,30 @@ class Dashboard @JvmOverloads constructor(
         if (resumeFailed != null && nowMillis >= resumeFailedUntil) resumeFailed = null
         playerRows = if (idle) minOf(players.size, DashboardLayout.PLAYER_ROWS) else 0
         playerRowsMax = maxOf(playerRowsMax, playerRows)
-        val flex = flexSource()
+        val flex = flexSource(nowMillis)
         if (flashKey != null && nowMillis >= flashUntil) flashKey = null
+        val weatherFix = followPosition()
+        val weatherView = if (flex == FlexSource.WEATHER) {
+            WeatherDisplay.panel(weatherState, nowMillis, weatherFix, zone, pressedWeatherTile == FlexSource.WEATHER, clockFormat)
+        } else {
+            null
+        }
+        val weatherAlert = if (flex == FlexSource.WEATHER_ALERT) {
+            WeatherDisplay.alert(
+                weatherState, nowMillis, weatherFix, zone, alertLevel, dismissedAlerts,
+                pressedWeatherTile == FlexSource.WEATHER_ALERT, clockFormat,
+            )?.also { shownAlerts += it.id }
+        } else {
+            null
+        }
+        if ((weatherView != null || weatherAlert != null) && weatherState.reading?.let { WeatherText.farKm(it.place, weatherFix) } != null) {
+            weatherFar = true
+        }
         val shown = if (flex == FlexSource.NOTIFICATIONS) notifications else emptyList()
         notificationsShownMax = maxOf(notificationsShownMax, minOf(shown.size, DashboardLayout.NOTIFICATION_ROWS))
         return Snapshot(
             frame = frames,
-            clock = CLOCK.format(Instant.ofEpochMilli(nowMillis).atZone(zone)),
+            clock = clockFormat.clock(nowMillis, zone),
             vehicle = vehicle,
             phone = phone,
             source = source,
@@ -1871,6 +2382,15 @@ class Dashboard @JvmOverloads constructor(
             keypadEcho = keypadEcho.toString(),
             pressedKey = pressedKey,
             pressedKeypadClose = pressedKeypadClose,
+            trafficAttributed = trafficDisplay.attributed.also { if (it) attributedFrames++ },
+            offer = shownOffer()?.let { OfferCard(it.id, it.label, it.reason, pressedOffer) },
+            weatherHeader = if (weatherOn) {
+                WeatherDisplay.header(weatherState, nowMillis, alertLevel, pressedWeather, layout::headerWeatherText)
+            } else {
+                null
+            },
+            weatherView = weatherView,
+            weatherAlert = weatherAlert,
         )
     }
 
@@ -1921,7 +2441,7 @@ class Dashboard @JvmOverloads constructor(
             // Rounded to the nearest minute, as the time remaining is: truncated, the first
             // lab frame said "15:23" beside "9 min" at 15:15.
             arrival = seconds?.let {
-                CLOCK.format(Instant.ofEpochMilli(nowMillis + it.coerceAtLeast(0) * 1000L + 30_000L).atZone(zone))
+                clockFormat.time(nowMillis + it.coerceAtLeast(0) * 1000L + 30_000L, zone)
             },
             remaining = seconds?.let { StatusText.duration(it) },
             distance = metres?.let { speedUnit.distance(it) },
@@ -1936,6 +2456,7 @@ class Dashboard @JvmOverloads constructor(
             voiceOn = voiceOn,
             voiceWarning = !speechAvailable,
             voicePressed = pressedVoice,
+            traffic = if (seconds == null) null else trafficDelayLabel(trafficDisplay.delaySeconds),
         )
     }
 
@@ -1997,7 +2518,7 @@ class Dashboard @JvmOverloads constructor(
             "dashboard_day_night_presses=$dayNightPresses\n" +
             // P7.2, P7.3: the display choices, and the pause. Counts and names of
             // settings only.
-            "dashboard_marker=${markerColour.key} dashboard_diagnostics=$diagnostics " +
+            "dashboard_marker=${markerColour.key} dashboard_clock=${clockFormat.key} dashboard_diagnostics=$diagnostics " +
             "dashboard_notifications_paused=$notificationsPaused " +
             "dashboard_pause_presses=$pausePresses dashboard_players=${players.size}\n" +
             "dashboard_map_view=${mapControl.report()}\n" +
@@ -2006,6 +2527,9 @@ class Dashboard @JvmOverloads constructor(
             "dashboard_favorite_scrolls=${favoriteList.scrolls}\n" +
             // P7.4: whether a trip is on and how End route was used; never where to.
             "dashboard_trip=${upcomingTurn != null} dashboard_trips=$trips " +
+            // P9.4: the trip panel's time to the destination, traffic included, in seconds, so
+            // the lab can set it beside the cluster's; a duration, never a place.
+            "dashboard_trip_seconds=${upcomingTurn?.destinationSeconds ?: "-"} " +
             "dashboard_turn_card=${turnCard() != null} dashboard_end_route_presses=$endRoutePresses " +
             "dashboard_voice_toggle_presses=$voicePresses dashboard_voice_guidance=${if (voiceOn) "on" else "off"}\n" +
             // P7.5: how many players were offered and what Resume did; never which app.
@@ -2025,7 +2549,23 @@ class Dashboard @JvmOverloads constructor(
             "dashboard_answer_presses=$answerPresses dashboard_decline_presses=$declinePresses " +
             "dashboard_hang_up_presses=$hangUpPresses dashboard_mute_presses=$mutePresses " +
             "dashboard_keypad_opens=$keypadOpens dashboard_keypad_closes=$keypadCloses " +
-            "dashboard_keypad_auto_closes=$keypadAutoCloses dashboard_keypad_presses=$keypadPresses\n"
+            "dashboard_keypad_auto_closes=$keypadAutoCloses dashboard_keypad_presses=$keypadPresses\n" +
+            // P9: what traffic put on the dashboard and what the driver did with the offers;
+            // counts, minutes and booleans, never a road, a reason or a place.
+            "dashboard_traffic_displays=$trafficDisplays dashboard_traffic_runs=${trafficDisplay.traffic?.runs?.size ?: 0} " +
+            "dashboard_traffic_attributed=${trafficDisplay.attributed} dashboard_traffic_attributed_frames=$attributedFrames " +
+            "dashboard_traffic_delay_min=${Math.round(trafficDisplay.delaySeconds / 60.0)} " +
+            "dashboard_offer=${shownOffer() != null} dashboard_offer_layout=${layout.offerLayout.key} " +
+            "dashboard_offers_shown=$offersShown dashboard_offers_taken=$offersTaken dashboard_offers_kept=$offersKept " +
+            "dashboard_offers_withdrawn=$offersWithdrawn dashboard_offer_fits=$offerFits " +
+            "dashboard_offer_refollows=$offerRefollows\n" +
+            // P10: how the weather item and views were used; never a place, a temperature,
+            // a condition or a headline. weather_far: the distance label was shown.
+            "weather_shown=$weatherOn weather_view_open=$weatherOpen weather_view_opens=$weatherOpens " +
+            "weather_view_closes_tap=$weatherClosesTap weather_view_closes_view=$weatherClosesView " +
+            "weather_view_closes_timeout=$weatherClosesTimeout weather_view_closes_call=$weatherClosesCall " +
+            "weather_taps_in_call=$weatherTapsInCall weather_alerts_shown=${shownAlerts.size} " +
+            "weather_alerts_dismissed=$alertsDismissed weather_far=$weatherFar\n"
 
     companion object {
         /** Above 5 mph the marker becomes an arrow along the direction of travel. */
@@ -2053,6 +2593,17 @@ class Dashboard @JvmOverloads constructor(
         private fun wrapDegrees(degrees: Double): Double = ((degrees % 360) + 360) % 360
 
         /**
+         * The trip panel's "+7 min traffic" for a delay of [seconds] (P9.4), rounded to the
+         * nearest minute as the time remaining is; null under half a minute, since "+0 min"
+         * says nothing and the attribution already says traffic is in the time.
+         */
+        @JvmStatic
+        fun trafficDelayLabel(seconds: Int): String? {
+            val minutes = Math.round(seconds / 60.0)
+            return if (minutes >= 1) "+$minutes min traffic" else null
+        }
+
+        /**
          * The palette to draw (P7.6, plan §5.6): Day and Night hold it; Automatic follows
          * [headUnit], the head unit's `is_night`, every time it changes.
          *
@@ -2078,8 +2629,6 @@ class Dashboard @JvmOverloads constructor(
             return (bearing != null && bearing.divisor !in ScaleRule.BEARING.confirmed) ||
                 (speed != null && speed.divisor !in ScaleRule.SPEED.confirmed)
         }
-
-        private val CLOCK: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
 
         /** Reuses the demo scene's derivation so a token means the same thing in both. */
         fun token(sessionUuid: String): String = DemoScene.token(sessionUuid)

@@ -72,7 +72,8 @@ object DashboardDrawing {
         // With no debug line under it, the one line of text sits in the middle of the
         // header rather than leaving a gap where the second line used to be.
         val baseline = layout.y + layout.header * (if (snapshot.diagnostics) 0.62f else 0.68f)
-        val textRight = layout.headerTextRight.toFloat()
+        // P10: short of the weather item while it is shown, else as far as Ⓟ.
+        val textRight = layout.headerTextRight(snapshot.weatherHeader != null).toFloat()
         var cursor = (layout.x + layout.margin).toFloat()
 
         paint.color = palette.text
@@ -120,6 +121,7 @@ object DashboardDrawing {
         }
 
         drawHeaderIcons(canvas, paint, layout, snapshot, palette)
+        snapshot.weatherHeader?.let { WeatherDrawing.drawHeaderItem(canvas, paint, layout, it, baseline, palette) }
         drawSignal(canvas, paint, layout, snapshot, palette)
         drawBattery(canvas, paint, layout, snapshot, palette)
     }
@@ -438,8 +440,10 @@ object DashboardDrawing {
                 else -> {
                     // The flex tile's label follows what it shows; "Muted" is bold in the
                     // warning colour, because a forgotten mute is the mistake to catch.
+                    // P10: "weather alert" the same way, since an alert is what it is there for.
                     val muted = snapshot.flex == FlexSource.CALL && snapshot.call.muted
-                    drawTileLabel(canvas, paint, layout, tile, snapshot.flexLabel, palette, muted)
+                    val alert = muted || snapshot.flex == FlexSource.WEATHER_ALERT
+                    drawTileLabel(canvas, paint, layout, tile, snapshot.flexLabel, palette, alert)
                     drawFlexTile(canvas, paint, layout, snapshot, palette)
                 }
             }
@@ -478,6 +482,12 @@ object DashboardDrawing {
         when (snapshot.flex) {
             FlexSource.CALL -> drawCallCard(canvas, paint, layout, snapshot, palette)
             FlexSource.NOTIFICATIONS -> drawNotifications(canvas, paint, layout, snapshot, palette)
+            FlexSource.WEATHER -> snapshot.weatherView?.let {
+                WeatherDrawing.drawView(canvas, paint, layout, layout.notificationsList, it, palette)
+            }
+            FlexSource.WEATHER_ALERT -> snapshot.weatherAlert?.let {
+                WeatherDrawing.drawAlert(canvas, paint, layout, layout.notificationsList, it, palette)
+            }
             FlexSource.EMPTY -> {
                 val list = layout.notificationsList
                 if (list.width <= 0 || list.height <= 0) return
@@ -760,15 +770,18 @@ object DashboardDrawing {
                 trip.rerouting -> "rerouting…"
                 else -> "arrive"
             }
-            canvas.drawText(fit(paint, caption, summary.width.toFloat()), left, summary.y + h * 0.26f, paint)
+            val traffic = trip.traffic?.takeUnless { trip.arrived || trip.rerouting }
+            if (traffic == null) {
+                canvas.drawText(fit(paint, caption, summary.width.toFloat()), left, summary.y + h * 0.26f, paint)
+            } else {
+                drawTripTraffic(canvas, paint, layout, trip, traffic, palette)
+            }
             val typeface = paint.typeface
             paint.typeface = Typeface.DEFAULT_BOLD
             paint.color = palette.text
             paint.textSize = h * 0.52f
             val big = if (trip.arrived) "Arrived" else trip.arrival ?: "—"
-            val bigText = fit(paint, big, summary.width.toFloat())
-            canvas.drawText(bigText, left, summary.y + h * 0.86f, paint)
-            val bigRight = left + paint.measureText(bigText)
+            val bigRight = left + drawClock(canvas, paint, big, left, summary.y + h * 0.86f, h * 0.52f, h * 0.24f, summary.width.toFloat())
             paint.typeface = typeface
             if (!trip.arrived) {
                 // Right-aligned, so the two remaining figures line up under each other
@@ -815,6 +828,43 @@ object DashboardDrawing {
             paint.typeface = typeface
         }
         drawVoiceToggle(canvas, paint, layout.voiceToggle, trip, palette)
+    }
+
+    /**
+     * "+7 min traffic" on the trip panel's caption line (P9.4, plan §6), in the warning
+     * colour, left of the time remaining, which already includes the delay. "arrive ·" stays
+     * in front of it where both fit; where they do not, the label takes the caption's place,
+     * since the big clock time under it reads as an arrival either way. Brought down to fit
+     * rather than cut, to three quarters of its size at most.
+     */
+    private fun drawTripTraffic(
+        canvas: Canvas,
+        paint: Paint,
+        layout: DashboardLayout,
+        trip: TripPanel,
+        label: String,
+        palette: DashboardPalette,
+    ) {
+        val summary = layout.tripSummary
+        val h = summary.height.toFloat()
+        paint.textSize = h * 0.3f
+        val remaining = paint.measureText(trip.remaining ?: "—")
+        val room = summary.width - remaining - layout.margin
+        val size = layout.tripTrafficTextSize
+        paint.textSize = size
+        val lead = "arrive · "
+        var x = summary.x.toFloat()
+        val baseline = summary.y + h * 0.26f
+        if (paint.measureText(lead + label) <= room) {
+            paint.color = palette.dim
+            canvas.drawText(lead, x, baseline, paint)
+            x += paint.measureText(lead)
+        } else {
+            val width = paint.measureText(label)
+            if (width > room) paint.textSize = maxOf(size * 0.75f, size * room / width * 0.95f)
+        }
+        paint.color = palette.warning
+        canvas.drawText(fit(paint, label, summary.x + room - x), x, baseline, paint)
     }
 
     /**
@@ -1282,9 +1332,18 @@ object DashboardDrawing {
             drawVehicle(canvas, paint, map, snapshot, palette)
             drawMapControls(canvas, paint, layout, snapshot, palette)
         }
+        // P9.3: HERE's credit whenever traffic is drawn, or is in the time, or shaped the
+        // route (plan §1, 6.4 a). Outside the `ok` branch, because the arrival time owes it
+        // even over a pane with no map in it.
+        if (snapshot.trafficAttributed) drawTrafficAttribution(canvas, paint, layout, palette)
         // Outside the map's `ok` branch: guidance does not need a map, and a driver
         // following a route with no map installed still needs to know the next turn.
-        snapshot.turnCard?.let { drawTurnCard(canvas, paint, layout, it, palette) }
+        val offer = snapshot.offer
+        if (offer != null) {
+            drawOfferCard(canvas, paint, layout, snapshot.turnCard, offer, palette)
+        } else {
+            snapshot.turnCard?.let { drawTurnCard(canvas, paint, layout, it, palette) }
+        }
         paint.style = Paint.Style.STROKE
         paint.strokeWidth = maxOf(1f, layout.height / 540f)
         paint.color = palette.tile
@@ -1309,16 +1368,37 @@ object DashboardDrawing {
     ) {
         val box = layout.turnCard
         if (box.width <= 0 || box.height <= 0) return
+        drawCardPlate(canvas, paint, box, palette)
+        drawTurn(canvas, paint, layout, card, box, layout.turnIcon, palette)
+    }
+
+    /** The turn card's solid plate and rim. */
+    private fun drawCardPlate(canvas: Canvas, paint: Paint, box: Box, palette: DashboardPalette) {
         paint.style = Paint.Style.FILL
         paint.color = palette.tile
         canvas.drawRoundRect(rect(box), CORNER, CORNER, paint)
         paint.style = Paint.Style.STROKE
-        paint.strokeWidth = maxOf(1f, box.height / 60f)
+        paint.strokeWidth = maxOf(1f, rimWidth(box))
         paint.color = palette.bubbleRim
         canvas.drawRoundRect(rect(box), CORNER, CORNER, paint)
         paint.style = Paint.Style.FILL
+    }
 
-        val icon = layout.turnIcon
+    private fun rimWidth(box: Box): Float = minOf(box.height, box.width) / 60f
+
+    /**
+     * The next turn in [box] with its icon at [icon]: the icon at the left and the distance
+     * and street beside it, as the whole card has drawn it since P7.4.
+     */
+    private fun drawTurn(
+        canvas: Canvas,
+        paint: Paint,
+        layout: DashboardLayout,
+        card: TurnCard,
+        box: Box,
+        icon: Box,
+        palette: DashboardPalette,
+    ) {
         drawManeuver(canvas, paint, Maneuvers.glyph(card.maneuver, card.exit), icon, palette.accent, palette.dim, palette.tile)
         val glyphDrawn = Maneuvers.glyph(card.maneuver, card.exit).shape != GlyphShape.NONE
         val textX = (if (glyphDrawn) icon.right else box.x) + layout.margin.toFloat()
@@ -1340,6 +1420,125 @@ object DashboardDrawing {
             paint.textSize = h * 0.3f
             canvas.drawText(fit(paint, card.line, room), textX, box.centerY + paint.textSize * 0.36f, paint)
         }
+    }
+
+    /**
+     * The turn card divided for an offer (P9.6, plan §7 "The offer"): the next turn in its
+     * part — stacked, exactly as the whole card draws it; side by side, the icon over the
+     * distance with the street dropped — and in the other, "Faster: −7 min" in bold, the
+     * reason under it, and Take and Keep. Take is filled in the accent, as the press that
+     * does something; Keep is a plain button. Guidance is drawn whatever the offer says:
+     * with no turn to show ([card] null), its part is left empty rather than given away.
+     */
+    private fun drawOfferCard(
+        canvas: Canvas,
+        paint: Paint,
+        layout: DashboardLayout,
+        card: TurnCard?,
+        offer: OfferCard,
+        palette: DashboardPalette,
+    ) {
+        val box = layout.offerCard
+        if (box.width <= 0 || box.height <= 0) return
+        drawCardPlate(canvas, paint, box, palette)
+        val turn = layout.offerTurn
+        if (card != null) {
+            if (layout.offerTurnStreet) {
+                drawTurn(canvas, paint, layout, card, turn, layout.offerTurnIcon, palette)
+            } else {
+                drawTurnUnderIcon(canvas, paint, layout, card, palette)
+            }
+        }
+        // The line between the two parts, in the rim's colour.
+        val part = layout.offerPart
+        paint.color = palette.bubbleRim
+        val hair = maxOf(1f, rimWidth(box))
+        if (layout.offerLayout == OfferLayout.STACKED) {
+            canvas.drawRect(part.x + layout.margin.toFloat(), part.y.toFloat(), part.right - layout.margin.toFloat(), part.y + hair, paint)
+        } else {
+            canvas.drawRect(part.x.toFloat(), part.y + layout.margin.toFloat(), part.x + hair, part.bottom - layout.margin.toFloat(), paint)
+        }
+
+        val text = layout.offerText
+        if (text.width > 0 && text.height > 0) {
+            val th = text.height.toFloat()
+            val typeface = paint.typeface
+            paint.typeface = Typeface.DEFAULT_BOLD
+            paint.color = palette.text
+            paint.textSize = th * 0.4f
+            val labelWidth = paint.measureText(offer.label)
+            if (labelWidth > text.width) paint.textSize = maxOf(th * 0.28f, paint.textSize * text.width / labelWidth * 0.95f)
+            canvas.drawText(fit(paint, offer.label, text.width.toFloat()), text.x.toFloat(), text.y + th * 0.46f, paint)
+            paint.typeface = typeface
+            paint.color = palette.dim
+            paint.textSize = th * 0.28f
+            canvas.drawText(fit(paint, offer.reason, text.width.toFloat()), text.x.toFloat(), text.y + th * 0.86f, paint)
+        }
+        DashboardLayout.OFFER_ACTIONS.forEachIndexed { index, action ->
+            val button = layout.offerButton(index)
+            if (button.width <= 0 || button.height <= 0) return@forEachIndexed
+            val pressed = offer.pressed == action
+            if (action == "take") {
+                drawCallButton(canvas, paint, layout, button, "Take", palette.accent, palette.tile, pressed, palette, 0.4f)
+            } else {
+                drawCallButton(canvas, paint, layout, button, "Keep", palette.button, palette.text, pressed, palette, 0.4f)
+            }
+        }
+    }
+
+    /**
+     * The next turn in the side-by-side card's narrow part: the icon across its top and the
+     * distance centred under it, or re-routing and arrived in small type. No street: the
+     * part is too narrow for one (plan §7).
+     */
+    private fun drawTurnUnderIcon(
+        canvas: Canvas,
+        paint: Paint,
+        layout: DashboardLayout,
+        card: TurnCard,
+        palette: DashboardPalette,
+    ) {
+        val part = layout.offerTurn
+        val icon = layout.offerTurnIcon
+        drawManeuver(canvas, paint, Maneuvers.glyph(card.maneuver, card.exit), icon, palette.accent, palette.dim, palette.tile)
+        val inset = maxOf(1, layout.margin / 2).toFloat()
+        val room = part.width - 2 * inset
+        val below = part.bottom - inset - icon.bottom
+        if (room <= 0f || below <= 0f) return
+        val typeface = paint.typeface
+        paint.textAlign = Paint.Align.CENTER
+        val distance = card.distance
+        if (distance != null) {
+            paint.typeface = Typeface.DEFAULT_BOLD
+            paint.color = palette.text
+            paint.textSize = below * 0.75f
+            val width = paint.measureText(distance)
+            if (width > room) paint.textSize = paint.textSize * room / width * 0.95f
+        } else {
+            paint.color = if (card.line == UpcomingTurn.REROUTING) palette.warning else palette.text
+            paint.textSize = below * 0.45f
+        }
+        val line = distance ?: card.line
+        canvas.drawText(fit(paint, line, room), part.centerX.toFloat(), icon.bottom + below * 0.5f + paint.textSize * 0.36f, paint)
+        paint.textAlign = Paint.Align.LEFT
+        paint.typeface = typeface
+    }
+
+    /**
+     * "Traffic © HERE" (P9.3) in its layout box above the ODbL credit, right-aligned, on the
+     * same plate and in the same size, so the two credits read as a pair in either palette.
+     */
+    private fun drawTrafficAttribution(canvas: Canvas, paint: Paint, layout: DashboardLayout, palette: DashboardPalette) {
+        val box = layout.trafficAttribution
+        paint.textSize = layout.attributionTextSize.toFloat()
+        val pad = paint.textSize * 0.3f
+        val text = DashboardLayout.TRAFFIC_ATTRIBUTION
+        val width = paint.measureText(text)
+        val textX = box.right - pad - width
+        paint.color = palette.attributionPlate
+        canvas.drawRect(textX - pad, box.y.toFloat(), box.right.toFloat(), box.bottom.toFloat(), paint)
+        paint.color = palette.attribution
+        canvas.drawText(text, textX, box.y + pad + paint.textSize * 0.8f, paint)
     }
 
     /**
@@ -1667,6 +1866,40 @@ object DashboardDrawing {
         canvas.drawLine(cx + radius, cy, cx + radius - tick, cy, paint)
         paint.style = Paint.Style.FILL
         canvas.drawCircle(cx, cy, radius * 0.22f, paint)
+    }
+
+    /**
+     * A clock time from [x] at [size], with a 12-hour time's AM/PM marker after it at
+     * [markerSize] ([ClockFormat.split]), so "6:40 PM" takes little more room than
+     * "18:40". Anything else is drawn whole at [size]. The digits are cut to [width]
+     * like any text, and the marker is left out rather than cut. Returns the width drawn.
+     */
+    private fun drawClock(
+        canvas: Canvas,
+        paint: Paint,
+        time: String,
+        x: Float,
+        baseline: Float,
+        size: Float,
+        markerSize: Float,
+        width: Float,
+    ): Float {
+        val (digits, marker) = ClockFormat.split(time)
+        paint.textSize = size
+        val text = fit(paint, digits, width)
+        canvas.drawText(text, x, baseline, paint)
+        var drawn = paint.measureText(text)
+        if (marker != null && text == digits) {
+            val gap = size * 0.12f
+            paint.textSize = markerSize
+            val markerWidth = paint.measureText(marker)
+            if (drawn + gap + markerWidth <= width) {
+                canvas.drawText(marker, x + drawn + gap, baseline, paint)
+                drawn += gap + markerWidth
+            }
+            paint.textSize = size
+        }
+        return drawn
     }
 
     private fun rect(box: Box) =

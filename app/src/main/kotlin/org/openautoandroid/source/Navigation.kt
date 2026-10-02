@@ -39,6 +39,15 @@ object Navigation {
     var via: DoubleArray? = null
         private set
 
+    /**
+     * Set once the vehicle has reached [destination] ([arrived]): the trip is over, though
+     * the route stays on show for [Guide.ARRIVAL_HOLD_MS] to say so. [NavigationStore]
+     * saves nothing from then on, so a phone unplugged in that hold does not bring the
+     * route back on the next drive.
+     */
+    var arrived = false
+        private set
+
     /** Set when a destination is held for want of a position to route from. */
     var waiting = false
         private set
@@ -78,6 +87,9 @@ object Navigation {
         this.destination = destination
         this.source = source
         via = null
+        arrived = false
+        // A new trip: a way round the driver kept away from on the last one may be right now.
+        Traffic.newTrip()
         return route(context)
     }
 
@@ -90,10 +102,21 @@ object Navigation {
 
     /**
      * Routes to the held destination from wherever the start can be found now. [reroute]
-     * marks a request [Guide] made because the vehicle left the route, and [bearing] is
-     * the way the vehicle is travelling, so the new route starts ahead of it.
+     * marks a request [Guide] made because the vehicle left the route, or, with [closure],
+     * because live traffic found it closed ahead (P9.5); [bearing] is the way the vehicle is
+     * travelling, so the new route starts ahead of it.
+     *
+     * While live traffic is on and holds a response, every request carries its closures and
+     * jams as no-go points ([Traffic.withNogos], plan §7): new routes from the start,
+     * re-routes, and a route through a chosen alternative's via point alike.
      */
-    fun route(context: Context, fresh: Location? = null, reroute: Boolean = false, bearing: Double? = null): String {
+    fun route(
+        context: Context,
+        fresh: Location? = null,
+        reroute: Boolean = false,
+        bearing: Double? = null,
+        closure: Boolean = false,
+    ): String {
         val destination = destination ?: return context.getString(R.string.destination_none)
         val source = source ?: DestinationSource.TYPED
         val start = start(context, fresh)
@@ -105,17 +128,31 @@ object Navigation {
         }
         waiting = false
         val (point, from) = start
+        // A closure ahead (P9.5): the chosen route's via point may lie beyond it, on the closed
+        // road, and a route kept to it could only go through the closure, which BRouter would
+        // then open and this route could never leave again. The way round the closure is
+        // BRouter's own; the chosen alternative no longer holds.
+        if (closure && via != null) {
+            via = null
+            SessionController.note("closure ahead: the chosen route's via point dropped")
+        }
         // Read at every request, re-routes included, so a change on the Routing screen
         // applies to the next route without a restart.
         val options = AppSettings.load(context).routing
         Guide.learnPace = options.learnPace
         Routing.request(
             context,
-            RouteRequest(
-                point.first, point.second, destination.latitude, destination.longitude, bearing, options,
-                viaLat = via?.get(0), viaLon = via?.get(1),
+            Traffic.withNogos(
+                RouteRequest(
+                    point.first, point.second, destination.latitude, destination.longitude, bearing, options,
+                    viaLat = via?.get(0), viaLon = via?.get(1),
+                ),
             ),
-            if (reroute) "reroute" else source.label,
+            when {
+                closure -> Routing.CLOSURE
+                reroute -> "reroute"
+                else -> source.label
+            },
             from,
         )
         return context.getString(R.string.destination_routing, describe(destination))
@@ -134,7 +171,7 @@ object Navigation {
      */
     fun optionsChanged(context: Context, previous: RouteOptions, options: RouteOptions) {
         Guide.learnPace = options.learnPace
-        if (!previous.routeDiffers(options) || destination == null) return
+        if (!previous.routeDiffers(options) || destination == null || arrived) return
         SessionController.note("routing settings changed; recomputing the route")
         route(context)
     }
@@ -145,9 +182,36 @@ object Navigation {
         source = null
         via = null
         waiting = false
+        arrived = false
         Routing.clear()
         Guide.clear()
         NavigationStore.changed()
+    }
+
+    /**
+     * [Guide] saw the vehicle reach the destination: the trip ends here. It is no longer
+     * saved, and the place goes to the top of the favorites so the next trip there is one
+     * tap, unless it was a favorite already: picked from the tile, or a saved place within
+     * [Favorite.SAME_PLACE_M]. Named by its label, else its coordinates, as the connection
+     * screen names a place added with no name. A full list is left as it is, as adding one
+     * by hand is: nothing the driver saved is dropped to make room. Only the outcome is
+     * noted, never the place.
+     */
+    fun arrived(context: Context) {
+        val destination = destination ?: return
+        if (arrived) return
+        arrived = true
+        NavigationStore.changed()
+        if (source == DestinationSource.FAVORITE) return
+        val place = Favorite.of(describe(destination), destination.latitude, destination.longitude) ?: return
+        SessionController.note(
+            when {
+                Favorite.saved(Favorites.list(context), place.latitude, place.longitude) ->
+                    "arrived at a place already in the favorites"
+                !Favorites.addFirst(context, place) -> "arrived; favorites full, destination not added"
+                else -> "arrived; destination added to the top of the favorites (${Favorites.list(context).size} saved)"
+            },
+        )
     }
 
     /** An alternative was chosen: routes keep to its via point from now on, or to none. */
@@ -169,6 +233,7 @@ object Navigation {
         this.destination = destination
         this.source = source
         this.via = via
+        arrived = false
     }
 
     /** What the phone calls the destination: its label, else its coordinates. */
@@ -233,6 +298,6 @@ object Navigation {
     /** The `[routing]` lines this adds. No destination, no label, no coordinates. */
     fun report(): String =
         "routing_destination_source=${source?.label ?: "-"} routing_destination_waiting=$waiting " +
-            "routing_via=${via != null} " +
+            "routing_via=${via != null} routing_arrived=$arrived " +
             "routing_destinations_refused=$refused routing_last_refusal=$lastRefusal\n"
 }

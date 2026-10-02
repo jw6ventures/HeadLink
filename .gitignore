@@ -6,3 +6,10 @@
 /.kotlin/
 /build/
 /tools/__pycache__/
+# Third-party packages, credentials and signing keys: never committed.
+*.apkm
+*.apk
+*.pem
+*.p12
+*.jks
+*.keystore

@@ -21,6 +21,11 @@ if [ "$mode" != --online ]; then
     gradle_offline=--offline
     set -- --network=none
 fi
+# ROUTING_SEGMENTS=<dir of .rd5 tiles> on the host mounts that directory read-only so the
+# host tests that take real routes run them; without it they are skipped and say so.
+if [ -n "${ROUTING_SEGMENTS:-}" ]; then
+    set -- "$@" -v "$ROUTING_SEGMENTS:/cache/rd5:ro" -e ROUTING_SEGMENTS=/cache/rd5
+fi
 podman_run "$@" \
   -v "$CACHE_ROOT/gradle:/cache/gradle" -e GRADLE_USER_HOME=/cache/gradle \
   -v "$CACHE_ROOT/android-user:/cache/android-user" -e ANDROID_USER_HOME=/cache/android-user \

@@ -1,22 +1,26 @@
 package org.openautoandroid.source
 
+import btools.router.OsmNodeNamed
 import btools.router.ProfileCache
 import btools.router.RoutingContext
 import btools.router.RoutingEngine
 import btools.router.RoutingParamCollector
 import btools.router.VoiceHintReader
+import btools.util.CheapRuler
 import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
+import kotlin.math.hypot
 import kotlin.math.roundToInt
 
 /**
  * Two points to route between, in degrees.
  *
  * A route is from somewhere to somewhere and nothing more: via points, no-go areas and
- * round trips are all things BRouter can do and none of them is in P6.3.
+ * round trips are all things BRouter can do and none of them was in P6.3. One via point
+ * came with the route preview, and no-go points with live traffic (P9.5).
  *
  * [startBearing] (P6.5) is the way the vehicle is already travelling, degrees clockwise
  * from north. A re-route sets it, because BRouter otherwise has no idea which way the
@@ -35,6 +39,12 @@ import kotlin.math.roundToInt
  *
  * [viaLat] and [viaLon], both or neither, put one point the route must pass through
  * between the two ends. The preview's own alternatives are made this way ([AlternativeFinder]).
+ *
+ * [nogos] (P9.5, plan §7) are live traffic's closures and jams as BRouter no-go points
+ * ([TrafficNogos]): a hard one is a circle the route may not enter, a weighted one charges
+ * the metres of road inside it times its weight. The weights are BRouter cost at [options]'
+ * top speed ([TrafficCost]); [Router.compute] rescales them if it has to time the route
+ * slower. Empty, the default, is a route exactly as before P9.
  */
 class RouteRequest @JvmOverloads constructor(
     val fromLat: Double,
@@ -46,6 +56,7 @@ class RouteRequest @JvmOverloads constructor(
     val alternative: Int = 0,
     val viaLat: Double? = null,
     val viaLon: Double? = null,
+    val nogos: List<Nogo> = emptyList(),
 ) {
     init {
         require(valid(fromLat, fromLon) && valid(toLat, toLon)) { "coordinates out of range" }
@@ -53,7 +64,12 @@ class RouteRequest @JvmOverloads constructor(
         require((viaLat == null) == (viaLon == null)) { "a via point needs both coordinates" }
         require(viaLat == null || valid(viaLat, viaLon!!)) { "via point out of range" }
         require(startBearing == null || startBearing.isFinite()) { "bearing out of range" }
+        require(nogos.all { valid(it) }) { "no-go point out of range" }
     }
+
+    /** This request with [nogos] in place of its own, everything else the same. */
+    fun withNogos(nogos: List<Nogo>): RouteRequest =
+        RouteRequest(fromLat, fromLon, toLat, toLon, startBearing, options, alternative, viaLat, viaLon, nogos)
 
     companion object {
         /** BRouter's own limit: `RoutingContext.getAlternativeIdx(0, 3)`. */
@@ -61,6 +77,11 @@ class RouteRequest @JvmOverloads constructor(
 
         private fun valid(lat: Double, lon: Double): Boolean =
             lat.isFinite() && lon.isFinite() && lat in -90.0..90.0 && lon in -180.0..180.0
+
+        /** Whether [nogo] is one BRouter can be given: on the globe, a finite radius, a finite weight or none. */
+        fun valid(nogo: Nogo): Boolean =
+            valid(nogo.latitude, nogo.longitude) && nogo.radiusM.isFinite() && nogo.radiusM > 0.0 &&
+                (nogo.weight == null || (nogo.weight.isFinite() && nogo.weight >= 0.0))
 
         /**
          * Reads `lat,lon lat,lon` — the order a person copies out of any map — with a space,
@@ -132,8 +153,25 @@ class Route @JvmOverloads constructor(
      * keep to it ([Navigation.via]).
      */
     val via: DoubleArray? = null,
+    /**
+     * How many traffic no-go points BRouter was given for this route (P9.5), 0 when none.
+     * Above 0, HERE's data helped choose it, so "Traffic © HERE" is owed while it is shown
+     * (plan §1, 6.4 a): whether the points actually moved it cannot be known without a
+     * second search, and the attribution does not wait for one.
+     */
+    val nogoCount: Int = 0,
+    /**
+     * No route existed that kept out of every closure, so the closures were made passable
+     * at a high price and this one goes through at least one ([Router.compute]): the
+     * vehicle is on a closed road, or the destination is. A closure ahead on this route is
+     * then not a reason to re-route again, which would only find it again.
+     */
+    val closuresOpened: Boolean = false,
 ) {
     val points: Int get() = latitudes.size
+
+    /** Traffic nogos were in the search that made this route: see [nogoCount]. */
+    val trafficShaped: Boolean get() = nogoCount > 0
 
     /**
      * This route with every time multiplied by [factor]: the Routing screen's time
@@ -145,6 +183,7 @@ class Route @JvmOverloads constructor(
         return Route(
             latitudes, longitudes, distanceM, (seconds * factor).roundToInt(), maneuverIndices, exitNumbers, commands,
             FloatArray(pointSeconds.size) { (pointSeconds[it] * factor).toFloat() }, roadStarts, roadNames, topSpeedKmh, via,
+            nogoCount, closuresOpened,
         )
     }
 
@@ -153,9 +192,15 @@ class Route @JvmOverloads constructor(
         require(starts.size == names.size) { "one name per stretch" }
         return Route(
             latitudes, longitudes, distanceM, seconds, maneuverIndices, exitNumbers, commands,
-            pointSeconds, starts, names, topSpeedKmh, via,
+            pointSeconds, starts, names, topSpeedKmh, via, nogoCount, closuresOpened,
         )
     }
+
+    /** This route marked as made with [count] traffic nogos, and whether closures were opened for it. */
+    fun withNogos(count: Int, opened: Boolean): Route = Route(
+        latitudes, longitudes, distanceM, seconds, maneuverIndices, exitNumbers, commands,
+        pointSeconds, roadStarts, roadNames, topSpeedKmh, via, count, opened,
+    )
 
     /**
      * The rest of this route from point [from] on: what is still ahead of the vehicle, as a
@@ -180,7 +225,7 @@ class Route @JvmOverloads constructor(
             IntArray(keep.size) { maneuverIndices[keep[it]] - start }, IntArray(keep.size) { exitNumbers[keep[it]] },
             IntArray(keep.size) { commands[keep[it]] }, times,
             IntArray(roads.size) { maxOf(0, roadStarts[roads[it]] - start) }, Array(roads.size) { roadNames[roads[it]] },
-            topSpeedKmh, via,
+            topSpeedKmh, via, nogoCount, closuresOpened,
         )
     }
 
@@ -211,12 +256,41 @@ class RouteResult(
     val namingMs: Long = 0,
 )
 
-class RoutingException(message: String) : Exception(message)
+/**
+ * A route could not be had. [stopped] when the search was stopped rather than failed: a
+ * newer request terminated it, or it ran out of time.
+ */
+class RoutingException @JvmOverloads constructor(message: String, val stopped: Boolean = false) : Exception(message)
 
 /**
  * BRouter over one segment directory and one profile. Blocking, and not thread-safe:
  * BRouter keeps its parsed profile in a process-wide cache, so everything goes through a
  * single [RoutePlanner] thread. Pure JVM, so the host tests exercise this same class.
+ *
+ * **Traffic no-go points** (P9.5, plan §7) go to BRouter as `RoutingContext.nogopoints`,
+ * made afresh for every search, so nothing of one request's traffic reaches the next.
+ * What the vendored BRouter does with them, read from its code and measured on the Texas
+ * tiles (docs/p9-5-routing-results.md), and what is done about it here:
+ *
+ * - **One charge per link.** BRouter charges a nogo while it walks one link, the stretch
+ *   of way between two junctions of its graph, and keeps only the *last* circle that
+ *   link passed through, not their sum (`RoutingContext.calcDistance` sets `nogoCost`,
+ *   `OsmPath` adds it once at the link's end). Interstate links run 45 m to 1.6 km, so
+ *   points every 150 m are partly lost there; [TrafficCost] measures by how much and
+ *   weighs accordingly. It cannot be summed here: `RoutingContext` is final.
+ * - **A jam can open a closure.** For the same reason, a weighted circle after a hard one
+ *   on the same link overwrites its block: a closure followed by a queue on one link
+ *   was driven straight through. Hard points go last in the list, which settles it
+ *   within one piece of the link, and every route is checked for passing through a
+ *   closure it was given ([closuresCrossed]). One that does is searched again without the
+ *   weighted points near that closure, and failing that without any.
+ * - **A closure at either end.** BRouter drops any point whose circle holds the start or
+ *   the destination as given, refuses a destination that lands in a hard one ("last wpt
+ *   in restricted area"), and finds nothing for a vehicle already on a closed stretch,
+ *   whose every way out is blocked. When a search with closures fails for any reason but
+ *   being stopped, it is tried once more with every closure passable at
+ *   [TrafficCost.OPENED_CLOSURE_SECONDS] a point: the vehicle stuck in a closure still
+ *   gets its way out, and the route says so ([Route.closuresOpened]).
  */
 class Router(
     private val segments: File,
@@ -228,23 +302,68 @@ class Router(
      * Computes one route or throws [RoutingException] with BRouter's own message.
      *
      * [started] receives the engine before the search begins, which is the only handle
-     * another thread has to stop it.
+     * another thread has to stop it. With [RouteRequest.nogos] it may be called for more
+     * than one search (see the class notes); it is always the running one.
      */
     @Throws(RoutingException::class)
     fun compute(request: RouteRequest, maxRunningMs: Long, started: (RoutingEngine) -> Unit = {}): Route {
         if (!profile.isFile) throw RoutingException("no routing profile at ${profile.name}")
         if (!segments.isDirectory) throw RoutingException("no routing data installed")
-        // BRouter's last pass re-walks the route it found in detail and gives up when that
-        // costs more than 5,000 over the search's own figure. Above the profile's 90 km/h
-        // the kinematic model's two figures drift apart over long trips: Austin to Lubbock
-        // and to Amarillo failed at 113 km/h and above, Austin to Denver at 105, and every
-        // one succeeded at a lower speed. So that failure, and only it, is tried again one
-        // speed lower, down to the profile's own 90, which never failed; the route says
-        // which speed it was timed at.
+        if (request.nogos.isEmpty()) return computeStepping(request, emptyList(), maxRunningMs, started)
+        return try {
+            computeKeepingClosures(request, maxRunningMs, started)
+        } catch (e: RoutingException) {
+            if (e.stopped || request.nogos.none { it.hard }) throw e
+            val opened = request.nogos.map { nogo ->
+                if (nogo.hard) nogo.copy(weight = TrafficCost.openedClosureWeight(nogo.radiusM, request.options.topSpeedKmh)) else nogo
+            }
+            computeStepping(request, opened, maxRunningMs, started).withNogos(opened.size, true)
+        }
+    }
+
+    /**
+     * The route with every closure kept closed. BRouter may let a jam's point overwrite a
+     * closure's on the same link (class notes), so a route through a closure is searched
+     * again: first without the weighted points within [CLOSURE_GUARD_M] of the closures it
+     * crossed, then without any weighted point, when nothing is left to overwrite them.
+     */
+    private fun computeKeepingClosures(request: RouteRequest, maxRunningMs: Long, started: (RoutingEngine) -> Unit): Route {
+        var nogos = request.nogos
+        for (attempt in 0 until 2) {
+            val route = computeStepping(request, nogos, maxRunningMs, started)
+            val crossed = closuresCrossed(route, request, nogos)
+            if (crossed.isEmpty()) return route.withNogos(nogos.size, false)
+            nogos = if (attempt == 0) {
+                nogos.filter { nogo -> nogo.hard || crossed.none { metres(it.latitude, it.longitude, nogo.latitude, nogo.longitude) <= CLOSURE_GUARD_M } }
+            } else {
+                nogos.filter { it.hard }
+            }
+        }
+        return computeStepping(request, nogos, maxRunningMs, started).withNogos(nogos.size, false)
+    }
+
+    /**
+     * BRouter's last pass re-walks the route it found in detail and gives up when that
+     * costs more than 5,000 over the search's own figure. Above the profile's 90 km/h the
+     * kinematic model's two figures drift apart over long trips: Austin to Lubbock and to
+     * Amarillo failed at 113 km/h and above, Austin to Denver at 105, and every one
+     * succeeded at a lower speed. So that failure, and only it, is tried again one speed
+     * lower, down to the profile's own 90, which never failed; the route says which speed
+     * it was timed at. The [nogos]' weights go down with the speed: they are BRouter cost,
+     * and a second costs less at a lower top speed ([TrafficCost.secondPrice]).
+     */
+    private fun computeStepping(
+        request: RouteRequest,
+        nogos: List<Nogo>,
+        maxRunningMs: Long,
+        started: (RoutingEngine) -> Unit,
+    ): Route {
         var options = request.options
         while (true) {
             try {
-                return computeAt(request, options, maxRunningMs, started)
+                val scale = TrafficCost.secondPrice(options.topSpeedKmh) / TrafficCost.secondPrice(request.options.topSpeedKmh)
+                val scaled = if (scale == 1.0) nogos else nogos.map { it.copy(weight = it.weight?.times(scale)) }
+                return computeAt(request, options, scaled, maxRunningMs, started)
             } catch (e: RoutingException) {
                 val lower = RouteOptions.TOP_SPEEDS_KMH.lastOrNull { it < options.topSpeedKmh }
                 if (e.message != RETRACK_FAILED || lower == null) throw e
@@ -256,6 +375,7 @@ class Router(
     private fun computeAt(
         request: RouteRequest,
         options: RouteOptions,
+        nogos: List<Nogo>,
         maxRunningMs: Long,
         started: (RoutingEngine) -> Unit,
     ): Route {
@@ -281,6 +401,10 @@ class Router(
             context.startDirection = (((bearing % 360.0) + 360.0) % 360.0).roundToInt() % 360
             context.forceUseStartDirection = true
         }
+        // Weighted first and hard last, so that on a piece of way inside both kinds the
+        // closure is the circle BRouter keeps (class notes). Fresh nodes every time:
+        // BRouter adds to the list it is given, and nothing may carry to the next search.
+        if (nogos.isNotEmpty()) context.nogopoints = ArrayList(nogos.sortedBy { it.hard }.map { brouterNogo(it) })
         val via = request.viaLat != null && request.viaLon != null
         val waypoints = RoutingParamCollector().readPositions(
             if (via) doubleArrayOf(request.fromLon, request.viaLon!!, request.toLon) else doubleArrayOf(request.fromLon, request.toLon),
@@ -291,7 +415,7 @@ class Router(
         engine.quite = true
         started(engine)
         engine.doRun(maxRunningMs)
-        engine.getErrorMessage()?.let { throw RoutingException(it) }
+        engine.getErrorMessage()?.let { throw RoutingException(it, engine.isTerminated() || it.contains(TIMED_OUT)) }
         val track = engine.getFoundTrack() ?: throw RoutingException("no route found")
         val nodes = track.nodes
         if (nodes.size < 2) throw RoutingException("no route found")
@@ -328,9 +452,82 @@ class Router(
 
         /** BRouter's message when its final detailed pass cannot follow the route it found. */
         const val RETRACK_FAILED = "error re-tracking track"
+
+        /**
+         * How near a closure the route crossed a weighted point must be to be left out of
+         * the second search, metres: the longest interstate link measured on the Texas tiles
+         * was 1.6 km (docs/p9-5-routing-results.md), and a point can only overwrite a
+         * closure on the same link.
+         */
+        const val CLOSURE_GUARD_M = 2_000.0
+
+        /** In BRouter's message when a search ran out of time rather than failed. */
+        private const val TIMED_OUT = "timeout after"
         private const val MICRODEGREES = 1_000_000.0
         private const val LAT_OFFSET = 90_000_000
         private const val LON_OFFSET = 180_000_000
+
+        /**
+         * [nogo] as BRouter's own parser makes one (`RoutingParamCollector.readNogo`):
+         * microdegrees offset to be positive, the radius in metres, and NaN weight for a
+         * hard block. The radius is set directly, so the name is only for BRouter's logs.
+         */
+        private fun brouterNogo(nogo: Nogo): OsmNodeNamed = OsmNodeNamed().apply {
+            ilon = ((nogo.longitude + 180.0) * MICRODEGREES + 0.5).toInt()
+            ilat = ((nogo.latitude + 90.0) * MICRODEGREES + 0.5).toInt()
+            radius = nogo.radiusM
+            nogoWeight = nogo.weight ?: Double.NaN
+            isNogo = true
+            name = "nogo" + nogo.radiusM.roundToInt()
+        }
+
+        /**
+         * The hard points among [nogos] that [route] passes inside, leaving out any BRouter
+         * itself set aside because its circle holds the start, the via point or the
+         * destination as asked for.
+         */
+        fun closuresCrossed(route: Route, request: RouteRequest, nogos: List<Nogo>): List<Nogo> {
+            val ends = listOfNotNull(
+                doubleArrayOf(request.fromLat, request.fromLon),
+                doubleArrayOf(request.toLat, request.toLon),
+                request.viaLat?.let { doubleArrayOf(it, request.viaLon!!) },
+            )
+            return nogos.filter { nogo ->
+                nogo.hard &&
+                    ends.none { metres(it[0], it[1], nogo.latitude, nogo.longitude) < nogo.radiusM } &&
+                    passesWithin(route, nogo.latitude, nogo.longitude, nogo.radiusM)
+            }
+        }
+
+        /**
+         * Whether any piece of [route] comes nearer than [radiusM] to the point, measured as
+         * BRouter measures its circles: `CheapRuler`'s metres per microdegree at the point.
+         */
+        private fun passesWithin(route: Route, lat: Double, lon: Double, radiusM: Double): Boolean {
+            val scales = CheapRuler.getLonLatToMeterScales(((lat + 90.0) * MICRODEGREES).roundToInt())
+            val kx = scales[0] * MICRODEGREES
+            val ky = scales[1] * MICRODEGREES
+            var x1 = (route.longitudes[0] - lon) * kx
+            var y1 = (route.latitudes[0] - lat) * ky
+            for (i in 1 until route.points) {
+                val x2 = (route.longitudes[i] - lon) * kx
+                val y2 = (route.latitudes[i] - lat) * ky
+                val dx = x2 - x1
+                val dy = y2 - y1
+                val length2 = dx * dx + dy * dy
+                val t = if (length2 == 0.0) 0.0 else (-(x1 * dx + y1 * dy) / length2).coerceIn(0.0, 1.0)
+                if (hypot(x1 + t * dx, y1 + t * dy) < radiusM) return true
+                x1 = x2
+                y1 = y2
+            }
+            return false
+        }
+
+        /** Metres between two points, by `CheapRuler` as BRouter measures them. */
+        private fun metres(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double = CheapRuler.distance(
+            ((lon1 + 180.0) * MICRODEGREES).roundToInt(), ((lat1 + 90.0) * MICRODEGREES).roundToInt(),
+            ((lon2 + 180.0) * MICRODEGREES).roundToInt(), ((lat2 + 90.0) * MICRODEGREES).roundToInt(),
+        )
 
         private var lastParameters: Map<String, String>? = null
 

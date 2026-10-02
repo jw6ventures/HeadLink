@@ -14,6 +14,7 @@ public final class FavoritesTest {
         onlyAPlaceCanBeAFavorite();
         theStoredFormReadsBackWhole();
         aBadLineDropsOnlyItself();
+        aPlaceArrivedAtIsSavedOnlyOnce();
         System.out.println("jni-host-test: ok " + passed + " favorites checks");
     }
 
@@ -67,6 +68,21 @@ public final class FavoritesTest {
                 + "30.3\t-97.4\t\n";
         List<Favorite> read = Favorite.Companion.decode(store);
         check(read.size() == 1 && "OK".equals(read.get(0).getName()), "one good line survives five bad ones: " + read);
+    }
+
+    /**
+     * Arriving puts the destination on top of the list unless a saved place is already
+     * there (Navigation.arrived): the same address shared again lands a few metres off.
+     */
+    private static void aPlaceArrivedAtIsSavedOnlyOnce() {
+        List<Favorite> places = new ArrayList<>();
+        check(!Favorite.Companion.saved(places, 30.2672, -97.7431), "nothing is saved in an empty list");
+        places.add(new Favorite("Home", 30.2672, -97.7431));
+        check(Favorite.Companion.saved(places, 30.2672, -97.7431), "the saved point itself is saved");
+        // 0.0003 degrees of latitude is about 33 m; 0.0006 about 67 m.
+        check(Favorite.Companion.saved(places, 30.2675, -97.7431), "33 m off is the same place");
+        check(!Favorite.Companion.saved(places, 30.2678, -97.7431), "67 m off is another");
+        check(!Favorite.Companion.saved(places, 30.2711, -97.7437), "and downtown is not home");
     }
 
     private static void check(boolean condition, String what) {

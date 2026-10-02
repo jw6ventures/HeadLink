@@ -54,6 +54,8 @@ data class SavedSettings(
     /** The dashboard header's debug line and, from P7.7, the Diagnostics tab (§6.1). */
     val diagnostics: Boolean = false,
     val markerColour: MarkerColour = MarkerColour.DEFAULT,
+    /** 12- or 24-hour clock times, on the dashboard and the phone. */
+    val clockFormat: ClockFormat = ClockFormat.DEFAULT,
     /** Also cycled from the dashboard's ☀/☾ icon, so it is saved from there too (§5.6). */
     val dayNight: DayNightMode = DayNightMode.DEFAULT,
     /** Alerting notifications in the flex tile (§5.8). Off: the listener reads none. */
@@ -77,6 +79,8 @@ data class SavedSettings(
     val voice: VoiceSettings = VoiceSettings(),
     /** Maps & routing → Routing: road choices and time estimates ([RouteOptions]). */
     val routing: RouteOptions = RouteOptions(),
+    /** P10: Settings → Weather (docs/p10-plan.md §4); off by default (APP09). */
+    val weather: WeatherSettings = WeatherSettings(),
 ) {
     /**
      * This value with every stored choice a list no longer offers put back to its
@@ -188,6 +192,7 @@ data class SavedSettings(
             AUTO_START to s.autoStart,
             DIAGNOSTICS to s.diagnostics,
             MARKER_COLOUR to s.markerColour.key,
+            CLOCK_FORMAT to s.clockFormat.key,
             DAY_NIGHT to s.dayNight.key,
             NOTIFICATIONS_ON_DASHBOARD to s.notificationsOnDashboard,
             NOTIFICATION_EXCLUSIONS to s.notificationExclusions.toSet(),
@@ -213,6 +218,9 @@ data class SavedSettings(
             ROUTE_ETA_PERCENT to s.routing.etaPercent,
             ROUTE_LEARN_PACE to s.routing.learnPace,
             ROUTE_SHOW_ALTERNATIVES to s.routing.showAlternatives,
+            WEATHER_ENABLED to s.weather.enabled,
+            WEATHER_SPEAK_ALERTS to s.weather.speakAlerts,
+            WEATHER_ALERT_LEVEL to s.weather.alertLevel.key,
         )
     }
 
@@ -262,6 +270,7 @@ data class SavedSettings(
                 autoStart = flag(AUTO_START, d.autoStart),
                 diagnostics = flag(DIAGNOSTICS, d.diagnostics),
                 markerColour = MarkerColour.of(stored[MARKER_COLOUR] as? String),
+                clockFormat = ClockFormat.of(stored[CLOCK_FORMAT] as? String),
                 dayNight = DayNightMode.of(stored[DAY_NIGHT] as? String),
                 notificationsOnDashboard = flag(NOTIFICATIONS_ON_DASHBOARD, d.notificationsOnDashboard),
                 notificationExclusions = (stored[NOTIFICATION_EXCLUSIONS] as? Set<*>)
@@ -291,6 +300,11 @@ data class SavedSettings(
                     etaPercent = number(ROUTE_ETA_PERCENT, d.routing.etaPercent),
                     learnPace = flag(ROUTE_LEARN_PACE, d.routing.learnPace),
                     showAlternatives = flag(ROUTE_SHOW_ALTERNATIVES, d.routing.showAlternatives),
+                ),
+                weather = WeatherSettings(
+                    enabled = flag(WEATHER_ENABLED, d.weather.enabled),
+                    speakAlerts = flag(WEATHER_SPEAK_ALERTS, d.weather.speakAlerts),
+                    alertLevel = AlertLevel.of(stored[WEATHER_ALERT_LEVEL] as? String),
                 ),
             ).repaired()
         }
@@ -322,12 +336,16 @@ data class SavedSettings(
         private const val AUTO_START = "auto_start"
         private const val DIAGNOSTICS = "diagnostics"
         private const val MARKER_COLOUR = "marker_colour"
+        private const val CLOCK_FORMAT = "clock_format"
         private const val DAY_NIGHT = "day_night"
         private const val NOTIFICATIONS_ON_DASHBOARD = "notifications_on_dashboard"
         private const val NOTIFICATION_EXCLUSIONS = "notification_exclusions"
         private const val NOTIFICATIONS_PAUSED = "notifications_paused"
         private const val CALL_CONTROLS = "call_controls"
         private const val READ_ALOUD = "read_aloud"
+        private const val WEATHER_ENABLED = "weather_enabled"
+        private const val WEATHER_SPEAK_ALERTS = "weather_speak_alerts"
+        private const val WEATHER_ALERT_LEVEL = "weather_alert_level"
         private const val SPEECH_MEDIA = "speech_media"
         private const val VOICE_GUIDANCE = "voice_guidance"
         private const val VOICE_EARLY = "voice_early"
@@ -449,7 +467,7 @@ enum class AutoStart(val reason: String) {
  * leave the truck with lab settings.
  *
  * Choices are stored by their string forms — the spinner values, [SpeedUnit.label],
- * [MarkerColour.key], [DayNightMode.key], [SpeechMedia.key], [PromptTiming.label],
+ * [MarkerColour.key], [ClockFormat.key], [DayNightMode.key], [SpeechMedia.key], [PromptTiming.label],
  * [PromptDetail.label] — never by list position, so reordering a list in a later build
  * cannot silently turn one saved choice into another.
  * Whatever reads back is [SavedSettings.repaired].

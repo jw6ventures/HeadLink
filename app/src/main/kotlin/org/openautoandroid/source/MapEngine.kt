@@ -7,6 +7,7 @@ import org.oscim.backend.CanvasAdapter
 import org.oscim.backend.DateTime
 import org.oscim.backend.DateTimeAdapter
 import org.oscim.backend.GLAdapter
+import org.oscim.backend.canvas.Paint.Cap
 import org.oscim.core.GeoPoint
 import org.oscim.core.MapPosition
 import org.oscim.core.Tile
@@ -23,6 +24,7 @@ import org.oscim.theme.IRenderTheme
 import org.oscim.theme.StreamRenderTheme
 import org.oscim.theme.ThemeLoader
 import org.oscim.theme.internal.VtmThemes
+import org.oscim.theme.styles.LineStyle
 import org.oscim.tiling.TileSource
 import org.oscim.tiling.source.mapfile.MapFileTileSource
 import org.oscim.tiling.source.mapfile.MultiMapFileTileSource
@@ -88,6 +90,26 @@ class MapEngine(width: Int, height: Int) {
      * each, under the route's casing so the route stays on top where they share roads.
      */
     private val alternativeLayers = ArrayList<PathLayer>()
+
+    /** The route on the map now, for [TrafficLines]'s check that traffic belongs to it. */
+    private var drawnRoute: Route? = null
+
+    /**
+     * The traffic pieces over the route ahead (P9.3): an edge layer and a line layer each,
+     * edges all below lines, just above the route line and below the labels. Made as they
+     * are first needed and kept: a piece that goes has its layers emptied and disabled,
+     * which the renderer skips, so the layer list changes only when it grows, at most to
+     * [TrafficLines.MAX_PIECES] pairs.
+     */
+    private val trafficEdges = ArrayList<PathLayer>()
+    private val trafficLines = ArrayList<PathLayer>()
+    private val traffic = TrafficLines()
+
+    /** The offer's proposal (P9.6), in the alternatives' style: edge and line, or null. */
+    private var offerEdge: PathLayer? = null
+    private var offerLine: PathLayer? = null
+    private var offerShown = false
+    private var offerChanges = 0L
 
     /** Alternatives drawn now, and the most at once this session; counts, never the geometry. */
     var alternativesShown = 0
@@ -274,7 +296,7 @@ class MapEngine(width: Int, height: Int) {
 
         // Absent or unreadable map data is a degraded dashboard, not a failed session:
         // the pane draws its background and the chrome around it still works. The app
-        // has no INTERNET permission (APP10), so there is no download to fall back on
+        // never fetches map data (APP10), so there is no download to fall back on
         // and the operator has to supply the file — which they can only be told about
         // if this keeps running and reports why.
         val source = openTileSource(mapFiles)?.let(::MapReadGuard)
@@ -524,6 +546,7 @@ class MapEngine(width: Int, height: Int) {
             routeCasing?.setPoints(points)
             routePoints = route.points
         }
+        drawnRoute = route
         routeChanges++
         dirty = true
     }
@@ -550,6 +573,82 @@ class MapEngine(width: Int, height: Int) {
         layers.addAll(below, alternativeLayers)
         alternativesShown = routes.size
         alternativesShownMax = maxOf(alternativesShownMax, routes.size)
+        dirty = true
+    }
+
+    /**
+     * Colours the route ahead of the vehicle by [traffic] (P9.3, docs/p9-plan.md §6), given
+     * the position the map follows. Scene thread, every frame; [TrafficLines] says whether
+     * anything drawn has to change, and only then are layers touched: traffic for a route
+     * other than the one on the map draws nothing, and the cut at the vehicle moves in steps.
+     */
+    fun setTraffic(traffic: RouteTraffic?, position: Pair<Double, Double>?) {
+        val paneMap = map ?: return
+        val pieces = this.traffic.update(traffic, drawnRoute, position?.first, position?.second) ?: return
+        if (pieces.size > trafficLines.size) growTraffic(paneMap, pieces.size)
+        for (i in trafficLines.indices) {
+            val edge = trafficEdges[i]
+            val line = trafficLines[i]
+            val piece = pieces.getOrNull(i)
+            if (piece == null) {
+                edge.clearPath()
+                line.clearPath()
+                edge.isEnabled = false
+                line.isEnabled = false
+                continue
+            }
+            val points = List(piece.latitudes.size) { GeoPoint(piece.latitudes[it], piece.longitudes[it]) }
+            line.setStyle(trafficStyle(piece.congestion))
+            edge.setPoints(points)
+            line.setPoints(points)
+            edge.isEnabled = true
+            line.isEnabled = true
+        }
+        dirty = true
+    }
+
+    /**
+     * Adds layer pairs until there are [count], keeping every edge below every line so a
+     * piece's edge never cuts across the next piece's colour where two meet.
+     */
+    private fun growTraffic(paneMap: PaneMap, count: Int) {
+        val layers = paneMap.layers()
+        trafficEdges.forEach { layers.remove(it) }
+        trafficLines.forEach { layers.remove(it) }
+        while (trafficLines.size < count) {
+            trafficEdges += PathLayer(paneMap, TrafficLines.EDGE_COLOUR, ROUTE_WIDTH + ROUTE_CASING_EXTRA)
+            trafficLines += PathLayer(paneMap, TrafficLines.SLOW_COLOUR, ROUTE_WIDTH)
+        }
+        // Straight above the route line: over it, and still under the labels.
+        val above = routeLayer?.let { layers.indexOf(it) }?.takeIf { it >= 0 }?.plus(1) ?: layers.size
+        layers.addAll(above, trafficEdges + trafficLines)
+    }
+
+    /**
+     * Draws the offer's proposed route (P9.6) in the alternatives' style, under the route's
+     * casing like them; null takes it off. Scene thread.
+     */
+    fun setOffer(route: Route?) {
+        val paneMap = map ?: return
+        if (route == null) {
+            offerEdge?.let { it.clearPath(); it.isEnabled = false }
+            offerLine?.let { it.clearPath(); it.isEnabled = false }
+        } else {
+            if (offerLine == null) {
+                val layers = paneMap.layers()
+                val edge = PathLayer(paneMap, ALTERNATIVE_EDGE_COLOR, ALTERNATIVE_WIDTH + ROUTE_CASING_EXTRA)
+                val line = PathLayer(paneMap, ALTERNATIVE_COLOR, ALTERNATIVE_WIDTH)
+                val below = routeCasing?.let { layers.indexOf(it) }?.takeIf { it >= 0 } ?: layers.size
+                layers.addAll(below, listOf(edge, line))
+                offerEdge = edge
+                offerLine = line
+            }
+            val points = List(route.points) { GeoPoint(route.latitudes[it], route.longitudes[it]) }
+            offerEdge?.let { it.setPoints(points); it.isEnabled = true }
+            offerLine?.let { it.setPoints(points); it.isEnabled = true }
+        }
+        offerShown = route != null
+        offerChanges++
         dirty = true
     }
 
@@ -660,6 +759,11 @@ class MapEngine(width: Int, height: Int) {
         loaderInterrupts = null
         routeLayer = null
         routeCasing = null
+        drawnRoute = null
+        trafficEdges.clear()
+        trafficLines.clear()
+        offerEdge = null
+        offerLine = null
         routePoints = 0
         layered = false
         appliedMode = UNTHEMED
@@ -697,7 +801,13 @@ class MapEngine(width: Int, height: Int) {
             "map_theme_hold_ms_last=$holdMsLast map_theme_hold_ms_max=$holdMsMax " +
             "map_theme_hold_timeouts=$holdTimeouts map_theme_hold_requeues=$holdRequeues " +
             "map_loader_reopened=${loaderInterrupts?.reopened?.get() ?: 0} " +
-            "map_loader_reopen_failed=${loaderInterrupts?.failedRenewals?.get() ?: 0}\n"
+            "map_loader_reopen_failed=${loaderInterrupts?.failedRenewals?.get() ?: 0}\n" +
+            // P9.3, P9.6: how much of the route traffic coloured and how often it was redrawn;
+            // counts only, never where.
+            "map_traffic_pieces=${traffic.pieces.size} map_traffic_pieces_max=${traffic.piecesMax} " +
+            "map_traffic_rebuilds=${traffic.rebuilds} map_traffic_stale=${traffic.stale} " +
+            "map_traffic_dropped=${traffic.dropped} map_traffic_layers=${trafficEdges.size + trafficLines.size} " +
+            "map_offer_line=$offerShown map_offer_changes=$offerChanges\n"
 
     private fun fail(detail: String): String {
         if (failure == null) failure = detail
@@ -898,6 +1008,27 @@ class MapEngine(width: Int, height: Int) {
         const val ALTERNATIVE_COLOR = 0xFF9AA5B1.toInt()
         private const val ALTERNATIVE_EDGE_COLOR = 0xFF4A5560.toInt()
         private const val ALTERNATIVE_WIDTH = 6f
+
+        /**
+         * A traffic piece's line (P9.3): the route's width, so it reads as the route changing
+         * colour, not as a second line. A closure is dashed with VTM's own stipple, the same
+         * mechanism the themes draw paths and railways with: [TrafficLines.CLOSED_COLOUR]
+         * dashes [TrafficLines.CLOSED_DASH] pixels long over [TrafficLines.CLOSED_GAP_COLOUR].
+         * VTM's stipple shader mixes the two colours along the line (`linetex_layer.glsl`),
+         * so the "gaps" are that light colour rather than holes, which is also what makes
+         * them show on the night ground.
+         */
+        private fun trafficStyle(congestion: Congestion): LineStyle =
+            if (TrafficLines.dashed(congestion)) {
+                LineStyle(
+                    0, "", TrafficLines.CLOSED_GAP_COLOUR, ROUTE_WIDTH, Cap.BUTT, true, 1.0,
+                    TrafficLines.CLOSED_DASH, TrafficLines.CLOSED_COLOUR, 1f, -1, 0f, false, null, true, null,
+                    LineStyle.REPEAT_START_DEFAULT * CanvasAdapter.getScale(),
+                    LineStyle.REPEAT_GAP_DEFAULT * CanvasAdapter.getScale(), false,
+                )
+            } else {
+                LineStyle(TrafficLines.colour(congestion) ?: ROUTE_COLOR, ROUTE_WIDTH, Cap.BUTT)
+            }
 
         /** Packaged at `app/src/main/resources/assets/oaa/`, read through [MapAssets]. */
         private const val THEME_NIGHT_ASSET = "oaa/dashboard-dark.xml"

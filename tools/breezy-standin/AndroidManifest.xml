@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The emulator lab's stand-in Breezy Weather (tools/breezy-standin.sh, P10 plan §8). Never
+     shipped and NEVER installed on a phone: it takes Breezy's real package name,
+     org.breezyweather, so that the app's provider-owner check accepts it, and on the Pixel
+     that name belongs to the real Breezy. The emulator has no Breezy, so without this the
+     lab could not exercise P10's reader, permission prompt or owner check at all. It has
+     no Breezy code: its provider serves the scenario files under scenarios/. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="org.breezyweather"
+    android:versionCode="1"
+    android:versionName="lab">
+
+    <!-- Breezy's own permission, as it declares it: dangerous, so the app must ask for it
+         and the lab must grant it (pm grant), exactly as on the phone. Breezy's also has a
+         description, which aapt2 takes only as a string resource; this APK has none. -->
+    <permission android:name="org.breezyweather.READ_PROVIDER"
+        android:protectionLevel="dangerous"
+        android:label="read your weather data (lab stand-in)" />
+
+    <application android:label="Breezy stand-in" android:allowBackup="false" android:debuggable="true">
+        <provider android:name=".WeatherProvider"
+            android:authorities="org.breezyweather.provider.weather"
+            android:exported="true"
+            android:readPermission="org.breezyweather.READ_PROVIDER" />
+        <!-- Exported so the lab's am broadcast can name it with -n and pick a scenario. -->
+        <receiver android:name=".ScenarioReceiver" android:exported="true" />
+    </application>
+</manifest>

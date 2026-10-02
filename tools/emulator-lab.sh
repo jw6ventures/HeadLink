@@ -14,7 +14,7 @@
 # localhost/openauto-lab-receiver:p4 with tools/lab-receiver.sh build, and the debug APK
 # from tools/android-build.sh. Results go to $OPENAUTO_CACHE/emulator-lab/<UTC time>/.
 #
-#   tools/emulator-lab.sh [taps|focus|stall|audio|track|navigation|guidance|daynight|controls|endroute|calls|speech|voice|none]
+#   tools/emulator-lab.sh [taps|focus|stall|audio|track|navigation|guidance|daynight|controls|endroute|calls|speech|voice|traffic|weather|none]
 #
 # The audio script (P5.3) makes the receiver advertise one PCM MEDIA channel, grant audio
 # focus, and measure the PCM the app's own AudioSource produces against the tone it says
@@ -170,6 +170,84 @@
 # The lab player is also what the endroute script's Resume press plays: the emulator image
 # has no launchable player, and since part 2b only launchable apps are listed.
 #
+# The traffic script (P9 plan §8, needs LAB_ROUTING and LAB_MAP; LAB_TRAFFIC set with no
+# script names it too) runs live traffic against a stand-in HERE server,
+# tools/here-standin/here-standin.py, started in the pod beside the emulator on 127.0.0.1:8765,
+# which the emulator reaches as http://10.0.2.2:8765 (the debug build allows cleartext to that
+# host alone). The lab intent turns traffic on (off for LAB_TRAFFIC=off) with the stand-in's
+# URL and key, a 5 minute refresh and a cleared count, and shares Boston Common while the
+# vehicle is parked at the start of LAB_DRIVE (default tools/lab-receiver/drives/traffic.csv).
+# The stand-in serves hand-written responses in HERE's shape from tools/here-standin/scenarios
+# (written by tools/jni-host-test/LabTraffic.java, which also writes expected.txt: what the
+# app's own code finds for each on the host); which one is read from /out/here/scenario at
+# every request, and a scenario change is fetched at once by turning traffic off and on.
+# Its counts are in here/stats.txt and its requests, key hidden, in here/requests.log.
+# LAB_TRAFFIC picks the run:
+#   * offer (the default; plan §8 checks 1-3): scenario a, a slow stretch just ahead (amber),
+#     a queue on the motorway 10 km on (red) and a closure on a side road. The receiver checks
+#     the route line turns amber in the picture, waits for the divided turn card (Take filled
+#     in the accent), checks the map reframed, shows the card in the other palette and back,
+#     presses Keep and checks the card is whole and the map back on the vehicle. The script
+#     then serves a2 (the queue slower) and turns traffic off and on; the receiver waits for
+#     the next offer and presses Take. The app side checks the delay against expected.txt
+#     (+-60 s), the pieces drawn and not stale, the credit, "+N min" on the trip panel, the
+#     offers made, kept and taken, both fits and refollows, and the route through the offer's
+#     via point; after the run, that the cluster's time rose by the delay and equals the trip
+#     panel's (receiver-eta.txt against app-report-a.txt).
+#   * closure (check 4): scenario side (the side-road closure must not re-route), then b, the
+#     closure moved onto the route 250 m ahead, fetched by turning traffic off and on. The
+#     receiver checks the closure's colour in the picture and REROUTING then a new route on the
+#     cluster; the app side one closure re-route, a new route with points that does not go
+#     through the closure. Then traffic is turned off: nothing held within 8 s, and the
+#     stand-in hears no request after.
+#   * off (check 5): the key and URL saved but the switch off; the vehicle drives LAB_DRIVE on
+#     the route. The stand-in must accept no connection at all, and the app count none.
+#   * drive: scenario a, and once it has arrived the vehicle drives LAB_DRIVE through the slow
+#     stretch: the colour on the move, its rebuilds, nothing behind the marker (frames), and the
+#     frame cost with the traffic layers (the report's frames and drops against the time).
+#   * render (P9.6's pictures for James): offer as far as Keep, with the same checks on the way,
+#     and no second offer: the divided card in both palettes, in the least lab time.
+# LAB_OFFER_LAYOUT=side-by-side|stacked tells the app (lab_offer_layout) and the receiver how
+# the turn card divides, and LAB_MARGINS=WxH advertises video margins (74x0 on 800x480 is
+# Ford's 726x480 content rectangle), for the renders of the divided card (P9.6). Every run
+# checks that no key, road, reason, stand-in description or coordinate reached the report.
+#
+# The weather script (P10 plan §8; LAB_WEATHER set with no script names it too) runs weather
+# against the stand-in Breezy Weather, tools/breezy-standin (tools/breezy-standin.sh builds it
+# into $OPENAUTO_CACHE/breezy-standin/breezy-standin.apk). It has Breezy's package name, so it
+# is installed on this emulator only, before the app so that its READ_PROVIDER permission
+# exists, and the permission is then granted with pm grant as the operator would. Its
+# scenario is chosen with a broadcast to its ScenarioReceiver, and every provider query it
+# answers is logged under BreezyStandin, which this script records for the whole attempt
+# (breezy-standin-log.txt). The lab intent turns Show weather on (off for LAB_WEATHER=off).
+# The receiver and this script hand off through two files in the results: the receiver says
+# what it has seen in weather-receiver.txt and waits for weather-lab.txt. LAB_WEATHER picks:
+#   * show (the default): the Lexington fixture, 78°F partly cloudy. The receiver checks the
+#     header draws the glyph and that the header text ends clear of the item, presses it, and
+#     checks the flex tile opens the view; it frames the view in both palettes (renders) and
+#     closes it with a second press. LAB_VIDEO_CONFIG and LAB_MARGINS give the sizes.
+#   * tap: the second press, a press on the view and an untouched 30 s each close it; the
+#     view is opened again, and a modem call (adb emu gsm call, the calls script's telecom
+#     route) rings over it; a press on the item during the call must leave the call on the
+#     tile. The call is then cancelled from the modem, and the view must not come back.
+#   * alert: dashboard notifications on, one posted by the lab player; the scenario then
+#     becomes alert (two severe alerts) and is read through the lab cue. The receiver checks
+#     the alert takes the tile, the glyph gains its warning mark, and two presses dismiss the
+#     two alerts, the notification returning. With LAB_WEATHER_VOICE=on (the default) the
+#     trip panel's voice toggle is seeded on and the speech script's engine and Bluetooth
+#     override are used: the alert must be spoken; with off it must be counted toggle_off.
+#   * stale: two places, Waco and Goffstown NH, the nearer 4 h old; once the vehicle's fix
+#     is in, a lab cue reads it again: the view in both palettes, far and old (renders).
+#   * unsupported: provider version 1.0; the view says so (render).
+#   * off: Show weather off. The receiver checks no item is drawn and a press where it would
+#     be opens nothing; the notifier and the lab cue are sent anyway. The stand-in must log no
+#     query at all during the attempt; after it, a debug capture must be logged, which shows
+#     the log was listening.
+#   * notifier: show, then the scenario becomes notifier (64°F) and Breezy's update notifier
+#     is broadcast to the app; the receiver times the header's change from the broadcast
+#     (2 s at most).
+# Every run checks that no place, condition, headline or fixture text reached the report.
+#
 # LAB_SCREENS=1 (P7.7) also photographs the phone screen, after any route or destination
 # step so it delays none of them: each tab of the connection screen in turn
 # (screen-home.png, screen-setup.png, ...), found by its label through uiautomator and
@@ -183,7 +261,20 @@ cd "$(dirname "$0")/.."
 . tools/podman-env.sh
 EMULATOR_IMAGE=localhost/openauto-emulator:smoke
 RECEIVER_IMAGE=localhost/openauto-lab-receiver:p4
-SCRIPT=${1:-taps}
+SCRIPT=${1:-$(if [ -n "${LAB_TRAFFIC:-}" ]; then echo traffic; elif [ -n "${LAB_WEATHER:-}" ]; then echo weather; else echo taps; fi)}
+# P9: which traffic run, and how the offer divides the turn card.
+TRAFFIC_MODE=${LAB_TRAFFIC:-offer}
+case $TRAFFIC_MODE in offer|render|closure|off|drive) ;; *) echo "emulator-lab: LAB_TRAFFIC is offer, render, closure, off or drive" >&2; exit 1 ;; esac
+OFFER_LAYOUT=${LAB_OFFER_LAYOUT:-side-by-side}
+case $OFFER_LAYOUT in side-by-side|stacked) ;; *) echo "emulator-lab: LAB_OFFER_LAYOUT is side-by-side or stacked" >&2; exit 1 ;; esac
+# P10: which weather run, and whether the trip panel's voice toggle is on for the alert.
+WEATHER_MODE=${LAB_WEATHER:-show}
+case $WEATHER_MODE in show|tap|alert|stale|unsupported|off|notifier) ;;
+    *) echo "emulator-lab: LAB_WEATHER is show, tap, alert, stale, unsupported, off or notifier" >&2; exit 1 ;; esac
+WEATHER_VOICE=${LAB_WEATHER_VOICE:-on}
+case $WEATHER_VOICE in on|off) ;; *) echo "emulator-lab: LAB_WEATHER_VOICE is on or off" >&2; exit 1 ;; esac
+# The stand-in's key: sent by the app to the stand-in only, and looked for in the report.
+TRAFFIC_KEY=labkey-p9-standin-7f3a
 # The track script drives for about half a minute after the map has settled, so it gets
 # a longer window than the scripts that finish as soon as their taps land.
 if [ "$SCRIPT" = track ] || [ "$SCRIPT" = daynight ] || [ "$SCRIPT" = controls ] || [ "$SCRIPT" = endroute ]; then DEFAULT_MS=90000; else DEFAULT_MS=40000; fi
@@ -193,13 +284,21 @@ if [ "$SCRIPT" = calls ]; then DEFAULT_MS=180000; fi
 if [ "$SCRIPT" = speech ]; then DEFAULT_MS=150000; fi
 # The guidance drive is several kilometres long and ends only when the app says it arrived.
 if [ "$SCRIPT" = guidance ] || [ "$SCRIPT" = voice ]; then DEFAULT_MS=600000; fi
+# P9: two offers, each a live alternatives search with no-go points in a debug build.
+if [ "$SCRIPT" = traffic ]; then
+    case $TRAFFIC_MODE in offer) DEFAULT_MS=2400000 ;; render|closure) DEFAULT_MS=1200000 ;; off|drive) DEFAULT_MS=600000 ;; esac
+fi
+# P10: a few presses and holds; tap adds the 30 s timeout and a call.
+if [ "$SCRIPT" = weather ]; then
+    if [ "$WEATHER_MODE" = tap ]; then DEFAULT_MS=360000; else DEFAULT_MS=240000; fi
+fi
 PROJECTION_MS=${LAB_PROJECTION_MS:-$DEFAULT_MS}
 # The app-owned audio path: on for --script audio, and available alongside the others so
 # a run also covers audio interleaving with fragmenting video keyframes.
 if [ -n "${LAB_AUDIO:-}" ] || [ "$SCRIPT" = audio ]; then AUDIO=1; else AUDIO=0; fi
 # The app-driven cluster path (P6.2), on the same footing.
 if [ -n "${LAB_NAVIGATION:-}" ] || [ "$SCRIPT" = navigation ] || [ "$SCRIPT" = guidance ] || [ "$SCRIPT" = endroute ] \
-    || [ "$SCRIPT" = voice ]; then NAVIGATION=1; else NAVIGATION=0; fi
+    || [ "$SCRIPT" = voice ] || [ "$SCRIPT" = traffic ]; then NAVIGATION=1; else NAVIGATION=0; fi
 # The navigation script plays the session own demonstration; the app now defaults to the
 # followed route, so that script asks for the demonstration by name.
 if [ "$SCRIPT" = navigation ]; then NAVIGATION_SCRIPT=1; else NAVIGATION_SCRIPT=0; fi
@@ -224,7 +323,7 @@ if [ -n "${LAB_MAP:-}" ]; then
     [ -f "$LAB_MAP" ] || { echo "emulator-lab: no map file at $LAB_MAP" >&2; exit 1; }
     cp "$LAB_MAP" "$out/region.map"
 elif [ "$SCRIPT" = track ] || [ "$SCRIPT" = guidance ] || [ "$SCRIPT" = daynight ] || [ "$SCRIPT" = controls ] \
-    || [ "$SCRIPT" = endroute ] || [ "$SCRIPT" = voice ]; then
+    || [ "$SCRIPT" = endroute ] || [ "$SCRIPT" = voice ] || [ "$SCRIPT" = traffic ]; then
     echo "emulator-lab: the $SCRIPT script needs LAB_MAP=<region>.map covering 42.42,-71.21" >&2
     exit 1
 fi
@@ -233,12 +332,30 @@ if [ "$SCRIPT" = endroute ] && [ -z "${LAB_ROUTING:-}" ]; then
     echo "emulator-lab: the endroute script needs LAB_ROUTING" >&2
     exit 1
 fi
-if [ "$SCRIPT" = guidance ] || [ "$SCRIPT" = voice ]; then
+if [ "$SCRIPT" = guidance ] || [ "$SCRIPT" = voice ] || [ "$SCRIPT" = traffic ]; then
     [ -n "${LAB_ROUTING:-}" ] || { echo "emulator-lab: the $SCRIPT script needs LAB_ROUTING" >&2; exit 1; }
-    drive=${LAB_DRIVE:-tools/lab-receiver/drives/lexington.csv}
+    if [ "$SCRIPT" = traffic ]; then drive=${LAB_DRIVE:-tools/lab-receiver/drives/traffic.csv}
+    else drive=${LAB_DRIVE:-tools/lab-receiver/drives/lexington.csv}; fi
     [ -f "$drive" ] || { echo "emulator-lab: no drive at $drive" >&2; exit 1; }
     cp "$drive" "$out/drive.csv"
     DRIVE_ARGS="--track-file /out/drive.csv --track-speed ${LAB_DRIVE_SPEED:-18}"
+fi
+# P10: the weather script's receiver side; the stand-in Breezy, never anywhere but this emulator.
+WEATHER_ARGS=
+if [ "$SCRIPT" = weather ]; then
+    WEATHER_ARGS="--weather-mode $WEATHER_MODE --weather-dir /out"
+    [ -f "$CACHE_ROOT/breezy-standin/breezy-standin.apk" ] || { echo "emulator-lab: run tools/breezy-standin.sh first" >&2; exit 1; }
+    cp "$CACHE_ROOT/breezy-standin/breezy-standin.apk" "$out/breezy-standin.apk"
+fi
+# P9: the traffic script's receiver side, and the margins a Ford-sized render needs.
+TRAFFIC_ARGS=
+if [ "$SCRIPT" = traffic ]; then
+    TRAFFIC_ARGS="--traffic-mode $TRAFFIC_MODE --offer-layout $OFFER_LAYOUT --eta-out /out/receiver-eta.txt"
+fi
+MARGIN_ARGS=
+if [ -n "${LAB_MARGINS:-}" ]; then
+    echo "$LAB_MARGINS" | grep -Eq "^[0-9]+x[0-9]+$" || { echo "emulator-lab: LAB_MARGINS is WxH" >&2; exit 1; }
+    MARGIN_ARGS="--margins $LAB_MARGINS"
 fi
 if [ -n "${LAB_MAP_EXTRA:-}" ]; then
     [ -f "$LAB_MAP_EXTRA" ] || { echo "emulator-lab: no map file at $LAB_MAP_EXTRA" >&2; exit 1; }
@@ -256,10 +373,12 @@ fi
 # P7.8, P7.9: which way calls reach the calls script's dashboard, and whether the
 # emulator needs its modem (and so the IPv6 network the modem simulator dials over).
 CALL_ROUTE=${LAB_CALL_ROUTE:-notification}
+# P10: the weather tap run's call is a modem call, as the calls script's telecom route.
+if [ "$SCRIPT" = weather ] && [ "$WEATHER_MODE" = tap ]; then CALL_ROUTE=telecom; fi
 case $CALL_ROUTE in telecom|notification) ;; *) echo "emulator-lab: LAB_CALL_ROUTE is telecom or notification" >&2; exit 1 ;; esac
 MODEM=no
 POD_NETWORK=none
-if [ "$SCRIPT" = calls ] && [ "$CALL_ROUTE" = telecom ]; then
+if { [ "$SCRIPT" = calls ] || [ "$SCRIPT" = weather ]; } && [ "$CALL_ROUTE" = telecom ]; then
     MODEM=yes
     POD_NETWORK=oaa-lab-v6
     podman network exists "$POD_NETWORK" \
@@ -273,20 +392,24 @@ fi
 # dialer and messenger for the calls script. Small; copied in beside the app.
 if [ -f "$CACHE_ROOT/lab-player/lab-player.apk" ]; then
     cp "$CACHE_ROOT/lab-player/lab-player.apk" "$out/lab-player.apk"
-elif [ "$SCRIPT" = calls ] || [ "$SCRIPT" = endroute ] || [ "$SCRIPT" = speech ] || [ "$SCRIPT" = voice ]; then
+elif [ "$SCRIPT" = calls ] || [ "$SCRIPT" = endroute ] || [ "$SCRIPT" = speech ] || [ "$SCRIPT" = voice ] \
+    || { [ "$SCRIPT" = weather ] && [ "$WEATHER_MODE" = alert ]; }; then
     echo "emulator-lab: the $SCRIPT script needs the lab player; run tools/lab-player.sh first" >&2
     exit 1
 fi
-# P8.1: the speech script's engine; an operator-supplied one comes from the cache only.
+# P8.1: the speech script's engine; an operator-supplied one comes from the cache only. P10:
+# the weather alert run speaks too.
+SPEAKS=0
+if [ "$SCRIPT" = speech ] || [ "$SCRIPT" = voice ] || { [ "$SCRIPT" = weather ] && [ "$WEATHER_MODE" = alert ]; }; then SPEAKS=1; fi
 if [ -f "$CACHE_ROOT/tts/espeak-ng.apk" ]; then SPEECH_ENGINE=${LAB_SPEECH_ENGINE:-espeak}; else SPEECH_ENGINE=${LAB_SPEECH_ENGINE:-lab}; fi
 case $SPEECH_ENGINE in espeak|lab|none) ;; *) echo "emulator-lab: LAB_SPEECH_ENGINE is espeak, lab or none" >&2; exit 1 ;; esac
-if { [ "$SCRIPT" = speech ] || [ "$SCRIPT" = voice ]; } && [ "$SPEECH_ENGINE" = espeak ]; then
+if [ "$SPEAKS" = 1 ] && [ "$SPEECH_ENGINE" = espeak ]; then
     [ -f "$CACHE_ROOT/tts/espeak-ng.apk" ] || { echo "emulator-lab: no $CACHE_ROOT/tts/espeak-ng.apk" >&2; exit 1; }
     cp "$CACHE_ROOT/tts/espeak-ng.apk" "$out/tts-engine.apk"
 fi
 # P7.2, P7.3: display choices in the app's own settings file, installed before launch.
 if [ -n "${LAB_MARKER:-}" ] || [ -n "${LAB_DIAGNOSTICS:-}" ] || [ "$SCRIPT" = calls ] || [ "$SCRIPT" = speech ] \
-    || [ "$SCRIPT" = voice ]; then
+    || [ "$SCRIPT" = voice ] || [ "$SCRIPT" = weather ]; then
     case ${LAB_MARKER:-blue} in blue|white|yellow|orange|green|red|magenta) ;;
         *) echo "emulator-lab: LAB_MARKER is one of blue white yellow orange green red magenta" >&2; exit 1 ;; esac
     {
@@ -308,6 +431,17 @@ if [ -n "${LAB_MARKER:-}" ] || [ -n "${LAB_DIAGNOSTICS:-}" ] || [ "$SCRIPT" = ca
         # P8.2: voice guidance is on by default; seeded on so the first press turns it off.
         if [ "$SCRIPT" = voice ]; then
             echo "    <boolean name=\"voice_guidance\" value=\"true\" />"
+            echo "    <string name=\"speech_media\">pause</string>"
+        fi
+        # P10: the tap run's call reaches the tile the telecom way; the alert run shows over
+        # a notification, and speaks with the trip panel's voice toggle as LAB_WEATHER_VOICE.
+        if [ "$SCRIPT" = weather ] && [ "$WEATHER_MODE" = tap ]; then
+            echo "    <boolean name=\"notifications_on_dashboard\" value=\"true\" />"
+            echo "    <boolean name=\"call_controls\" value=\"true\" />"
+        fi
+        if [ "$SCRIPT" = weather ] && [ "$WEATHER_MODE" = alert ]; then
+            echo "    <boolean name=\"notifications_on_dashboard\" value=\"true\" />"
+            echo "    <boolean name=\"voice_guidance\" value=\"$([ "$WEATHER_VOICE" = on ] && echo true || echo false)\" />"
             echo "    <string name=\"speech_media\">pause</string>"
         fi
         echo "</map>"
@@ -350,6 +484,7 @@ podman run -d --pod "$pod" --name "$pod-receiver" --security-opt label=disable \
         '"$([ "$NAVIGATION" = 1 ] && echo "--navigation --navigation-cluster $NAVIGATION_CLUSTER --navigation-expect $NAVIGATION_EXPECT")"' \
         '"$([ -n "${LAB_SENSORS:-all}" ] && echo "--sensors ${LAB_SENSORS:-all}")"' \
         '"$([ -n "${LAB_TRACK:-}" ] && echo '--track')"' '"$DRIVE_ARGS"' '"$NIGHT_ARGS"' '"$CALL_ARGS"' \
+        '"$TRAFFIC_ARGS"' '"$MARGIN_ARGS"' '"$WEATHER_ARGS"' \
         --trace /out/receiver-trace.jsonl --video-out /out/video.h264 > /out/receiver.txt 2> /out/receiver-err.txt \
         || status=$?
     echo "receiver_exit=$status" >> /out/receiver.txt
@@ -359,6 +494,15 @@ podman run -d --pod "$pod" --name "$pod-receiver" --security-opt label=disable \
         mkdir -p /out/frames
         # A picture a second from the app-encoded stream, as projection evidence.
         ffmpeg -v error -i /out/video.h264 -vf fps=1 /out/frames/%03d.png >> /out/ffmpeg.txt 2>&1 || true
+        # P10: the pictures the weather script named, whole, for the renders. The receiver
+        # counts decoded pictures from one, ffmpeg from zero.
+        grep "^receiver_weather=render " /out/receiver.txt | while read -r line; do
+            name=$(echo "$line" | sed "s/^receiver_weather=render \([^ ]*\) .*/\1/")
+            n=$(echo "$line" | sed "s/.* picture=\([0-9]*\).*/\1/")
+            mkdir -p /out/renders
+            ffmpeg -v error -i /out/video.h264 -vf "select=eq(n\,$((n - 1)))" -vsync 0 -frames:v 1 "/out/renders/$name.png" \
+                >> /out/ffmpeg.txt 2>&1 || true
+        done
     fi
     exit $status
   ' > /dev/null
@@ -377,10 +521,12 @@ podman run --rm --pod "$pod" --name "$name" --security-opt label=disable \
   -e NAVIGATION_CLUSTER="$NAVIGATION_CLUSTER" \
   -e LAB_SENSORS="${LAB_SENSORS:-all}" -e SCRIPT="$SCRIPT" -e ROUTE="$ROUTE" \
   -e DESTINATION="$DESTINATION" -e NAVIGATION_SCRIPT="$NAVIGATION_SCRIPT" \
-  -e GUIDE_DEST="${LAB_GUIDE_DEST:-42.44950,-71.23100}" \
+  -e GUIDE_DEST="${LAB_GUIDE_DEST:-$([ "$SCRIPT" = traffic ] && echo 42.35510,-71.06560 || echo 42.44950,-71.23100)}" \
   -e LAB_FAVORITES="${LAB_FAVORITES:-}" -e LAB_SCREENS="${LAB_SCREENS:-}" \
   -e MAPS_EXPECTED="$([ -n "${LAB_MAP_EXTRA:-}" ] && echo 2 || echo 1)" \
   -e CALL_ROUTE="$CALL_ROUTE" -e MODEM="$MODEM" -e SPEECH_ENGINE="$SPEECH_ENGINE" \
+  -e TRAFFIC_MODE="$TRAFFIC_MODE" -e OFFER_LAYOUT="$OFFER_LAYOUT" -e TRAFFIC_KEY="$TRAFFIC_KEY" \
+  -e WEATHER_MODE="$WEATHER_MODE" -e WEATHER_VOICE="$WEATHER_VOICE" -e SPEAKS="$SPEAKS" \
   -v "$out:/out" "$EMULATOR_IMAGE" sh -eu -c '
     package=org.openautoandroid.source
     log() { echo "emulator-lab: $*"; }
@@ -455,15 +601,32 @@ with zipfile.ZipFile(sys.argv[1], \"a\") as apk:
         adb shell settings put global $setting 0
     done
 
+    # P10: the stand-in Breezy first, so its READ_PROVIDER permission exists when the app,
+    # which asks for it, is installed; granted after, as the operator would with pm grant.
+    breezy=org.breezyweather
+    if [ "$SCRIPT" = weather ]; then
+        adb install /out/breezy-standin.apk > /out/install-breezy.txt 2>&1 || { cat /out/install-breezy.txt >&2; fail "stand-in Breezy install"; }
+        log "stand-in Breezy installed (emulator only)"
+    fi
     adb install /out/lab.apk > /out/install.txt 2>&1 || { cat /out/install.txt >&2; fail install; }
     adb shell pm grant $package android.permission.POST_NOTIFICATIONS
+    # The stand-in scenario, as its ScenarioReceiver answers it: "scenario <name>".
+    breezy_scenario() {
+        adb shell am broadcast --include-stopped-packages -n $breezy/.ScenarioReceiver --es scenario "$1" > /out/breezy-scenario.txt 2>&1 || true
+        grep -q "scenario $1" /out/breezy-scenario.txt || fail "the stand-in did not take scenario $1: $(cat /out/breezy-scenario.txt)"
+        log "stand-in scenario $1"
+    }
+    if [ "$SCRIPT" = weather ]; then
+        adb shell pm grant $package $breezy.READ_PROVIDER || fail "grant $breezy.READ_PROVIDER"
+        case $WEATHER_MODE in stale|unsupported) breezy_scenario $WEATHER_MODE ;; *) breezy_scenario show ;; esac
+    fi
     labplayer=org.openautoandroid.labplayer
     if [ -f /out/lab-player.apk ]; then
         adb install /out/lab-player.apk > /out/install-lab-player.txt 2>&1 || { cat /out/install-lab-player.txt >&2; fail "lab player install"; }
         adb shell pm grant $labplayer android.permission.POST_NOTIFICATIONS
         log "lab player installed"
     fi
-    if [ "$SCRIPT" = calls ] || [ "$SCRIPT" = speech ]; then
+    if [ "$SCRIPT" = calls ] || [ "$SCRIPT" = speech ] || { [ "$SCRIPT" = weather ] && { [ "$WEATHER_MODE" = tap ] || [ "$WEATHER_MODE" = alert ]; }; }; then
         # P7.8: what the operator does once in system Settings.
         adb shell cmd notification allow_listener $package/$package.MediaAccessService || fail "notification access"
         # P7.9: what the operator runs once from a computer (CallControl.GRANT_COMMAND).
@@ -473,7 +636,7 @@ with zipfile.ZipFile(sys.argv[1], \"a\") as apk:
         fi
     fi
     # P8.1: which engines the image has, and the operator-supplied one if the cache had it.
-    if [ "$SCRIPT" = speech ] || [ "$SCRIPT" = voice ]; then
+    if [ "$SPEAKS" = 1 ]; then
         if [ "$SPEECH_ENGINE" = espeak ]; then
             adb install /out/tts-engine.apk > /out/install-tts.txt 2>&1 || { cat /out/install-tts.txt >&2; fail "speech engine install"; }
             engine=$(aapt2 dump packagename /out/tts-engine.apk 2>/dev/null | tr -d "\r")
@@ -538,10 +701,28 @@ with zipfile.ZipFile(sys.argv[1], \"a\") as apk:
         log "routing tile installed: $(adb shell stat -c %s /data/data/$package/files/routing/segments/W75_N40.rd5 | tr -d "\r") bytes"
     fi
     adb logcat -c
+    # P10: every query the stand-in Breezy answers, for the whole attempt, whatever the
+    # logcat buffer keeps.
+    if [ "$SCRIPT" = weather ]; then
+        adb logcat -v time -s BreezyStandin:I > /out/breezy-standin-log.txt 2>&1 &
+        breezylog=$!
+    fi
 
     # The app reaches the receiver through adbd, so the APK needs no network permission.
     adb reverse localabstract:openauto-lab tcp:5288 || fail "adb reverse"
     log "adb reverse localabstract:openauto-lab -> tcp:5288"
+    # P9: the stand-in HERE server, on the pod loopback the emulator reaches as 10.0.2.2. It
+    # runs for the whole attempt, off included, since what it counts is every connection.
+    if [ "$SCRIPT" = traffic ]; then
+        case $TRAFFIC_MODE in closure) first=side ;; *) first=a ;; esac
+        python3 tools/here-standin/here-standin.py --port 8765 --scenarios tools/here-standin/scenarios \
+            --state /out/here --key "$TRAFFIC_KEY" --scenario $first > /out/here-standin.txt 2>&1 &
+        standin=$!
+        trap "kill $emulator $standin 2>/dev/null || true" EXIT
+        sleep 1
+        kill -0 $standin 2>/dev/null || fail "the stand-in HERE server did not start: $(cat /out/here-standin.txt)"
+        log "stand-in HERE server on 127.0.0.1:8765, scenario $first"
+    fi
 
     # First launch prepares the source identity (RSA key generation).
     adb shell am start -W -n $package/.ConnectionActivity > /out/launch.txt
@@ -562,8 +743,13 @@ with zipfile.ZipFile(sys.argv[1], \"a\") as apk:
         --ez lab_navigation_force "$([ "$NAVIGATION_FORCE" = 1 ] && echo true || echo false)" \
         --ez lab_navigation_script "$([ "$NAVIGATION_SCRIPT" = 1 ] && echo true || echo false)" \
         --es lab_sensors "${LAB_SENSORS:-all}" \
-        $({ [ "$SCRIPT" = speech ] || [ "$SCRIPT" = voice ]; } && echo "--ez lab_speech_bluetooth true") \
+        $([ "$SPEAKS" = 1 ] && echo "--ez lab_speech_bluetooth true") \
+        $([ "$SCRIPT" = weather ] && echo "--ez lab_weather $([ "$WEATHER_MODE" = off ] && echo false || echo true) \
+            --ez lab_weather_speak true --es lab_weather_level severe") \
         ${LAB_FAVORITES:+--es lab_favorites "\"$LAB_FAVORITES\""} \
+        $([ "$SCRIPT" = traffic ] && echo "--ez lab_traffic false \
+            --es lab_traffic_url http://10.0.2.2:8765 --es lab_traffic_key $TRAFFIC_KEY --ei lab_traffic_refresh 5 \
+            --ei lab_traffic_limit 4500 --ez lab_traffic_reset true --es lab_offer_layout $OFFER_LAYOUT") \
         --el lab_projection_ms "$PROJECTION_MS" > /out/lab-intent.txt 2>&1 || fail "lab intent"
     log "lab projection attempt started (${PROJECTION_MS} ms)"
 
@@ -649,7 +835,7 @@ with zipfile.ZipFile(sys.argv[1], \"a\") as apk:
         report | grep -c "route computed in" || true
     }
     # Asked for only now, so the search runs while frames are being rendered and encoded.
-    if [ "$SCRIPT" = guidance ] || [ "$SCRIPT" = endroute ] || [ "$SCRIPT" = voice ]; then
+    if [ "$SCRIPT" = guidance ] || [ "$SCRIPT" = endroute ] || [ "$SCRIPT" = voice ] || [ "$SCRIPT" = traffic ]; then
         # P6.5: one destination, shared as OsmAnd shares it, while the vehicle is parked
         # at the start of the drive. The receiver pulls away when the cluster goes active
         # (guidance), or presses End route on the trip panel (endroute, P7.4).
@@ -754,6 +940,165 @@ https://osmand.net/map?pin=42.44950,-71.23100#16/42.44950/-71.23100"
         adb shell am start -n $package/.ConnectionActivity --es lab_route "\"$ROUTE\"" \
             > /out/lab-route.txt 2>&1 || fail "lab route intent"
         log "route requested while projecting"
+    fi
+
+
+    # P9: the traffic runs, beside the receiver. A field of the saved report, the report
+    # saved under a name with the epoch milliseconds it was read at, waiting for a line of it,
+    # turning traffic off or on through the lab intent, and the stand-in counts.
+    field() { grep -oE "(^| )$1=[^ ]*" "$2" | tail -n 1 | sed "s/.*=//"; }
+    # The saved report is written on each event, and its dashboard and map lines only at the
+    # projection start and end; lab_report (debug builds) refreshes those and notes it, with
+    # traffic left on or off as it is.
+    snapshot() {
+        adb shell am start -n $package/.ConnectionActivity --ez lab_traffic "$2" --ez lab_report true > /dev/null 2>&1 \
+            || fail "lab intent: report"
+        sleep 3
+        date +%s%3N > /out/app-report-$1.time
+        report > /out/app-report-$1.txt
+    }
+    wait_for() {
+        for _ in $(seq "$2"); do
+            if report | grep -Eq "$1"; then return 0; fi
+            sleep 1
+        done
+        return 1
+    }
+    traffic_switch() {
+        adb shell am start -n $package/.ConnectionActivity --ez lab_traffic "$1" > /dev/null 2>&1 || fail "lab intent: traffic $1"
+    }
+    standin() { sed -n "s/.*standin_$1=\([0-9]*\).*/\1/p" /out/here/stats.txt; }
+    if [ "$SCRIPT" = traffic ] && [ "$TRAFFIC_MODE" != off ]; then
+        # Off until the receiver has the route and its picture without traffic (the colour
+        # before, and the cluster time before), then on: the first fetch is at the next fix.
+        sleep 15
+        traffic_switch true
+        log "traffic turned on"
+        wait_for "traffic fetched" 300 || fail "the app never fetched traffic from the stand-in: $(cat /out/here/stats.txt)"
+        # Laid on the route, and the time published with the delay in it.
+        wait_for "(^| )traffic_delay_s=[1-9]" 120 || fail "the traffic fetched never reached the time to the destination"
+        sleep 5
+        first=$([ "$TRAFFIC_MODE" = closure ] && echo side || echo a)
+        snapshot $first true
+        log "traffic $first: $(grep -E "^traffic_(held|matched|nogos)" /out/app-report-$first.txt | tr "\n" " ")"
+        log "traffic $first: $(grep -oE "(map_traffic_[a-z]*|dashboard_trip_seconds|dashboard_traffic_delay_min)=[^ ]*" /out/app-report-$first.txt | tr "\n" " ")"
+    fi
+    if [ "$SCRIPT" = traffic ] && [ "$TRAFFIC_MODE" = render ]; then
+        wait_for "traffic offer kept" 1500 || fail "no traffic offer was kept: $(report | grep -E "traffic offer|looked for other routes" | tr "\n" ";")"
+        snapshot kept true
+        log "offer kept; the render run ends here"
+    fi
+    if [ "$SCRIPT" = traffic ] && [ "$TRAFFIC_MODE" = offer ]; then
+        # Check 3: the receiver presses Keep on the first offer. Then the queue gets slower,
+        # fetched at once by turning traffic off and on, and the receiver presses Take on the
+        # offer that brings.
+        wait_for "traffic offer kept" 1500 || fail "no traffic offer was kept: $(report | grep -E "traffic offer|looked for other routes" | tr "\n" ";")"
+        snapshot kept true
+        echo a2 > /out/here/scenario
+        traffic_switch false
+        sleep 6
+        traffic_switch true
+        log "offer kept; the stand-in now serves a2, fetched by turning traffic off and on"
+        wait_for "traffic offer taken" 1500 || fail "no traffic offer was taken: $(report | grep -E "traffic offer|looked for other routes" | tr "\n" ";")"
+        routed=
+        for _ in $(seq 240); do
+            if report | awk "/traffic offer taken/ { t = 1 } t && /route computed/ { f = 1 } END { exit !f }"; then routed=1; break; fi
+            sleep 1
+        done
+        [ -n "$routed" ] || fail "no route came back after Take"
+        sleep 3
+        snapshot taken true
+        log "offer taken and the route through it computed"
+    fi
+    if [ "$SCRIPT" = traffic ] && [ "$TRAFFIC_MODE" = closure ]; then
+        # Check 4: the side-road closure re-routed nothing; now the closure moves onto the
+        # route, fetched at once by turning traffic off and on, and the route goes round it.
+        sleep 10
+        snapshot side true
+        echo b > /out/here/scenario
+        traffic_switch false
+        sleep 6
+        traffic_switch true
+        log "the stand-in now serves b, the closure on the route"
+        wait_for "closure ahead on the route; re-routing round it" 300 || fail "the closure on the route did not re-route"
+        routed=
+        for _ in $(seq 240); do
+            if report | awk "/closure ahead on the route/ { t = 1 } t && /route computed/ { f = 1 } END { exit !f }"; then routed=1; break; fi
+            sleep 1
+        done
+        [ -n "$routed" ] || fail "no route came back round the closure"
+        sleep 5
+        snapshot b true
+        # Plan §8 check 5 mid-drive: off drops what is held within 8 s, and nothing more is sent.
+        sent=$(standin requests)
+        traffic_switch false
+        sleep 8
+        snapshot off false
+        sleep 25
+        [ "$(standin requests)" = "$sent" ] || fail "the stand-in heard $(( $(standin requests) - sent )) requests after traffic was turned off"
+        log "traffic off: the stand-in heard nothing after it ($sent requests in all)"
+    fi
+    # P10: the weather runs, beside the receiver, through the two hand-off files. The lab
+    # says what it did in weather-lab.txt (a word and epoch milliseconds) and waits for what
+    # the receiver says it saw in weather-receiver.txt.
+    wtell() { echo "$1 ${2:-$(date +%s%3N)}" >> /out/weather-lab.txt; log "told the receiver: $1"; }
+    wwait() {
+        for _ in $(seq "$2"); do
+            if grep -q "^$1 " /out/weather-receiver.txt 2>/dev/null; then return 0; fi
+            sleep 1
+        done
+        return 1
+    }
+    wcue() { adb shell am start -n $package/.ConnectionActivity --ez lab_weather_cue true > /dev/null 2>&1 || fail "lab intent: weather cue"; }
+    notifier() {
+        adb shell am broadcast -a org.breezyweather.ACTION_UPDATE_NOTIFIER -n $package/.WeatherNotifierReceiver > /out/weather-notifier.txt 2>&1 \
+            || fail "notifier broadcast: $(cat /out/weather-notifier.txt)"
+    }
+    if [ "$SCRIPT" = weather ] && [ "$WEATHER_MODE" = alert ]; then
+        wwait shown 150 || fail "the receiver never saw the weather item"
+        adb shell am broadcast -n $labplayer/.MessageReceiver -a $labplayer.POST --es tag lab1 \
+            --es title "\"Sendermarker 1\"" --es text "\"Bodymarker message 1\"" > /dev/null || fail "post"
+        log "a notification posted"
+        wwait notification 150 || fail "the receiver never saw the notification"
+        breezy_scenario alert
+        wcue
+        log "the stand-in now serves two severe alerts, read through the lab cue"
+    fi
+    if [ "$SCRIPT" = weather ] && [ "$WEATHER_MODE" = tap ]; then
+        wwait call 300 || fail "the receiver never asked for the call"
+        adb emu gsm call 5551234 > /out/gsm-call.txt 2>&1 || fail "gsm call"
+        log "call ringing over the modem"
+        wwait tapped 240 || fail "the receiver never pressed the item during the call"
+        adb emu gsm cancel 5551234 > /out/gsm-cancel.txt 2>&1 || fail "gsm cancel"
+        ended=
+        for _ in $(seq 60); do
+            if report | grep -q "call none"; then ended=1; break; fi
+            sleep 1
+        done
+        [ -n "$ended" ] || fail "the dashboard never saw the call end"
+        log "call cancelled from the modem, and over"
+    fi
+    if [ "$SCRIPT" = weather ] && [ "$WEATHER_MODE" = stale ]; then
+        # The read at the start may have come before the vehicle fix, which chooses the place.
+        sleep 12
+        wcue
+        sleep 4
+        wtell cued
+    fi
+    if [ "$SCRIPT" = weather ] && [ "$WEATHER_MODE" = off ]; then
+        wwait off-pressed 180 || fail "the receiver never pressed where the item would be"
+        notifier
+        wcue
+        sleep 4
+        wtell off-cued
+    fi
+    if [ "$SCRIPT" = weather ] && [ "$WEATHER_MODE" = notifier ]; then
+        wwait shown 150 || fail "the receiver never saw the weather item"
+        breezy_scenario notifier
+        at=$(date +%s%3N)
+        notifier
+        wtell notified "$at"
+        log "notifier sent: $(tr -d "\r" < /out/weather-notifier.txt | tail -n 1)"
     fi
 
     # P7.8, P7.9: the calls script. Three notifications from the lab player; once the app
@@ -1009,6 +1354,9 @@ https://osmand.net/map?pin=42.44950,-71.23100#16/42.44950/-71.23100"
         grep -Eq "guidance_reroutes=[1-9][0-9]* guidance_reroutes_done=[1-9]" /out/app-report.txt \
             || fail "no re-route was asked for and computed: $(grep "^guidance_reroutes" /out/app-report.txt)"
         grep -Eq "guidance_arrivals=1 " /out/app-report.txt || fail "guidance did not arrive exactly once"
+        # Arriving puts the destination on top of the favorites (the lab destination is none).
+        grep -q "arrived; destination added to the top of the favorites" /out/app-report.txt \
+            || fail "arriving did not add the destination to the favorites"
         grep -q "guidance_fix_source=vehicle " /out/app-report.txt || fail "guidance did not follow the vehicle"
         grep -Eq "guidance_joined=[1-9]" /out/app-report.txt || fail "guidance never joined a route"
         grep -q "routing_origin=reroute " /out/app-report.txt || fail "the last route was not a re-route"
@@ -1245,7 +1593,8 @@ https://osmand.net/map?pin=42.44950,-71.23100#16/42.44950/-71.23100"
         done
         grep "^routing_\|map_engine=" /out/app-report.txt | while read -r line; do log "$line"; done
         grep -E "destination|route (computed|failed|requested)" /out/app-report.txt | while read -r line; do log "$line"; done
-    elif [ -n "$ROUTE" ] && [ "$SCRIPT" != guidance ] && [ "$SCRIPT" != endroute ] && [ "$SCRIPT" != voice ]; then
+    elif [ -n "$ROUTE" ] && [ "$SCRIPT" != guidance ] && [ "$SCRIPT" != endroute ] && [ "$SCRIPT" != voice ] \
+        && [ "$SCRIPT" != traffic ]; then
         grep -q "routing_origin=lab" /out/app-report.txt || fail "the lab route was never requested"
         grep -q "^routing_result=ok routing_thread=aap-route " /out/app-report.txt \
             || fail "no route came back from the routing thread: $(grep "^routing_" /out/app-report.txt | tr "\n" " ")"
@@ -1257,6 +1606,188 @@ https://osmand.net/map?pin=42.44950,-71.23100#16/42.44950/-71.23100"
         grep -Eq "data=(region\.map,extra\.map|extra\.map,region\.map) .*error=-" /out/app-report.txt \
             || fail "the map engine did not open both maps: $(grep "map_engine=" /out/app-report.txt)"
         log "maps: both files drawn as one"
+    fi
+    # P9: the traffic runs, by the app report, its snapshots and the stand-in counts.
+    if [ "$SCRIPT" = traffic ]; then
+        final=/out/app-report.txt
+        expect() { sed -n "s/.*$1=\([0-9]*\).*/\1/p" tools/here-standin/scenarios/expected.txt; }
+        need() { grep -Eq -- "(^| )$1( |$)" "$2" || fail "$(basename "$2") lacks $1: $(grep -oE "(^| )${1%%=*}=[^ ]*" "$2" | tr "\n" " ")"; }
+        at_least() { v=$(field "$1" "$3"); [ "${v:-0}" -ge "$2" ] || fail "$(basename "$3") has $1=${v:-none}, wanted at least $2"; }
+        need "traffic_key=true" $final
+        need "traffic_limit=4500" $final
+        # The key, the stand-in descriptions and ids, the reason words and the places.
+        for marker in "$TRAFFIC_KEY" "Lab queue" "Lab slow" "Lab closure" "Lab free" "Lab other" lab-side lab-route \
+            "Queue on" "Traffic on" "Closed:" "Faster" "bbox" 42.3551 71.0656 42.4246 71.2016 42.4242 71.2121; do
+            for f in /out/app-report*.txt; do
+                ! grep -q -- "$marker" "$f" || fail "$(basename "$f") carries $marker"
+            done
+        done
+        grep -E "^traffic_|^dashboard_traffic|map_traffic|dashboard_trip_seconds" $final | while read -r line; do log "$line"; done
+        grep -E "traffic|closure|offer|looked for other routes|route (computed|requested)|lab offer layout" $final | while read -r line; do log "$line"; done
+        log "stand-in: $(cat /out/here/stats.txt)"
+    fi
+    if [ "$SCRIPT" = traffic ] && { [ "$TRAFFIC_MODE" = offer ] || [ "$TRAFFIC_MODE" = render ]; }; then
+        a=/out/app-report-a.txt
+        need "traffic_enabled=true" $a
+        need "traffic_last_error=none" $a
+        need "traffic_following=true" $a
+        at_least traffic_runs 2 $a
+        at_least traffic_jam_runs 2 $a
+        at_least traffic_nogos 1 $a
+        at_least map_traffic_pieces 2 $a
+        need "map_traffic_stale=0" $a
+        need "traffic_attributed=true" $a
+        need "dashboard_traffic_attributed=true" $a
+        # Check 2: the delay against what the same code finds on the host, within a minute,
+        # and the trip panel labelling that delay.
+        delay=$(field traffic_delay_s $a)
+        want=$(expect a_delay_s)
+        [ $(( delay > want ? delay - want : want - delay )) -le 60 ] || fail "traffic_delay_s=$delay against the stand-in jam of $want s"
+        minutes=$(( (delay + 30) / 60 ))
+        need "dashboard_traffic_delay_min=$minutes" $a
+        need "dashboard_offer_layout=$OFFER_LAYOUT" $final
+        log "traffic offer: delay ${delay} s (host ${want} s), +${minutes} min on the trip panel"
+    fi
+    if [ "$SCRIPT" = traffic ] && [ "$TRAFFIC_MODE" = render ]; then
+        for want in "traffic_offers_kept=1" "dashboard_offers_kept=1"; do
+            need "$want" $final
+        done
+        at_least dashboard_offer_fits 1 $final
+        at_least dashboard_offer_refollows 1 $final
+    fi
+    if [ "$SCRIPT" = traffic ] && [ "$TRAFFIC_MODE" = offer ]; then
+        # Check 3: two offers on the card, the first kept, the second taken; each framed
+        # and each answer back to following; the route then through the offer via point.
+        for want in "traffic_offers_kept=1" "traffic_offers_taken=1" "dashboard_offers_kept=1" "dashboard_offers_taken=1" \
+            "routing_via=true"; do
+            need "$want" $final
+        done
+        at_least traffic_offers_made 2 $final
+        at_least dashboard_offers_shown 2 $final
+        at_least dashboard_offer_fits 2 $final
+        at_least dashboard_offer_refollows 2 $final
+        at_least live_alternatives_traffic_looks 2 $final
+        at_least traffic_fetches 2 $final
+        report_requests=$(field traffic_requests_session $final)
+        [ "$(standin requests)" = "$report_requests" ] || fail "the stand-in answered $(standin requests) requests, the app counted $report_requests"
+        [ "$(standin refused)" = 0 ] || fail "the stand-in refused $(standin refused) requests"
+    fi
+    if [ "$SCRIPT" = traffic ] && [ "$TRAFFIC_MODE" = closure ]; then
+        side=/out/app-report-side.txt
+        b=/out/app-report-b.txt
+        need "traffic_closure_reroutes=0" $side
+        need "traffic_closed_runs=0" $side
+        at_least traffic_nogos_hard 1 $side
+        need "traffic_closure_reroutes=1" $b
+        need "guidance_closure_reroutes=1" $b
+        need "routing_origin=closure" $b
+        need "routing_through_closure=false" $b
+        at_least routing_traffic_points 1 $b
+        [ "$(grep -c "closure ahead on the route; re-routing round it" $final)" = 1 ] || fail "not exactly one closure re-route"
+        need "traffic_held=false" /out/app-report-off.txt
+        need "traffic_enabled=false" /out/app-report-off.txt
+        log "traffic closure: one re-route round it, then off with nothing held"
+    fi
+    if [ "$SCRIPT" = traffic ] && [ "$TRAFFIC_MODE" = drive ]; then
+        need "map_traffic_stale=0" $final
+        at_least map_traffic_rebuilds 3 $final
+        at_least traffic_fetches 1 $final
+        grep -E "^projection_frames_rendered|^map_engine=" $final | while read -r line; do log "$line"; done
+    fi
+    if [ "$SCRIPT" = traffic ] && [ "$TRAFFIC_MODE" = off ]; then
+        # Check 5: with the switch off, no connection at all, whatever else was saved.
+        [ "$(standin connections)" = 0 ] || fail "the stand-in accepted $(standin connections) connections with traffic off"
+        for want in "traffic_enabled=false" "traffic_requests_session=0" "traffic_fetches=0" "traffic_held=false" \
+            "traffic_attributed=false" "routing_traffic_points=0"; do
+            need "$want" $final
+        done
+        at_least guidance_joined 1 $final
+        log "traffic off: no connection to the stand-in, nothing counted"
+    fi
+    # P10: the weather runs, by the app report, the stand-in query log and the speech engine.
+    if [ "$SCRIPT" = weather ]; then
+        final=/out/app-report.txt
+        wneed() { grep -Eq -- "(^| )$1( |$)" $final || fail "app report lacks $1: $(grep -oE "(^| )${1%%=*}=[^ ]*" $final | tr "\n" " ")"; }
+        wfield() { grep -oE "(^| )$1=[^ ]*" $final | tail -n 1 | sed "s/.*=//"; }
+        wleast() { v=$(wfield "$1"); [ "${v:-0}" -ge "$2" ] 2>/dev/null || fail "app report has $1=${v:-none}, wanted at least $2"; }
+        # Never a place, a coordinate, a condition, a headline or the fixture text.
+        for marker in Lexington Goffstown Waco "LAB FIXTURE" "Partly cloudy" "Thunderstorm" "Flash Flood" "Special Weather" \
+            "Air Quality" "Tornado" "Weather alert." 42.4495 43.0206 31.5493 97.1467 "°F" Sendermarker Bodymarker; do
+            ! grep -q -- "$marker" $final || fail "the report carries $marker"
+        done
+        queries=$(grep -c "query " /out/breezy-standin-log.txt || true)
+        log "stand-in: $queries queries during the attempt: $(grep -oE "query [a-z]+" /out/breezy-standin-log.txt | sort | uniq -c | tr -s " " | tr "\n" ";")"
+        if [ "$WEATHER_MODE" = off ]; then
+            for want in weather_enabled=false weather_reads=0 weather_shown=false weather_view_opens=0 weather_notifier_cues=0 \
+                weather_lab_cues=0 weather_reading=false; do
+                wneed "$want"
+            done
+            [ "$queries" = 0 ] || fail "the stand-in answered $queries queries with Show weather off"
+            # The log was listening: a debug capture after the attempt must show up in it.
+            adb shell am start -n $package/.ConnectionActivity --ez lab_weather_capture true > /dev/null 2>&1 || fail "lab intent: capture"
+            heard=
+            for _ in $(seq 20); do
+                if grep -q "query version" /out/breezy-standin-log.txt; then heard=1; break; fi
+                sleep 1
+            done
+            [ -n "$heard" ] || fail "the stand-in log heard nothing even from the capture"
+            log "weather off: no query during the attempt; the capture after it was logged ($(grep -c "query " /out/breezy-standin-log.txt) queries)"
+        else
+            for want in weather_enabled=true weather_permission=granted weather_shown=true; do
+                wneed "$want"
+            done
+            [ "$queries" -ge 1 ] || fail "the stand-in answered no query"
+        fi
+        case $WEATHER_MODE in
+            show)
+                for want in weather_provider=ok weather_reading=true weather_view_opens=1 weather_view_closes_tap=1 weather_view_open=false; do wneed "$want"; done
+                wleast weather_hours 4
+                ;;
+            tap)
+                for want in weather_provider=ok weather_view_opens=4 weather_view_closes_tap=1 weather_view_closes_view=1 \
+                    weather_view_closes_timeout=1 weather_view_closes_call=1 weather_taps_in_call=1 weather_view_open=false; do
+                    wneed "$want"
+                done
+                grep -q "call ringing (telecom)" $final || fail "the call never rang the telecom way"
+                ;;
+            alert)
+                for want in weather_provider=ok weather_alerts_qualified=2 weather_alerts_asked=2 weather_alerts_shown=2 \
+                    weather_alerts_dismissed=2 weather_speak_alerts=true weather_alert_level=severe speech_gate=lab; do
+                    wneed "$want"
+                done
+                wleast weather_lab_cues 1
+                if [ "$WEATHER_VOICE" = on ]; then
+                    wleast weather_alerts_started 1
+                    wneed weather_alerts_skipped_toggle_off=0
+                    grep -q "weather alert spoken" $final || fail "no weather alert was spoken"
+                    if [ "$SPEECH_ENGINE" = lab ]; then
+                        timeout 20 adb logcat -d -s OaaLabPlayer:I > /out/lab-player-log.txt 2>&1 || true
+                        log "the stand-in engine was handed utterances of $(sed -n "s/.*speech \([0-9]*\) characters.*/\1/p" /out/lab-player-log.txt | tr "\n" " ")characters"
+                        grep -q "speech [0-9]* characters" /out/lab-player-log.txt || fail "the stand-in engine was handed nothing"
+                    fi
+                else
+                    wneed weather_alerts_started=0
+                    wleast weather_alerts_skipped_toggle_off 1
+                    grep -q "weather alert not spoken (toggle_off)" $final || fail "no alert was counted toggle_off"
+                fi
+                ;;
+            stale)
+                for want in weather_provider=ok weather_far=true weather_reading=true; do wneed "$want"; done
+                wleast weather_reading_age_min 230
+                wleast weather_lab_cues 1
+                ;;
+            unsupported)
+                for want in weather_provider=unsupported_major weather_reading=false; do wneed "$want"; done
+                ;;
+            notifier)
+                for want in weather_provider=ok weather_notifier_cues=1; do wneed "$want"; done
+                wleast weather_reads 2
+                [ "$(grep -c "query weather" /out/breezy-standin-log.txt)" -ge 2 ] || fail "the stand-in answered fewer than two weather queries"
+                ;;
+        esac
+        grep -E "^weather_|weather_shown=|^weather_alerts_" $final | while read -r line; do log "$line"; done
+        grep -E "weather|call (ringing|none)" $final | grep -v "^weather_" | while read -r line; do log "$line"; done
+        [ -n "${breezylog:-}" ] && kill "$breezylog" 2>/dev/null || true
     fi
     grep -q "^projection_encoder=" /out/app-report.txt || fail "app report lacks the encoder line"
     if [ "$SOFTWARE_ENCODER" = true ]; then
@@ -1279,7 +1810,7 @@ podman rm -f "$pod-receiver" > /dev/null 2>&1 || true
 receiver_status=$(cat "$out/receiver-exit.txt" 2>/dev/null || echo "unknown")
 echo "emulator-lab: receiver exit=$receiver_status app exit=$status"
 echo "emulator-lab: results in $out"
-grep -E "receiver_(video_decoded_frames|checks|check_failed|tap_result|track|guidance|daynight|control|endroute|calls|speech|voice)" "$out/receiver.txt" 2>/dev/null || true
+grep -E "receiver_(video_decoded_frames|checks|check_failed|tap_result|track|guidance|daynight|control|endroute|calls|speech|voice|traffic|weather)" "$out/receiver.txt" 2>/dev/null || true
 # P6.4: the route line in the picture the head unit decoded, not only in the app's own
 # counters. Route colour (MapEngine.ROUTE_COLOR, 34,199,240) is in no part of the owned
 # theme or the dashboard chrome, so the first frames, before any route, must have almost
@@ -1299,5 +1830,41 @@ ready, read, stop = sys.argv[1] == \"1\", float(sys.argv[2]), float(sys.argv[3])
 ok = (read >= 0.05 and stop < 0.01) if ready else read < 0.01
 print(\"emulator-lab: row lit %.3f while read, %.3f after the stop (engine ready: %s): %s\" % (read, stop, ready, \"ok\" if ok else \"FAIL\"))
 sys.exit(0 if ok else 1)" "$ready" "${read_lit:-0}" "${stop_lit:-0}" || status=1
+fi
+# P9.4 (plan §8 check 2): the time the cluster was told against the trip panel's, read from
+# the report the app saved at the same moment (app-report-a.txt, stamped app-report-a.time),
+# and the rise the receiver saw when traffic arrived against the delay the app added.
+if [ "$SCRIPT" = traffic ] && { [ "$TRAFFIC_MODE" = offer ] || [ "$TRAFFIC_MODE" = render ]; } && [ "$status" = 0 ]; then
+    python3 - "$out" <<'EOF' || status=1
+import pathlib
+import re
+import sys
+
+out = pathlib.Path(sys.argv[1])
+report = (out / "app-report-a.txt").read_text()
+at = int((out / "app-report-a.time").read_text())
+
+
+def field(text, name):
+    found = re.findall(r"(?:^|\s)%s=(\S+)" % name, text)
+    return found[-1] if found else None
+
+
+trip = int(field(report, "dashboard_trip_seconds"))
+delay = int(field(report, "traffic_delay_s"))
+brouter = int(field(report, "routing_seconds"))
+cluster = None
+for line in (out / "receiver-eta.txt").read_text().splitlines():
+    parts = line.split(" ")
+    if int(parts[0]) <= at:
+        cluster = int(parts[1])
+rise = re.search(r"eta_first_rise=(-?\d+)->(-?\d+)", (out / "receiver.txt").read_text())
+before, after = (int(rise.group(1)), int(rise.group(2))) if rise else (-1, -1)
+ok = cluster is not None and abs(cluster - trip) <= 2 and abs((after - before) - delay) <= 60 and abs(trip - brouter - delay) <= 60
+print("emulator-lab: time to the destination: cluster %s s, trip panel %s s, BRouter %s s + traffic %s s; "
+      "the cluster rose %s -> %s (+%s s) when traffic arrived: %s"
+      % (cluster, trip, brouter, delay, before, after, after - before, "ok" if ok else "FAIL"))
+sys.exit(0 if ok else 1)
+EOF
 fi
 [ "$status" = 0 ] && [ "$receiver_status" = 0 ]

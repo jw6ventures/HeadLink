@@ -170,6 +170,16 @@ class DashboardRenderer(
         engine?.setAlternatives(routes)
     }
 
+    /** The traffic on the route and where the vehicle is, for the colours ahead of it (P9.3). */
+    fun setTraffic(traffic: RouteTraffic?, position: Pair<Double, Double>?) {
+        engine?.setTraffic(traffic, position)
+    }
+
+    /** The offer's proposed route for the next map frame, or null for none (P9.6). */
+    fun setOffer(route: Route?) {
+        engine?.setOffer(route)
+    }
+
     /**
      * The map pane in clip space. A framebuffer texture has its origin at the bottom,
      * the opposite of the bitmap, so this one samples flipped.

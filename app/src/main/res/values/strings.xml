@@ -122,6 +122,8 @@ Incomplete from a previous run: %3$s</string>
     <!-- P7.1: saved settings and auto-start. Short labels; P7.7 moves the long text to help. -->
     <string name="auto_start_help">Start projecting when plugged in (only a head unit already trusted)</string>
     <string name="marker_colour_label">Vehicle marker colour</string>
+    <string name="clock_format_label">Clock</string>
+    <string name="clock_format_help">12- or 24-hour times on the dashboard (clock, arrival, weather) and in the route line here. Takes effect when projection next starts.</string>
     <string name="day_night_label">Day/night</string>
     <string name="notifications_on_dashboard">Notifications on the dashboard</string>
     <string name="call_controls">Call controls</string>
@@ -310,4 +312,17 @@ Incomplete from a previous run: %3$s</string>
     <string name="location_title">Allow location?</string>
     <string name="location_prompt">The map and routes follow the vehicle\'s own position when the head unit sends one, and need nothing from the phone for it. With location allowed, the phone\'s position is used when the vehicle has none, and a destination can be routed before you plug in. The position stays on this phone and is never put in a report.</string>
     <string name="location_allow">Allow location</string>
+    <!-- P10.1: Settings → Weather (docs/p10-plan.md §4). The status line and the notifier
+         help are WeatherText's, in code, so the dashboard and host tests share them. -->
+    <string name="weather_title">Weather</string>
+    <string name="weather_caption">The current weather in the dashboard\'s header, read from Breezy Weather on this phone. No network.</string>
+    <string name="weather_switch">Show weather</string>
+    <string name="weather_switch_help">Shows the current weather in the dashboard\'s header; tap it there for the next few hours. An active weather alert takes the second tile over notifications. It is read from Breezy Weather\'s data on this phone, with a permission Breezy asks you for when this is turned on, and nothing connects to the network. The reading is held in memory for the drive only; no place, temperature or alert is saved or reported. Off, nothing is read.</string>
+    <string name="weather_grant">Grant</string>
+    <string name="weather_reading">Reading…</string>
+    <string name="weather_speak_label">Speak weather alerts</string>
+    <string name="weather_speak_help">An alert at or above the level below is read aloud once, the first time it appears in a drive: \"Weather alert\" and its headline. Speech plays only over Bluetooth audio, like turn prompts.</string>
+    <string name="weather_speak_note">Heard only while the dashboard\'s voice toggle is on.</string>
+    <string name="weather_level_label">Alerts shown from</string>
+    <string name="weather_level_help">The lowest severity of alert that takes the dashboard\'s second tile and is spoken. Alerts below it still show in the weather view opened from the header.</string>
 </resources>

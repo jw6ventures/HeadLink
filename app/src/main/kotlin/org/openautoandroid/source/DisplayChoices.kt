@@ -1,5 +1,10 @@
 package org.openautoandroid.source
 
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
+
 /**
  * The colour of the vehicle's dot and arrow on the owned map (P7 plan §4.2).
  *
@@ -82,5 +87,61 @@ enum class DayNightMode(val key: String, val label: String) {
 
         /** The mode a stored [key] names, or [DEFAULT] for none or one this build does not know. */
         fun of(key: String?): DayNightMode = entries.firstOrNull { it.key == key } ?: DEFAULT
+    }
+}
+
+/**
+ * How every clock time the app draws is written: the dashboard's header clock and arrival
+ * time, the weather view's hours and an alert's "until", and the route line on the phone.
+ *
+ * 24-hour is the default because it is what the dashboard drew before the choice existed.
+ * 12-hour writes "6:40 PM", except the header's own clock ([clock]), which leaves the
+ * marker off as car clocks do: the time now is never ambiguous, and Ford's 726x480 header
+ * with the weather item has room for "23:59", the speed and the bearing but not a marker
+ * as well (WeatherTest). The trip panel's arrival draws its " PM" smaller ([split]).
+ *
+ * The patterns are fixed and the AM/PM marker is always English, rather than taken from
+ * the phone's locale: the dashboard is a JVM model with no locale of its own, and the
+ * phone's line should read the same as the dashboard's.
+ *
+ * [key] is what [AppSettings] stores; [label] is the settings screen's. Pure Kotlin, so
+ * host-tested.
+ */
+enum class ClockFormat(val key: String, val label: String, time: String, clock: String, hour: String) {
+    H24("24", "24-hour (18:40)", "HH:mm", "HH:mm", "HH:00"),
+    H12("12", "12-hour (6:40 PM)", "h:mm a", "h:mm", "h a"),
+    ;
+
+    private val timePattern: DateTimeFormatter = DateTimeFormatter.ofPattern(time, Locale.US)
+    private val clockPattern: DateTimeFormatter = DateTimeFormatter.ofPattern(clock, Locale.US)
+    private val hourPattern: DateTimeFormatter = DateTimeFormatter.ofPattern(hour, Locale.US)
+
+    /** A clock time: "18:40" or "6:40 PM". */
+    fun time(millis: Long, zone: ZoneId): String = timePattern.format(Instant.ofEpochMilli(millis).atZone(zone))
+
+    /** The header's clock: "18:40", or "6:40" with no marker. */
+    fun clock(millis: Long, zone: ZoneId): String = clockPattern.format(Instant.ofEpochMilli(millis).atZone(zone))
+
+    /** The hour [millis] falls in: "18:00" or "6 PM". */
+    fun hour(millis: Long, zone: ZoneId): String = hourPattern.format(Instant.ofEpochMilli(millis).atZone(zone))
+
+    companion object {
+        val DEFAULT = H24
+
+        /** The choices in the order the settings screen offers them; the first is the default. */
+        val LABELS: List<String> = entries.map { it.label }
+
+        /** The format a stored [key] names, or [DEFAULT] for none or one this build does not know. */
+        fun of(key: String?): ClockFormat = entries.firstOrNull { it.key == key } ?: DEFAULT
+
+        /**
+         * A [time] as the digits and the AM/PM marker, "6:40" and "PM", for drawing the
+         * marker smaller; a 24-hour time, or anything else, is all digits and no marker.
+         */
+        fun split(time: String): Pair<String, String?> {
+            val space = time.lastIndexOf(' ')
+            val marker = time.substring(space + 1)
+            return if (space > 0 && (marker == "AM" || marker == "PM")) time.substring(0, space) to marker else time to null
+        }
     }
 }

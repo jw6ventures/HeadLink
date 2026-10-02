@@ -24,7 +24,7 @@ import java.util.concurrent.Executors
  *
  * The file is app-private and the app allows no backup. It holds a place, so nothing of it
  * reaches the report or the event log beyond that something was restored and how old it was.
- * Kept until the route is cleared or ends after arrival.
+ * Kept until the vehicle arrives or the route is cleared.
  */
 object NavigationStore {
     private val main by lazy { Handler(Looper.getMainLooper()) }
@@ -55,10 +55,13 @@ object NavigationStore {
         }
     }
 
-    /** Saves the destination, via and route as they are now, or removes the file when there is no destination. */
+    /**
+     * Saves the destination, via and route as they are now, or removes the file when there
+     * is no destination or the vehicle has arrived at it ([Navigation.arrived]).
+     */
     fun changed() {
         val target = file ?: return
-        val destination = Navigation.destination
+        val destination = Navigation.destination?.takeUnless { Navigation.arrived }
         val saved = destination?.let {
             NavigationFile.Saved(System.currentTimeMillis(), it, Navigation.source ?: DestinationSource.TYPED, Navigation.via, Routing.line)
         }

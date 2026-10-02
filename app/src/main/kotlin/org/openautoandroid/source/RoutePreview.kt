@@ -14,8 +14,12 @@ import kotlin.math.min
  * The preview runs in a process of its own ([PreviewActivity]), so this crosses as a file
  * in app-private storage rather than as an object. It holds coordinates, as every route
  * does, and never reaches the report.
+ *
+ * [nogos] are live traffic's no-go points (P9.5), which the dashboard's live alternatives
+ * search with ([LiveAlternatives]). They are never written to the preview's file: HERE's
+ * data stays in memory (P9 plan §1), so the preview's own alternatives are without traffic.
  */
-class PreviewRequest(
+class PreviewRequest @JvmOverloads constructor(
     val token: Long,
     val fromLat: Double,
     val fromLon: Double,
@@ -24,14 +28,15 @@ class PreviewRequest(
     val startBearing: Double?,
     val options: RouteOptions,
     val route: Route,
+    val nogos: List<Nogo> = emptyList(),
 ) {
     /** The request for BRouter's alternative [index] over the same trip. */
     fun alternative(index: Int): RouteRequest =
-        RouteRequest(fromLat, fromLon, toLat, toLon, startBearing, options, index)
+        RouteRequest(fromLat, fromLon, toLat, toLon, startBearing, options, index, nogos = nogos)
 
     /** The best route over the same trip that passes through one point. */
     fun through(lat: Double, lon: Double): RouteRequest =
-        RouteRequest(fromLat, fromLon, toLat, toLon, startBearing, options, 0, lat, lon)
+        RouteRequest(fromLat, fromLon, toLat, toLon, startBearing, options, 0, lat, lon, nogos)
 }
 
 /**
@@ -269,6 +274,11 @@ object RoutePreview {
             out.writeBoolean(name != null)
             if (name != null) out.writeUTF(name)
         }
+        // Version 3 (P9): whether traffic's no-go points shaped it, so "Traffic © HERE" is
+        // still owed after a restart (plan §6), and whether it goes through a closure. Two
+        // flags; nothing of HERE's.
+        out.writeBoolean(route.trafficShaped)
+        out.writeBoolean(route.closuresOpened)
     }
 
     internal fun readRoute(input: DataInputStream): Route {
@@ -306,9 +316,19 @@ object RoutePreview {
         if (points < 2 || indices.any { it !in 0 until points } || starts.any { it !in 0 until points }) {
             throw IOException("route file is not a route")
         }
+        // Version 2 files, written before P9, have neither flag.
+        val version = (input as? VersionedInput)?.version ?: VERSION
+        val shaped = version >= 3 && input.readBoolean()
+        val opened = version >= 3 && input.readBoolean()
         val timed = if (seconds.any { it.isNaN() }) FloatArray(0) else seconds
-        return Route(latitudes, longitudes, distance, total, indices, exits, commands, timed, starts, names, topSpeed, via)
+        return Route(
+            latitudes, longitudes, distance, total, indices, exits, commands, timed, starts, names, topSpeed, via,
+            if (shaped) 1 else 0, opened,
+        )
     }
+
+    /** A file being read, and the version it was written at. */
+    private class VersionedInput(stream: java.io.InputStream, val version: Int) : DataInputStream(stream)
 
     private fun count(value: Int, limit: Int): Int {
         if (value < 0 || value > limit) throw IOException("route file count out of range: $value")
@@ -333,10 +353,11 @@ object RoutePreview {
     }
 
     internal fun <T> read(file: File, body: (DataInputStream) -> T): T =
-        DataInputStream(file.inputStream().buffered()).use { input ->
-            val version = input.readInt()
-            if (version != VERSION) throw IOException("route file version $version, expected $VERSION")
-            body(input)
+        DataInputStream(file.inputStream().buffered()).use { raw ->
+            val version = raw.readInt()
+            // A route or destination saved by the last version is still read, less what it lacks.
+            if (version != VERSION && version != VERSION - 1) throw IOException("route file version $version, expected $VERSION")
+            body(VersionedInput(raw, version))
         }
 
     /**
@@ -400,8 +421,8 @@ object RoutePreview {
     private fun key(lat: Double, lon: Double): Long =
         (Math.round(lat * 1e6) shl 32) xor (Math.round(lon * 1e6) and 0xFFFFFFFFL)
 
-    /** 2: routes carry their via point. */
-    private const val VERSION = 2
+    /** 2: routes carry their via point. 3: and whether traffic shaped them (P9). */
+    private const val VERSION = 3
 
     /** Bounds a corrupt count: Austin to Denver was 8,677 points. */
     private const val MAX_POINTS = 2_000_000

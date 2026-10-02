@@ -39,6 +39,7 @@ import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import java.io.IOException
+import java.time.ZoneId
 import java.util.Date
 
 /**
@@ -130,6 +131,7 @@ class ConnectionActivity : Activity() {
     private lateinit var autoStartCheck: CompoundButton
     private lateinit var diagnosticsCheck: CompoundButton
     private lateinit var markerColourSpinner: Spinner
+    private lateinit var clockFormatSpinner: Spinner
     private lateinit var dayNightSpinner: Spinner
     private lateinit var notificationsOnDashboardCheck: CompoundButton
     private lateinit var callControlsCheck: CompoundButton
@@ -158,6 +160,49 @@ class ConnectionActivity : Activity() {
     private lateinit var etaSpinner: Spinner
     private lateinit var learnPaceCheck: CompoundButton
     private lateinit var showAlternativesCheck: CompoundButton
+    // P9.1: Maps & routing → Live traffic (docs/p9-plan.md §3).
+    private lateinit var trafficCheck: CompoundButton
+    private lateinit var trafficKeyInput: EditText
+    private lateinit var trafficKeyText: TextView
+    private lateinit var trafficRemoveKeyButton: Button
+    private lateinit var trafficTestButton: Button
+    private lateinit var trafficTestText: TextView
+    private lateinit var trafficRefreshSpinner: Spinner
+    private lateinit var trafficLookAheadSpinner: Spinner
+    private lateinit var trafficLimitInput: EditText
+    private lateinit var trafficLimitText: TextView
+    private lateinit var trafficStatusText: TextView
+
+    /** Set while the screen moves the switch itself, so its listener saves nothing. */
+    private var trafficSwitchQuiet = false
+
+    /** A Test is out; the button stays off until it answers. */
+    private var trafficTesting = false
+
+    /** The last Save key was refused; the line under the field says so until the next. */
+    private var trafficKeyInvalid = false
+
+    // P10.1: Settings → Weather (docs/p10-plan.md §4).
+    private lateinit var weatherCheck: CompoundButton
+    private lateinit var weatherStatusText: TextView
+    private lateinit var weatherGrantButton: Button
+    private lateinit var weatherSpeakCheck: CompoundButton
+    private lateinit var weatherLevelSpinner: Spinner
+    /** Hidden with Show weather off, as the notification rows hide with theirs. */
+    private lateinit var weatherRows: List<View>
+
+    /** Set while the screen or the lab moves the switch, so its listener asks for nothing. */
+    private var weatherSwitchQuiet = false
+
+    /**
+     * The card's own last read ([Weather.readOnce]), shown while no projection holds one.
+     * On the phone only: the place name in it never reaches a note or the report.
+     */
+    private var weatherCardState: WeatherState? = null
+
+    /** A card read is out; another asked for meanwhile runs once it answers. */
+    private var weatherReading = false
+    private var weatherReadAgain = false
 
     /** Held, unlike most rows, because these hide with the scene, the cluster or the sensors. */
     private lateinit var speedUnitRow: View
@@ -300,6 +345,8 @@ class ConnectionActivity : Activity() {
         // P8.1: the engine is chosen in Android's settings, which this screen links to, so
         // it is looked up again whenever the screen comes back.
         speechEngine = SpeechEngines.default(this)
+        // P10: Breezy may have been installed, granted or refreshed meanwhile.
+        refreshWeather()
         renderState()
     }
 
@@ -331,9 +378,28 @@ class ConnectionActivity : Activity() {
             Speaker.labBluetooth = intent.getBooleanExtra(EXTRA_LAB_SPEECH_BLUETOOTH, false)
             SessionController.note("lab speech Bluetooth gate ${if (Speaker.labBluetooth) "overridden" else "restored"} (debug build)")
         }
+        // P9: live traffic's settings for the lab, pointing it at the stand-in server.
+        val trafficLab = intent != null && labTraffic(intent)
+        // P10: Show weather and its choices, a read now, or P10.0's capture (plan §8, §12).
+        val weatherLab = intent != null && labWeather(intent)
+        // P9.6: the divided card's layout for this process's next projection. Read when the
+        // dashboard's layout is made, so it goes before the attempt below starts one.
+        val offerLayout = intent?.getStringExtra(EXTRA_LAB_OFFER_LAYOUT)
+        if (offerLayout != null && applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+            val chosen = OfferLayout.entries.firstOrNull { it.key == offerLayout }
+            if (chosen != null) DashboardLayout.defaultOfferLayout = chosen
+            SessionController.note(
+                if (chosen != null) "lab offer layout ${chosen.key} (debug build)" else "lab offer layout \"$offerLayout\" unknown; ignored",
+            )
+        }
+        // P9 lab: the dashboard's and the map's figures in the saved report, as they are now.
+        val reportNow = intent?.hasExtra(EXTRA_LAB_REPORT) == true
+        if (reportNow && applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+            ProjectionService.labReport?.invoke() ?: SessionController.note("lab report: not projecting")
+        }
         val socket = intent?.getStringExtra(EXTRA_LAB_SOCKET)
         if (socket == null) {
-            if (route == null && favorites == null && !speechGate) return false
+            if (route == null && favorites == null && !speechGate && !trafficLab && !weatherLab && offerLayout == null && !reportNow) return false
             setIntent(Intent(this, ConnectionActivity::class.java))
             return true
         }
@@ -582,6 +648,24 @@ class ConnectionActivity : Activity() {
             // Asked before and refused for good: Android shows no prompt, so the button
             // goes where the operator can still allow it.
             if (!granted && !shouldShowRequestPermissionRationale(Manifest.permission.ACCESS_COARSE_LOCATION)) openAppSettings()
+            renderState()
+            return
+        }
+        // P10: Breezy's permission, from turning Show weather on or from a Grant button.
+        if (requestCode == REQUEST_WEATHER || requestCode == REQUEST_WEATHER_GRANT) {
+            val granted = grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
+            SessionController.note("weather permission ${if (granted) "granted" else "denied"}")
+            if (granted) {
+                // A projection under way reads now rather than at its next 15-minute cue.
+                Weather.cue(WeatherCue.START)
+            } else if (requestCode == REQUEST_WEATHER_GRANT && grantResults.isNotEmpty() &&
+                !shouldShowRequestPermissionRationale(WeatherRules.PERMISSION)
+            ) {
+                // Refused for good, as for location: the button goes where it can still be allowed.
+                openAppSettings()
+            }
+            weatherCardState = null
+            refreshWeather()
             renderState()
             return
         }
@@ -1296,6 +1380,8 @@ class ConnectionActivity : Activity() {
         renderHome(stage, attempt)
         renderSetup(idle, maps.size, tiles.map { it.name }.toSet(), pins.size, notificationsGranted, mediaAccess)
         renderSettings()
+        renderTraffic()
+        renderWeather()
         renderTabs()
     }
 
@@ -1356,7 +1442,8 @@ class ConnectionActivity : Activity() {
         val route = result?.route
         // Guide's live distance and time to go while following, else the route's totals.
         val figures = RouteClock.figures(System.currentTimeMillis())
-        val arrival = figures?.arrivalMillis?.let { DateFormat.getTimeFormat(this).format(Date(it)) }
+        val clock = ClockFormat.entries.getOrElse(clockFormatSpinner.selectedItemPosition) { ClockFormat.DEFAULT }
+        val arrival = figures?.arrivalMillis?.let { clock.time(it, ZoneId.systemDefault()) }
         routeSummaryText.text = StatusText.routeSummary(
             destination?.let(Navigation::describe),
             Navigation.waiting,
@@ -1366,6 +1453,7 @@ class ConnectionActivity : Activity() {
             figures?.seconds,
             arrival,
             SpeedUnit.entries.getOrElse(speedUnitSpinner.selectedItemPosition) { SpeedUnit.MPH },
+            figures?.trafficSeconds ?: 0,
         ) ?: getString(R.string.route_none)
         saveDestinationButton.visibility = if (destination != null) View.VISIBLE else View.GONE
 
@@ -1423,7 +1511,11 @@ class ConnectionActivity : Activity() {
             mediaInfoCheck.isChecked, notificationsOnDashboardCheck.isChecked, callControlsCheck.isChecked,
             CallControl.fullControlsGranted(this),
         )
-        val items = SetupCheck.items(maps, tiles, here, wanted, access, location, pins, sessionNotifications)
+        val items = SetupCheck.items(
+            maps, tiles, here, wanted, access, location, pins, sessionNotifications,
+            // Saved rather than the switch: the lab may have changed it before this render.
+            weatherWanted = AppSettings.load(this).weather.enabled, weatherPermission = weatherPermitted(),
+        )
         tabs[TAB_SETUP].text = if (items.isEmpty()) getString(R.string.tab_setup) else getString(R.string.tab_setup_count, items.size)
         if (items != shownSetup || here != shownHereTile) {
             shownSetup = items
@@ -1474,6 +1566,7 @@ class ConnectionActivity : Activity() {
             SetupItem.NO_ROUTING, SetupItem.NO_ROUTING_HERE -> importRoutingButton.performClick()
             SetupItem.NOTIFICATION_ACCESS -> grantNotificationAccess()
             SetupItem.LOCATION -> requestLocation()
+            SetupItem.WEATHER_PERMISSION -> requestWeatherPermission(REQUEST_WEATHER_GRANT)
             SetupItem.NO_PINS -> trustAndConnect()
             SetupItem.SESSION_NOTIFICATIONS -> openSessionNotificationSettings()
         }
@@ -1717,6 +1810,388 @@ class ConnectionActivity : Activity() {
         return getString(R.string.version_line, info.versionName ?: "-", info.longVersionCode)
     }
 
+    /**
+     * P9 lab extras, debug builds only: live traffic's settings seeded from the intent, so
+     * `tools/emulator-lab.sh` can point it at its stand-in HERE server (plan §8). They are
+     * written to the traffic preferences like the lab favourites are, and stay until
+     * changed. False when the intent carries none.
+     */
+    private fun labTraffic(intent: Intent): Boolean {
+        val extras = listOf(
+            EXTRA_LAB_TRAFFIC, EXTRA_LAB_TRAFFIC_URL, EXTRA_LAB_TRAFFIC_KEY,
+            EXTRA_LAB_TRAFFIC_LIMIT, EXTRA_LAB_TRAFFIC_REFRESH, EXTRA_LAB_TRAFFIC_RESET,
+        )
+        if (extras.none(intent::hasExtra)) return false
+        if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE == 0) {
+            SessionController.note("lab traffic settings in a non-debuggable build; ignored")
+            return true
+        }
+        val stored = TrafficPrefs.update(this) { s ->
+            var next = s
+            intent.getStringExtra(EXTRA_LAB_TRAFFIC_URL)?.let { next = next.copy(baseUrl = it) }
+            intent.getStringExtra(EXTRA_LAB_TRAFFIC_KEY)?.let { next = next.copy(apiKey = it) }
+            if (intent.hasExtra(EXTRA_LAB_TRAFFIC_LIMIT)) {
+                next = next.copy(monthlyLimit = intent.getIntExtra(EXTRA_LAB_TRAFFIC_LIMIT, next.monthlyLimit))
+            }
+            if (intent.hasExtra(EXTRA_LAB_TRAFFIC_REFRESH)) {
+                next = next.copy(refreshMinutes = intent.getIntExtra(EXTRA_LAB_TRAFFIC_REFRESH, next.refreshMinutes))
+            }
+            if (intent.hasExtra(EXTRA_LAB_TRAFFIC)) {
+                val on = intent.getBooleanExtra(EXTRA_LAB_TRAFFIC, false)
+                next = next.copy(enabled = on, disclosed = next.disclosed || on)
+            }
+            next
+        }
+        if (intent.getBooleanExtra(EXTRA_LAB_TRAFFIC_RESET, false) && !TrafficPrefs.resetStatus(this)) {
+            SessionController.note("lab traffic status could not be reset")
+        }
+        // The settings' own toString, which says whether a key is set but never shows it.
+        SessionController.note("lab traffic settings: $stored (debug build)")
+        renderState()
+        return true
+    }
+
+    /** Puts live traffic's saved settings on the card, then makes each control save its own. */
+    private fun loadTraffic() {
+        val saved = TrafficPrefs.load(this)
+        setTrafficSwitch(saved.enabled)
+        trafficRefreshSpinner.setSelection(TrafficSettings.REFRESH_MINUTES.indexOf(saved.refreshMinutes))
+        trafficLookAheadSpinner.setSelection(TrafficSettings.LOOK_AHEAD_KM.indexOf(saved.lookAheadKm))
+        // ASCII digits, which is what the field's number keyboard types and parseLimit reads.
+        trafficLimitInput.setText(String.format(java.util.Locale.ROOT, "%d", saved.monthlyLimit))
+        trafficCheck.setOnCheckedChangeListener { _, checked ->
+            if (trafficSwitchQuiet) return@setOnCheckedChangeListener
+            val now = TrafficPrefs.load(this)
+            when {
+                !checked -> TrafficPrefs.update(this) { it.copy(enabled = false) }
+                // The switch is disabled without a key; this is the belt to that brace.
+                now.apiKey.isEmpty() -> setTrafficSwitch(false)
+                // Plan §3: the first time, what it sends and HERE's terms, before anything is on.
+                !now.disclosed -> {
+                    setTrafficSwitch(false)
+                    confirmTraffic()
+                }
+                else -> TrafficPrefs.update(this) { it.copy(enabled = true) }
+            }
+            renderState()
+        }
+        fun Spinner.savesTraffic(change: (TrafficSettings, Int) -> TrafficSettings) {
+            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                    TrafficPrefs.update(this@ConnectionActivity) { change(it, position) }
+                    renderState()
+                }
+
+                override fun onNothingSelected(parent: AdapterView<*>?) {
+                    renderState()
+                }
+            }
+        }
+        trafficRefreshSpinner.savesTraffic { s, i -> s.copy(refreshMinutes = TrafficSettings.REFRESH_MINUTES[i]) }
+        trafficLookAheadSpinner.savesTraffic { s, i -> s.copy(lookAheadKm = TrafficSettings.LOOK_AHEAD_KM[i]) }
+        // Saved as typed whenever it reads as a limit; otherwise the line under it says why
+        // and the saved limit stands.
+        trafficLimitInput.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+
+            override fun afterTextChanged(s: android.text.Editable?) {
+                val limit = TrafficSettings.parseLimit(s?.toString().orEmpty())
+                if (limit != null) TrafficPrefs.update(this@ConnectionActivity) { it.copy(monthlyLimit = limit) }
+                trafficLimitText.visibility = if (limit == null) View.VISIBLE else View.GONE
+                renderTraffic()
+            }
+        })
+        trafficLimitText.setText(R.string.traffic_limit_invalid)
+        trafficLimitText.visibility = View.GONE
+    }
+
+    private fun setTrafficSwitch(on: Boolean) {
+        trafficSwitchQuiet = true
+        trafficCheck.isChecked = on
+        trafficSwitchQuiet = false
+    }
+
+    /**
+     * The first turn-on (plan §3): the plan's paragraph on what is sent, and HERE's End
+     * User Terms and Privacy Policy (plan §1, 6.2). Only **Turn on** turns it on.
+     */
+    private fun confirmTraffic() {
+        val message = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(ui.dp(24), ui.dp(16), ui.dp(24), 0)
+            addView(ui.body().apply { setText(R.string.traffic_disclosure) })
+            addView(termsText().apply { setPadding(0, ui.dp(12), 0, 0) })
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.traffic_disclosure_title)
+            .setView(ScrollView(this).apply { addView(message) })
+            .setPositiveButton(R.string.traffic_turn_on) { _, _ ->
+                val stored = TrafficPrefs.update(this) { it.copy(enabled = true, disclosed = true) }
+                SessionController.note("live traffic turned on (${if (stored.enabled) "on" else "no key"})")
+                renderState()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    /** HERE's terms, linked, at the foot of the card (plan §1, 6.2). */
+    private fun termsText(): TextView = ui.caption().apply {
+        autoLinkMask = android.text.util.Linkify.WEB_URLS
+        movementMethod = android.text.method.LinkMovementMethod.getInstance()
+        setText(R.string.traffic_terms)
+    }
+
+    /** Saves a typed or pasted key, or with null removes the saved one (which turns traffic off). */
+    private fun saveTrafficKey(text: String?) {
+        if (text != null) {
+            val key = TrafficSettings.cleanKey(text)
+            trafficKeyInvalid = key == null
+            if (key == null) {
+                renderTraffic()
+                return
+            }
+            TrafficPrefs.update(this) { it.copy(apiKey = key) }
+            SessionController.note("HERE API key saved")
+        } else {
+            trafficKeyInvalid = false
+            TrafficPrefs.update(this) { it.copy(apiKey = "") }
+            SessionController.note("HERE API key removed; live traffic off")
+        }
+        trafficKeyInput.text.clear()
+        trafficTestText.text = null
+        renderState()
+    }
+
+    /** One incidents request, off the main thread (plan §3's Test). */
+    private fun testTraffic() {
+        trafficTesting = true
+        trafficTestText.setText(R.string.traffic_testing)
+        renderTraffic()
+        val client = TrafficPrefs.client(this)
+        Thread({
+            // Nothing thrown here may take the app down: the client turns its own failures
+            // into a message, and anything else (the preferences' commit, say) says so too.
+            val message = try {
+                getString(R.string.traffic_test_result, client.test().message)
+            } catch (e: RuntimeException) {
+                getString(R.string.traffic_test_crashed, e.javaClass.simpleName)
+            }
+            runOnUiThread {
+                trafficTesting = false
+                if (isDestroyed) return@runOnUiThread
+                trafficTestText.text = message
+                renderState()
+            }
+        }, "traffic-test").start()
+    }
+
+    /**
+     * The card from what is saved: the switch (which needs a key), whether a key is saved,
+     * Test (only with traffic on), and the Status (plan §3). Re-read on every render, since
+     * the route's refreshes write the status from another thread.
+     */
+    private fun renderTraffic() {
+        val saved = TrafficPrefs.load(this)
+        if (trafficCheck.isChecked != saved.enabled) setTrafficSwitch(saved.enabled)
+        trafficCheck.isEnabled = saved.apiKey.isNotEmpty() || saved.enabled
+        trafficKeyText.setText(
+            when {
+                trafficKeyInvalid -> R.string.traffic_key_invalid
+                saved.apiKey.isEmpty() -> R.string.traffic_key_none
+                else -> R.string.traffic_key_saved
+            },
+        )
+        trafficRemoveKeyButton.isEnabled = saved.apiKey.isNotEmpty()
+        trafficTestButton.isEnabled = saved.usable && !trafficTesting
+        val status = TrafficPrefs.status(this)
+        val month = java.time.YearMonth.now(java.time.ZoneOffset.UTC)
+        val lastFetch = status.lastFetchMs.takeIf { it > 0 }?.let {
+            val date = Date(it)
+            "${DateFormat.getDateFormat(this).format(date)} ${DateFormat.getTimeFormat(this).format(date)}"
+        }
+        val described = status.describe(month, saved.monthlyLimit, lastFetch)
+        // A lab override in force is said on the card, so one left over from a lab run on the
+        // phone is never silent (only the lab hosts are honoured: TrafficClient.labBase).
+        val lab = TrafficClient.labBase(saved, applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0)
+        trafficStatusText.text = if (lab == null) described else described + "\n" + getString(R.string.traffic_lab_override, lab)
+    }
+
+    /**
+     * P10 lab extras, debug builds only (plan §8, §12): Show weather and its two choices
+     * saved as the card saves them and handed to a projection under way, a read now, and
+     * P10.0's capture on the Pixel. `lab_weather` never asks for Breezy's permission, which
+     * the lab grants with `pm grant`. Each is noted for the lab to find in the event log,
+     * by setting only: a place, a temperature or a headline is never noted. False when the
+     * intent carries none.
+     */
+    private fun labWeather(intent: Intent): Boolean {
+        val extras = listOf(
+            EXTRA_LAB_WEATHER, EXTRA_LAB_WEATHER_LEVEL, EXTRA_LAB_WEATHER_SPEAK,
+            EXTRA_LAB_WEATHER_CUE, EXTRA_LAB_WEATHER_CAPTURE,
+        )
+        if (extras.none(intent::hasExtra)) return false
+        if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE == 0) {
+            SessionController.note("lab weather settings in a non-debuggable build; ignored")
+            return true
+        }
+        val levelKey = intent.getStringExtra(EXTRA_LAB_WEATHER_LEVEL)
+        val level = levelKey?.let { key -> AlertLevel.entries.firstOrNull { it.key == key } }
+        if (levelKey != null && level == null) SessionController.note("lab weather level \"$levelKey\" unknown; ignored")
+        val settingsChanged = intent.hasExtra(EXTRA_LAB_WEATHER) || intent.hasExtra(EXTRA_LAB_WEATHER_SPEAK) || level != null
+        if (settingsChanged) {
+            val stored = AppSettings.update(this) { s ->
+                var next = s.weather
+                if (intent.hasExtra(EXTRA_LAB_WEATHER)) next = next.copy(enabled = intent.getBooleanExtra(EXTRA_LAB_WEATHER, false))
+                if (intent.hasExtra(EXTRA_LAB_WEATHER_SPEAK)) {
+                    next = next.copy(speakAlerts = intent.getBooleanExtra(EXTRA_LAB_WEATHER_SPEAK, true))
+                }
+                if (level != null) next = next.copy(alertLevel = level)
+                s.copy(weather = next)
+            }
+            Weather.settings(stored.weather)
+            if (intent.hasExtra(EXTRA_LAB_WEATHER)) SessionController.note("lab weather ${if (stored.weather.enabled) "on" else "off"}")
+            if (intent.hasExtra(EXTRA_LAB_WEATHER_SPEAK)) {
+                SessionController.note("lab weather speak ${if (stored.weather.speakAlerts) "on" else "off"}")
+            }
+            if (level != null) SessionController.note("lab weather level ${stored.weather.alertLevel.key}")
+        }
+        if (intent.getBooleanExtra(EXTRA_LAB_WEATHER_CUE, false)) {
+            Weather.cue(WeatherCue.LAB)
+            SessionController.note("lab weather cue")
+        }
+        if (intent.getBooleanExtra(EXTRA_LAB_WEATHER_CAPTURE, false)) {
+            // The summary is the provider's owner, the grant, its version, and for each
+            // place whether it is the current position and has a name: never the name.
+            Weather.capture(this) { summary -> SessionController.note("weather capture: $summary") }
+        }
+        // The card follows, switch moved quietly; with weather off it reads nothing.
+        weatherCardState = null
+        refreshWeather()
+        renderState()
+        return true
+    }
+
+    /** Whether a package answers for Breezy's authority: without one there is nothing to grant. */
+    private fun breezyPresent(): Boolean =
+        try {
+            packageManager.resolveContentProvider(WeatherRules.AUTHORITY, PackageManager.ComponentInfoFlags.of(0)) != null
+        } catch (e: RuntimeException) {
+            false
+        }
+
+    private fun weatherPermitted(): Boolean = checkSelfPermission(WeatherRules.PERMISSION) == PackageManager.PERMISSION_GRANTED
+
+    /**
+     * Breezy's own prompt ("read your weather data"), from the card's Grant or Setup's.
+     * With no Breezy installed there is nothing to ask, and the card already says so.
+     */
+    private fun requestWeatherPermission(requestCode: Int) {
+        if (!breezyPresent()) {
+            Toast.makeText(this, WeatherText.status(WeatherState(WeatherStatus.MISSING), System.currentTimeMillis()), Toast.LENGTH_LONG).show()
+            return
+        }
+        requestPermissions(arrayOf(WeatherRules.PERMISSION), requestCode)
+    }
+
+    /**
+     * The card's status line (plan §4). A projection's own reading is shown while it holds
+     * one; otherwise one read of the card's own, only with Show weather on, since off means
+     * nothing is read (the lab's `off` run checks the stand-in saw no query at all).
+     */
+    private fun refreshWeather() {
+        if (!AppSettings.load(this).weather.enabled || Weather.state.status != WeatherStatus.NOT_READ) {
+            renderWeather()
+            return
+        }
+        if (weatherReading) {
+            weatherReadAgain = true
+            return
+        }
+        weatherReading = true
+        Weather.readOnce(this, lastKnownLocation()?.let { it.latitude to it.longitude }) { state ->
+            weatherReading = false
+            if (isDestroyed) return@readOnce
+            weatherCardState = state
+            if (weatherReadAgain) {
+                weatherReadAgain = false
+                refreshWeather()
+            }
+            renderWeather()
+        }
+    }
+
+    /**
+     * The Weather card as saved and as last read, re-read on every render like the traffic
+     * card, since the lab and a projection change it with this screen up. The switch is
+     * moved quietly, so following the saved value never asks for the permission.
+     */
+    private fun renderWeather() {
+        val saved = AppSettings.load(this).weather
+        if (weatherCheck.isChecked != saved.enabled) setWeatherSwitch(saved.enabled)
+        if (weatherSpeakCheck.isChecked != saved.speakAlerts) weatherSpeakCheck.isChecked = saved.speakAlerts
+        if (weatherLevelSpinner.selectedItemPosition != saved.alertLevel.ordinal) weatherLevelSpinner.setSelection(saved.alertLevel.ordinal)
+        weatherRows.forEach { it.visibility = if (saved.enabled) View.VISIBLE else View.GONE }
+        // Off asks the package manager nothing either: every session event renders.
+        if (!saved.enabled) return
+        val state = Weather.state.takeIf { it.status != WeatherStatus.NOT_READ } ?: weatherCardState
+        val ungranted = !weatherPermitted() && breezyPresent()
+        weatherStatusText.text = when {
+            // Taken back since the last read: said now, before the next read answers.
+            ungranted -> WeatherText.status(WeatherState(WeatherStatus.NO_PERMISSION), System.currentTimeMillis())
+            state == null -> getString(R.string.weather_reading)
+            else -> WeatherText.status(state, System.currentTimeMillis())
+        }
+        weatherGrantButton.visibility = if (ungranted) View.VISIBLE else View.GONE
+    }
+
+    private fun setWeatherSwitch(on: Boolean) {
+        weatherSwitchQuiet = true
+        weatherCheck.isChecked = on
+        weatherSwitchQuiet = false
+    }
+
+    /**
+     * Puts the Weather card's saved choices on screen, then makes each save its own field,
+     * as [loadSaved] does, and hands the result to a projection under way ([Weather.settings]).
+     * Turning Show weather on asks for Breezy's permission when it is not yet held (plan §4).
+     */
+    private fun loadWeather() {
+        val saved = AppSettings.load(this).weather
+        setWeatherSwitch(saved.enabled)
+        weatherSpeakCheck.isChecked = saved.speakAlerts
+        weatherLevelSpinner.setSelection(saved.alertLevel.ordinal)
+        fun saveWeather(change: (WeatherSettings) -> WeatherSettings): WeatherSettings {
+            val stored = AppSettings.update(this) { it.copy(weather = change(it.weather)) }
+            Weather.settings(stored.weather)
+            return stored.weather
+        }
+        weatherCheck.setOnCheckedChangeListener { _, checked ->
+            if (weatherSwitchQuiet) return@setOnCheckedChangeListener
+            saveWeather { it.copy(enabled = checked) }
+            SessionController.note("weather turned ${if (checked) "on" else "off"}")
+            weatherCardState = null
+            if (checked && !weatherPermitted() && breezyPresent()) requestWeatherPermission(REQUEST_WEATHER)
+            refreshWeather()
+            renderState()
+        }
+        weatherSpeakCheck.setOnCheckedChangeListener { _, checked ->
+            saveWeather { it.copy(speakAlerts = checked) }
+            renderState()
+        }
+        weatherLevelSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                saveWeather { it.copy(alertLevel = AlertLevel.entries[position]) }
+                renderState()
+            }
+
+            override fun onNothingSelected(parent: AdapterView<*>?) {
+                renderState()
+            }
+        }
+    }
+
     private fun buildViews() {
         ui = PhoneViews(this)
         val margin = ui.dp(16)
@@ -1805,6 +2280,7 @@ class ConnectionActivity : Activity() {
         autoStartCheck = switch(R.string.auto_start_label)
         diagnosticsCheck = switch(R.string.diagnostics)
         markerColourSpinner = spinner(MarkerColour.LABELS)
+        clockFormatSpinner = spinner(ClockFormat.LABELS)
         dayNightSpinner = spinner(DayNightMode.LABELS)
         notificationsOnDashboardCheck = switch(R.string.notifications_on_dashboard)
         callControlsCheck = switch(R.string.call_controls)
@@ -1841,6 +2317,41 @@ class ConnectionActivity : Activity() {
         etaSpinner = spinner(RouteOptions.ETA_PERCENTS.map(RouteOptions::etaLabel))
         learnPaceCheck = switch(R.string.route_learn_pace_label)
         showAlternativesCheck = switch(R.string.route_show_alternatives_label)
+        // P9.1: live traffic. The key is typed into a masked field and never put back in
+        // it: once saved, the card only says that a key is saved.
+        trafficCheck = switch(R.string.traffic_switch)
+        trafficKeyInput = EditText(this).apply {
+            setHint(R.string.traffic_key_hint)
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD or
+                android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            // Not offered to an autofill service or password manager to keep.
+            importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
+            maxLines = 1
+        }
+        trafficKeyText = ui.caption()
+        trafficRemoveKeyButton = quietButton(R.string.traffic_key_remove) { saveTrafficKey(null) }
+        trafficTestButton = button(R.string.traffic_test) { testTraffic() }
+        trafficTestText = ui.caption().apply {
+            setTextIsSelectable(true)
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        }
+        trafficRefreshSpinner = spinner(TrafficSettings.REFRESH_MINUTES.map { "$it min" })
+        trafficLookAheadSpinner = spinner(TrafficSettings.LOOK_AHEAD_KM.map { "$it km (${Math.round(it / 1.609344)} mi)" })
+        trafficLimitInput = EditText(this).apply {
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            maxLines = 1
+            minEms = 5
+        }
+        trafficLimitText = ui.caption()
+        trafficStatusText = ui.body(selectable = true)
+        // P10.1 (plan §4): weather. Off by default (APP09); the status line is the phone's
+        // own words for what the last read found, place name included, shown here only.
+        weatherCheck = switch(R.string.weather_switch)
+        weatherStatusText = ui.body(selectable = true).apply { accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
+        weatherGrantButton = button(R.string.weather_grant) { requestWeatherPermission(REQUEST_WEATHER_GRANT) }
+        weatherSpeakCheck = switch(R.string.weather_speak_label)
+        weatherLevelSpinner = spinner(AlertLevel.LABELS)
         callControlsText = ui.caption().apply { setTextIsSelectable(true) }
         exclusionsText = ui.body()
         exclusionsRow = LinearLayout(this).apply {
@@ -2022,6 +2533,23 @@ class ConnectionActivity : Activity() {
                 ui.withHelp(learnPaceCheck, R.string.route_learn_pace_label, R.string.route_learn_pace_help),
                 ui.withHelp(showAlternativesCheck, R.string.route_show_alternatives_label, R.string.route_show_alternatives_help),
             ),
+            // P9.1 (plan §3): live traffic, beside the route preferences it adds to.
+            ui.card(
+                ui.title(R.string.traffic_title),
+                ui.caption().apply { setText(R.string.traffic_caption) },
+                ui.withHelp(trafficCheck, R.string.traffic_switch, R.string.traffic_switch_help),
+                ui.labelled(R.string.traffic_key_label, R.string.traffic_key_help, trafficKeyInput, stacked = true),
+                trafficKeyText,
+                ui.row(button(R.string.traffic_key_save) { saveTrafficKey(trafficKeyInput.text.toString()) }, trafficRemoveKeyButton),
+                ui.withHelp(trafficTestButton, R.string.traffic_test, R.string.traffic_test_help),
+                trafficTestText,
+                ui.labelled(R.string.traffic_refresh_label, R.string.traffic_refresh_help, trafficRefreshSpinner),
+                ui.labelled(R.string.traffic_look_ahead_label, R.string.traffic_look_ahead_help, trafficLookAheadSpinner),
+                ui.labelled(R.string.traffic_limit_label, R.string.traffic_limit_help, trafficLimitInput),
+                trafficLimitText,
+                trafficStatusText,
+                termsText(),
+            ),
             // P8.3 (plan §7): Maps & routing → Voice guidance.
             ui.card(
                 ui.title(R.string.voice_title),
@@ -2047,10 +2575,19 @@ class ConnectionActivity : Activity() {
         navigationUnitsRow = ui.labelled(R.string.navigation_units_label, null, navigationUnitsSpinner)
         navigationForceRow = ui.withHelp(navigationForceCheck, R.string.navigation_force_label, R.string.navigation_force_help)
         navigationScriptRow = ui.withHelp(navigationScriptCheck, R.string.navigation_script_label, R.string.navigation_script_help)
+        weatherRows = listOf(
+            weatherStatusText,
+            weatherGrantButton,
+            ui.withHelp(weatherSpeakCheck, R.string.weather_speak_label, R.string.weather_speak_help),
+            ui.caption().apply { setText(R.string.weather_speak_note) },
+            ui.labelled(R.string.weather_level_label, R.string.weather_level_help, weatherLevelSpinner),
+            ui.caption().apply { text = WeatherText.NOTIFIER_HELP },
+        )
         val settings = page(
             ui.card(
                 ui.title(R.string.settings_dashboard),
                 speedUnitRow,
+                ui.labelled(R.string.clock_format_label, R.string.clock_format_help, clockFormatSpinner),
                 mapSideRow,
                 ui.labelled(R.string.marker_colour_label, null, markerColourSpinner),
                 ui.labelled(R.string.day_night_label, R.string.day_night_help, dayNightSpinner),
@@ -2077,6 +2614,14 @@ class ConnectionActivity : Activity() {
                 readAloudRow,
                 ui.withHelp(callControlsCheck, R.string.call_controls, R.string.call_controls_help),
                 callControlsText,
+            ),
+            // P10.1 (plan §4): Settings → Weather, after the notifications an alert outranks
+            // and before the speech choice its spoken alerts share.
+            ui.card(
+                ui.title(R.string.weather_title),
+                ui.caption().apply { setText(R.string.weather_caption) },
+                ui.withHelp(weatherCheck, R.string.weather_switch, R.string.weather_switch_help),
+                *weatherRows.toTypedArray(),
             ),
             // P8.1: applies to notification reading and, from P8.2, turn prompts (plan §7).
             ui.card(
@@ -2216,6 +2761,7 @@ class ConnectionActivity : Activity() {
         autoStartCheck.isChecked = saved.autoStart
         diagnosticsCheck.isChecked = saved.diagnostics
         markerColourSpinner.setSelection(saved.markerColour.ordinal)
+        clockFormatSpinner.setSelection(saved.clockFormat.ordinal)
         dayNightSpinner.setSelection(saved.dayNight.ordinal)
         notificationsOnDashboardCheck.isChecked = saved.notificationsOnDashboard
         callControlsCheck.isChecked = saved.callControls
@@ -2289,6 +2835,7 @@ class ConnectionActivity : Activity() {
             s.copy(diagnostics = on)
         }
         markerColourSpinner.saves { s, i -> s.copy(markerColour = MarkerColour.entries[i]) }
+        clockFormatSpinner.saves { s, i -> s.copy(clockFormat = ClockFormat.entries[i]) }
         dayNightSpinner.saves { s, i -> s.copy(dayNight = DayNightMode.entries[i]) }
         notificationsOnDashboardCheck.saves { s, on -> s.copy(notificationsOnDashboard = on) }
         callControlsCheck.saves { s, on -> s.copy(callControls = on) }
@@ -2358,6 +2905,8 @@ class ConnectionActivity : Activity() {
         etaSpinner.savesRouting { r, i -> r.copy(etaPercent = RouteOptions.ETA_PERCENTS[i]) }
         learnPaceCheck.savesRouting { r, on -> r.copy(learnPace = on) }
         showAlternativesCheck.savesRouting { r, on -> r.copy(showAlternatives = on) }
+        loadTraffic()
+        loadWeather()
     }
 
     companion object {
@@ -2393,6 +2942,36 @@ class ConnectionActivity : Activity() {
         const val EXTRA_LAB_KEYFRAME_SECONDS = "lab_keyframe_seconds"
         const val EXTRA_LAB_SETUP_FIELD = "lab_setup_field"
         const val EXTRA_LAB_SPEECH_BLUETOOTH = "lab_speech_bluetooth"
+        /** P9 lab: live traffic on or off (boolean); on also marks what it sends as seen. */
+        const val EXTRA_LAB_TRAFFIC = "lab_traffic"
+        /** P9 lab: the stand-in server's base URL, e.g. `http://10.0.2.2:8765`; "" for HERE. */
+        const val EXTRA_LAB_TRAFFIC_URL = "lab_traffic_url"
+        /** P9 lab: the key to send; the stand-in's own, never a real one. */
+        const val EXTRA_LAB_TRAFFIC_KEY = "lab_traffic_key"
+        /** P9 lab: the monthly request limit (int). */
+        const val EXTRA_LAB_TRAFFIC_LIMIT = "lab_traffic_limit"
+        /** P9 lab: refresh every, minutes (int, one of the card's choices). */
+        const val EXTRA_LAB_TRAFFIC_REFRESH = "lab_traffic_refresh"
+        /** P9 lab: clear the month's count, the last fetch and the last error (boolean). */
+        const val EXTRA_LAB_TRAFFIC_RESET = "lab_traffic_reset"
+        /**
+         * P9.6 lab: how the turn card divides for a traffic offer, `stacked` or
+         * `side-by-side` ([OfferLayout.key]), set before the projection's layout is made so
+         * the lab can render both for James (plan §11). Debug builds only.
+         */
+        const val EXTRA_LAB_OFFER_LAYOUT = "lab_offer_layout"
+        /** P9 lab: refresh the projection's part of the saved report now (boolean, any value). Debug builds only. */
+        const val EXTRA_LAB_REPORT = "lab_report"
+        /** P10 lab: Show weather on or off (boolean). Never asks for Breezy's permission. */
+        const val EXTRA_LAB_WEATHER = "lab_weather"
+        /** P10 lab: alerts shown from, by [AlertLevel.key]: minor, moderate, severe or extreme. */
+        const val EXTRA_LAB_WEATHER_LEVEL = "lab_weather_level"
+        /** P10 lab: speak weather alerts (boolean). */
+        const val EXTRA_LAB_WEATHER_SPEAK = "lab_weather_speak"
+        /** P10 lab: read now ([WeatherCue.LAB]), as the notifier would (boolean true). */
+        const val EXTRA_LAB_WEATHER_CUE = "lab_weather_cue"
+        /** P10.0: the provider's answers into `files/weather-capture/` for `run-as` (boolean true). */
+        const val EXTRA_LAB_WEATHER_CAPTURE = "lab_weather_capture"
         private const val REQUEST_NOTIFICATIONS = 1
         private const val REQUEST_EXPORT = 2
         private const val REQUEST_EXPORT_SAVED = 3
@@ -2402,6 +2981,8 @@ class ConnectionActivity : Activity() {
         private const val REQUEST_DROP_FOLDER = 7
         private const val REQUEST_SETUP_LOCATION = 8
         private const val REQUEST_PREVIEW = 9
+        private const val REQUEST_WEATHER = 10
+        private const val REQUEST_WEATHER_GRANT = 11
 
         /** The tabs, in the bar's order (P7.7, plan §6.1). */
         private const val TAB_HOME = 0

@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Future identities, pins, and session evidence must not leave the device through
-     cloud backup or device transfer. Exclude every domain. -->
+     cloud backup or device transfer. Exclude every domain. Since P9 that includes the
+     operator's HERE API key, in the "traffic" preferences file (docs/p9-plan.md §3);
+     the manifest's allowBackup="false" covers the older backup path, and
+     tools/verify-apk.sh pins both. -->
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="root" path="." />

@@ -33,11 +33,16 @@
 // first row three times, a few seconds apart - read it, stop it, read it again - and
 // reports how lit the row still is a few seconds after each tap, after the tap's own
 // flash; the app's report says what each tap did. It listens to nothing.
+// With --script weather (P10) it presses the header's weather item and checks the flex tile
+// open and close (a second press, a press on the view, the 30 s timeout, a call), an alert
+// take the tile over a notification and two presses dismiss it, and the header's glyph, its
+// warning mark and the text's clearance from it; it hands off with the lab through two files.
 // That is the independent decode, input, audio, map-motion, guidance and day/night
 // evidence for P4, P5.1, P5.3, P6.1, P6.5 and P7.6; it proves nothing about a factory
 // head unit.
 #include <QCommandLineParser>
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QHostAddress>
@@ -279,11 +284,21 @@ struct DashboardPane {
     /// keypad: its box, echo strip, Close and the twelve keys in "123456789*0#" order.
     Rect flexTile, muteBox, keypad, keypadEcho;
     QPoint notificationRow, answer, answerPatch, callRow[3], hangUpAlone, keypadClose, keys[12];
+    /// P9.6 (the traffic script): the whole map pane, and the turn card divided for a traffic
+    /// offer in the layout the app was told to use (DashboardLayout.offerCard, offerPart,
+    /// offerButton(0) Take and (1) Keep, offerView, trafficAttribution is not mirrored: the
+    /// frames show it). A change to DashboardLayout's offer geometry not made here shows up as
+    /// a Take or Keep press that hits nothing.
+    Rect mapFull, offerCard, offerPart, offerTake, offerKeep, offerView;
+    /// P10 (the weather script): DashboardLayout.headerWeather, the header's weather item, a
+    /// margin left of the notification pause, full header height and 2.2 headers wide. A
+    /// change there not made here shows up as a press on the item that opens nothing.
+    Rect headerWeather;
 
     /// Mirrors DashboardLayout (Dashboard.kt): the pane, zoomBubble, headerBattery,
     /// headerSignal and headerIcon. A change there that is not made here shows up as a
     /// controls-script press that hits nothing.
-    static DashboardPane of(const Layout& content, bool mapOnLeft)
+    static DashboardPane of(const Layout& content, bool mapOnLeft, bool offerStacked = false)
     {
         const int margin = std::max(2, content.width / 96);
         const int header = std::max(24, content.height / 9);
@@ -320,6 +335,9 @@ struct DashboardPane {
         pane.dayNightIcon = QPoint(dayNight.x + header / 2, content.y + header / 2);
         // The header's text side, left of the icons, for the palette check.
         pane.header = {content.x, content.y, pane.pauseBox.x - margin - content.x, header};
+        // P10: DashboardLayout.headerWeather.
+        const int weatherWidth = header * 22 / 10;
+        pane.headerWeather = {pane.pauseBox.x - margin - weatherWidth, content.y, weatherWidth, header};
         // DashboardLayout.media, tiles[0], mediaButton(0), endRoute, turnCard, playerRow.
         const int originX = mapOnLeft ? rightX : leftX;
         pane.media = {originX, bodyY + margin, paneWidth, rowHeight};
@@ -377,6 +395,39 @@ struct DashboardPane {
         for (int i = 0; i < 12; ++i)
             pane.keys[i] = QPoint(pad.x + margin + (i % 3) * (keyWidth + margin) + keyWidth / 2,
                                   keysTop + (i / 3) * (keyHeight + margin) + keyHeight / 2);
+        // DashboardLayout.map, bubbleSize, turnCard, offerCard, offerTurn, offerPart,
+        // offerButton and offerView (P9.6).
+        pane.mapFull = {mapX, bodyY + margin, paneWidth, paneHeight};
+        const Rect& full = pane.mapFull;
+        const int mapBubble = std::max(24, std::min(full.width, full.height) / 8);
+        const Rect card = {full.x + margin, full.y + margin, std::max(0, full.width - 2 * margin), std::max(24, full.height / 5)};
+        const int tall = offerStacked ? card.height + std::max(mapBubble + 2 * margin, card.height * 3 / 4)
+                                      : std::max(card.height, margin + card.height / 2 + mapBubble + margin);
+        pane.offerCard = {card.x, card.y, card.width, tall};
+        const Rect& oc = pane.offerCard;
+        if (offerStacked) {
+            pane.offerPart = {oc.x, card.y + card.height, oc.width, oc.y + oc.height - (card.y + card.height)};
+            const Rect& part = pane.offerPart;
+            const int h = std::max(0, part.height - 2 * margin);
+            const int w = std::max(mapBubble * 3 / 2, part.width / 5);
+            for (int i = 0; i < 2; ++i) {
+                const int fromRight = 1 - i;
+                const Rect b = {part.x + part.width - margin - w - fromRight * (w + margin), part.y + margin, w, h};
+                (i == 0 ? pane.offerTake : pane.offerKeep) = b;
+            }
+        } else {
+            const int turnWidth = oc.width * 2 / 5;
+            pane.offerPart = {oc.x + turnWidth, oc.y, oc.width - turnWidth, oc.height};
+            const Rect& part = pane.offerPart;
+            const int w = std::max(0, (part.width - 3 * margin) / 2);
+            for (int i = 0; i < 2; ++i) {
+                const Rect b = {part.x + margin + i * (w + margin), part.y + part.height - margin - mapBubble, w, mapBubble};
+                (i == 0 ? pane.offerTake : pane.offerKeep) = b;
+            }
+        }
+        const int viewTop = oc.y + oc.height + margin;
+        pane.offerView = {full.x + margin, viewTop, std::max(0, full.width - 2 * margin),
+                          std::max(0, full.y + full.height - margin - viewTop)};
         return pane;
     }
 };
@@ -496,6 +547,28 @@ public:
                         static_cast<size_t>(w));
         }
         return out;
+    }
+
+    /// How many pixels of a rectangle of the latest picture [test] accepts, given each
+    /// pixel's Y, U and V (P9: the traffic colours and the offer's Take button). -1 when the
+    /// rectangle is not inside the picture.
+    template <class Test>
+    int count(int x, int y, int w, int h, Test test) const
+    {
+        if (!haveFrame_ || !latest_->data[0] || x < 0 || y < 0 || w <= 0 || h <= 0 || x + w > width
+            || y + h > height)
+            return -1;
+        int n = 0;
+        for (int row = y; row < y + h; ++row) {
+            const uint8_t* luma = latest_->data[0] + static_cast<size_t>(row) * latest_->linesize[0];
+            const uint8_t* u = latest_->data[1] + static_cast<size_t>(row / 2) * latest_->linesize[1];
+            const uint8_t* v = latest_->data[2] + static_cast<size_t>(row / 2) * latest_->linesize[2];
+            for (int col = x; col < x + w; ++col) {
+                if (test(luma[col], u[col / 2], v[col / 2]))
+                    ++n;
+            }
+        }
+        return n;
     }
 
     int frames = 0;
@@ -1382,7 +1455,38 @@ int main(int argc, char** argv)
                                         "sends), frame, or advertised.", "name", "content");
     QCommandLineOption scriptOption("script",
                                     "Projection script: taps, focus, stall, transport, audio, "
-                                    "track, navigation, guidance, daynight, controls, endroute, calls, speech, voice, or none.", "name", "taps");
+                                    "track, navigation, guidance, daynight, controls, endroute, calls, speech, voice, traffic, "
+                                    "weather, or none.", "name", "taps");
+    QCommandLineOption trafficModeOption("traffic-mode",
+                                         "For --script traffic (P9): offer (wait for the divided turn card, "
+                                         "flip the palette and back for the renders, press Keep, wait for a "
+                                         "second offer, press Take), closure (parked; watch the cluster "
+                                         "re-route round a closure and the closure's colour in the map), "
+                                         "off (drive --track-file; the source must fetch nothing), or render "
+                                         "(offer up to Keep: the divided card in both palettes, for the "
+                                         "renders), or drive (wait 30 s for traffic to arrive, then drive "
+                                         "--track-file through it: the colours and the frame cost on the "
+                                         "move).", "mode", "offer");
+    QCommandLineOption offerLayoutOption("offer-layout",
+                                         "How the app divides the turn card for an offer: side-by-side (its "
+                                         "default) or stacked, as the lab told it.", "layout", "side-by-side");
+    QCommandLineOption etaOutOption("eta-out",
+                                    "Write every change of the cluster's time to the destination here, one "
+                                    "line of epoch milliseconds, seconds and cluster states (P9.4).", "path");
+    QCommandLineOption weatherModeOption("weather-mode",
+                                         "For --script weather (P10): show (press the header's weather item: "
+                                         "the view in both palettes, then a second press closes it), tap (the "
+                                         "second press, a press on the view and the 30 s timeout each close it; "
+                                         "then a call rings and a press is ignored), alert (a notification, "
+                                         "then the lab's alert takes the tile; two presses dismiss two alerts), "
+                                         "stale or unsupported (after the lab's read: the view in both palettes), "
+                                         "off (no weather item, and a press on its place opens nothing) or "
+                                         "notifier (the header's temperature after the lab's notifier).",
+                                         "mode", "show");
+    QCommandLineOption weatherDirOption("weather-dir",
+                                        "For --script weather: where the receiver writes weather-receiver.txt "
+                                        "(what it has seen, for the lab) and reads weather-lab.txt (what the lab "
+                                        "has done, with epoch milliseconds).", "dir", "");
     QCommandLineOption callControlsOption("call-controls",
                                           "For --script calls: full (the Telecom route: Mute, Keypad and "
                                           "Hang up after Answer) or basic (the call-notification route: "
@@ -1418,7 +1522,8 @@ int main(int argc, char** argv)
                        toleranceOption, trackOption, trackIntervalOption, trackFileOption,
                        trackSpeedOption, mapSideOption, nightOption, callControlsOption,
                        navigationOption, navigationClusterOption, navigationIntervalOption,
-                       navigationExpectOption});
+                       navigationExpectOption, trafficModeOption, offerLayoutOption, etaOutOption,
+                       weatherModeOption, weatherDirOption});
     parser.process(app);
 
     // How long a --track run without the track script waits before driving off.
@@ -1440,7 +1545,8 @@ int main(int argc, char** argv)
     const int tolerance = parser.value(toleranceOption).toInt();
     const QString script = parser.value(scriptOption);
     if (!QStringList{"taps", "focus", "stall", "transport", "audio", "track", "navigation",
-                     "guidance", "daynight", "controls", "endroute", "calls", "speech", "voice", "none"}
+                     "guidance", "daynight", "controls", "endroute", "calls", "speech", "voice", "traffic", "weather",
+                     "none"}
              .contains(script)) {
         QTextStream(stderr) << "invalid --script\n";
         return 1;
@@ -1488,6 +1594,21 @@ int main(int argc, char** argv)
     }
     // P8.2: the voice script is the guidance drive with the voice toggle pressed on the way.
     const bool guidanceDrive = script == "guidance" || script == "voice";
+    // P9: the traffic script parks at the drive's first point, and drives it only when off.
+    const QString trafficMode = parser.value(trafficModeOption);
+    if (!QStringList{"offer", "render", "closure", "off", "drive"}.contains(trafficMode)) {
+        QTextStream(stderr) << "invalid --traffic-mode\n";
+        return 1;
+    }
+    const bool offerStacked = parser.value(offerLayoutOption) == "stacked";
+    if (!QStringList{"side-by-side", "stacked"}.contains(parser.value(offerLayoutOption))) {
+        QTextStream(stderr) << "invalid --offer-layout\n";
+        return 1;
+    }
+    if (script == "traffic" && (trackPath.empty() || !projection)) {
+        QTextStream(stderr) << "--script traffic needs --projection and --track-file\n";
+        return 1;
+    }
     if (guidanceDrive && trackPath.empty()) {
         QTextStream(stderr) << "--script " << script << " needs --track-file\n";
         return 1;
@@ -1552,7 +1673,18 @@ int main(int argc, char** argv)
         QTextStream(stderr) << "invalid --call-controls\n";
         return 1;
     }
-    if ((script == "calls" || script == "speech") && !projection) {
+    // P10.
+    const QString weatherMode = parser.value(weatherModeOption);
+    if (!QStringList{"show", "tap", "alert", "stale", "unsupported", "off", "notifier"}.contains(weatherMode)) {
+        QTextStream(stderr) << "invalid --weather-mode\n";
+        return 1;
+    }
+    const QString weatherDir = parser.value(weatherDirOption);
+    if (script == "weather" && weatherDir.isEmpty()) {
+        QTextStream(stderr) << "--script weather needs --weather-dir\n";
+        return 1;
+    }
+    if ((script == "calls" || script == "speech" || script == "weather") && !projection) {
         QTextStream(stderr) << "--script " << script << " needs --projection\n";
         return 1;
     }
@@ -1577,7 +1709,7 @@ int main(int argc, char** argv)
     caps.mediaInfo = parser.isSet(mediaInfoOption) || script == "transport";
     caps.audio = parser.isSet(audioOption) || script == "audio";
     caps.navigation = parser.isSet(navigationOption) || script == "navigation" || guidanceDrive
-                      || script == "endroute";
+                      || script == "endroute" || script == "traffic";
     caps.navigationCluster = parser.value(navigationClusterOption) == "start";
     if (!QStringList{"start", "none"}.contains(parser.value(navigationClusterOption))) {
         QTextStream(stderr) << "invalid --navigation-cluster\n";
@@ -1693,6 +1825,11 @@ int main(int argc, char** argv)
         QTextStream(stderr) << "cannot write --video-out\n";
         return 1;
     }
+    QFile etaOut(parser.value(etaOutOption));
+    if (!parser.value(etaOutOption).isEmpty() && !etaOut.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QTextStream(stderr) << "cannot write --eta-out\n";
+        return 1;
+    }
     QFile audioOut(parser.value(audioOutOption));
     if (!parser.value(audioOutOption).isEmpty() && !audioOut.open(QIODevice::WriteOnly)) {
         QTextStream(stderr) << "cannot write --audio-out\n";
@@ -1711,7 +1848,7 @@ int main(int argc, char** argv)
         // against, and the guidance script when the source has a route on the cluster;
         // every other use of --track has nothing watching, so it pulls away on its own
         // rather than sitting at the kerb for the whole run in silence.
-        if (script != "track" && !guidanceDrive) {
+        if (script != "track" && !guidanceDrive && script != "traffic") {
             QTimer::singleShot(TRACK_KERB_MS, &app, [&]() { trackPlayer->depart(); });
         }
     }
@@ -1748,6 +1885,11 @@ int main(int argc, char** argv)
     qint64 navTimeToStep = -1, navTimeToArrival = -1;
     int navLanes = 0, navDestinations = 0;
     bool navEtaString = false;
+    // P9.4: the cluster's time to the destination as it changed, with the first rise and the
+    // largest one while the cluster's state held, which is live traffic's delay arriving.
+    qint64 etaLast = -1;
+    int etaStates = -1;
+    qint64 etaFirstRiseFrom = -1, etaFirstRiseTo = -1, etaMaxRise = 0;
     // P6.5: the drive, as the cluster was told it. Each maneuver as it changed (two
     // like maneuvers in a row read as one, since only a change is seen); the countdown
     // compared message to message while one maneuver holds; and where the drive was.
@@ -1911,6 +2053,25 @@ int main(int argc, char** argv)
                             if (destination.hasEstimatedTimeOfArrival)
                                 navEtaString = true;
                         }
+                        if (navTimeToArrival >= 0 && navTimeToArrival != etaLast) {
+                            if (etaOut.isOpen()) {
+                                etaOut.write(QString("%1 %2 %3\n").arg(QDateTime::currentMSecsSinceEpoch())
+                                                 .arg(navTimeToArrival).arg(navStates.join(',')).toUtf8());
+                                etaOut.flush();
+                            }
+                            // A rise of more than a minute with the state unchanged is not the
+                            // countdown: it is a delay added to the same route.
+                            if (etaLast >= 0 && etaStates == navStates.size()) {
+                                const qint64 rise = navTimeToArrival - etaLast;
+                                if (rise > 60 && etaFirstRiseFrom < 0) {
+                                    etaFirstRiseFrom = etaLast;
+                                    etaFirstRiseTo = navTimeToArrival;
+                                }
+                                etaMaxRise = std::max(etaMaxRise, rise);
+                            }
+                            etaLast = navTimeToArrival;
+                            etaStates = navStates.size();
+                        }
                     });
             }
             if (caps.mediaInfo) {
@@ -2018,7 +2179,7 @@ int main(int argc, char** argv)
     const qint64 NAV_SILENCE_MS = 12000;
     QElapsedTimer navSilence;
     // P6.1. Where the two panes are, and what counts as one of them having moved.
-    const DashboardPane pane = DashboardPane::of(caps.layout(), caps.mapOnLeft);
+    const DashboardPane pane = DashboardPane::of(caps.layout(), caps.mapOnLeft, offerStacked);
     QByteArray mapBefore, tilesBefore;
     double trackMark = 0.0;
     int trackSettleTries = 0;
@@ -2304,6 +2465,216 @@ int main(int argc, char** argv)
     };
     double controlBeforeMean = 0.0;
     int controlSettleTries = 0;
+    // P9 (the traffic script). Colours are judged in YUV off the decoded picture: amber
+    // (TrafficLines.SLOW_COLOUR, #F59A00: U about 48, V 179) is further from every colour
+    // of both map themes than anything else it draws, so it is the one counted for the
+    // route line changing colour; the queuing red (#F2362B) sits near the night theme's
+    // motorway red and is only reported. The closure's dark red (#7A0A0A: Y 54, V 177) is
+    // counted while the closure is on the route. The offer is up when Take is filled with
+    // the palette's accent (#1D64C0 by day, #4E9AF1 at night: U about 178, V 90) and Keep
+    // is not, which no map colour and no other state of the card produces.
+    auto amberPixel = [](int, int u, int v) { return u < 75 && v > 155; };
+    auto redPixel = [](int y, int u, int v) { return v >= 200 && u <= 110 && y >= 80 && y <= 145; };
+    auto closedPixel = [](int y, int u, int v) { return y < 70 && v >= 160 && u >= 95 && u <= 125; };
+    auto accentPixel = [](int, int u, int v) { return u >= 150 && v >= 65 && v <= 115; };
+    auto inPane = [&](const DashboardPane::Rect& r, auto test) { return decoder.count(r.x, r.y, r.width, r.height, test); };
+    auto accentShare = [&](const DashboardPane::Rect& b) {
+        const int x = b.x + std::max(2, b.width / 10);
+        const int h = std::max(1, b.height / 2);
+        const int n = decoder.count(x, b.y + b.height / 4, 2, h, accentPixel);
+        return n < 0 ? -1.0 : n / (2.0 * h);
+    };
+    auto offerUp = [&]() {
+        const double keep = accentShare(pane.offerKeep);
+        return accentShare(pane.offerTake) >= 0.9 && keep >= 0.0 && keep < 0.2;
+    };
+    auto trafficPress = [&](const DashboardPane::Rect& b, const char* what) {
+        const QPoint at(b.x + b.width / 2, b.y + b.height / 2);
+        const QPoint touchPoint = caps.toTouch(at);
+        const oaa::hu::InputChannelHandler::Pointer pointer{touchPoint.x(), touchPoint.y(), 0};
+        input->sendTouchIndication(1, &pointer, 0, 0, uptime.elapsed() * 1000);
+        input->sendTouchIndication(1, &pointer, 0, 1, uptime.elapsed() * 1000 + 1);
+        ++taps;
+        out << "receiver_traffic=press " << what << " frame=" << at.x() << "," << at.y() << " touch=" << touchPoint.x()
+            << "," << touchPoint.y() << " picture=" << decoder.frames << "\n";
+        out.flush();
+    };
+    qint64 trafficDeadline = 0, trafficSampleAt = 0;
+    int trafficRouteStates = -1, trafficOffers = 0;
+    int trafficAmberBase = -1, trafficAmberMax = -1, trafficAmberMaxPicture = -1, trafficAmberFirstPicture = -1;
+    int trafficClosedBase = -1, trafficClosedMax = -1, trafficClosedMaxPicture = -1, trafficClosedAfter = -1;
+    int trafficReroutingAt = -1, trafficResumedAt = -1;
+    double trafficFit[2] = {-1.0, -1.0};
+    double trafficRefollow = -1.0;
+    bool trafficKeepWhole = false, trafficTakeWhole = false, trafficOtherPalette = false;
+    QByteArray trafficMapBefore, trafficOfferMap;
+    // How long the lab gives each wait: an offer needs a fetch and then the live
+    // alternatives' search with the no-go points, which a debug build runs ~30x slower.
+    const qint64 TRAFFIC_OFFER_MS = 15 * 60000, TRAFFIC_REROUTE_MS = 10 * 60000;
+    // The slow stretch's colour, in pixels of the map pane: a few hundred metres of a 9 px
+    // line at street zoom is a thousand or more; a hundred is well clear of noise.
+    const int TRAFFIC_AMBER_MIN = 300;
+    const int TRAFFIC_CLOSED_MIN = 100;
+    // P10 (the weather script, docs/p10-plan.md §8). The header's weather item and the flex
+    // tile, judged off the decoded picture. Warm is the glyph's sun (#D98200 by day, #FFC94D at
+    // night: U about 60, V 160-176) and an alert's orange (#FF8C00: U 50, V 189): nothing else
+    // in the header, an empty tile or a notification row is that colour. The second lab
+    // alert's dark red (#8B0000: Y 52, U 108, V 189) is counted apart. Ink is a column of the
+    // header with a pixel far from the header's own colour (its commonest luma), which is how
+    // the text's right end and the weather item's extent are found without knowing the font.
+    auto warmPixel = [](int, int u, int v) { return u < 100 && v > 145; };
+    auto darkRedPixel = [](int y, int u, int v) { return y < 75 && v >= 165 && u >= 95 && u <= 125; };
+    const Layout weatherContent = caps.layout();
+    const QPoint weatherItem(pane.headerWeather.x + pane.headerWeather.width / 2, pane.headerWeather.y + pane.headerWeather.height / 2);
+    const QPoint weatherTileCentre(pane.flexTile.x + pane.flexTile.width / 2, pane.flexTile.y + pane.flexTile.height / 2);
+    // The glyph's sun in the header item, and the big glyph (or an alert's bar) in the tile.
+    const int WEATHER_WARM_HEADER_MIN = 12, WEATHER_WARM_TILE_MIN = 40;
+    // A view opening or closing redraws most of the tile; a notification row is a few percent.
+    const double WEATHER_TILE_CHANGED = 0.10, WEATHER_NOTIFICATION_MIN = 0.015;
+    // The alert's warning mark on the glyph: about 1.4% of the item at 800x480.
+    const double WEATHER_MARK_MIN = 0.004;
+    const int WEATHER_INK = 40;
+    // The app closes an untouched view at 30 s (WeatherRules.VIEW_TIMEOUT_MS); the picture
+    // shows it a frame or two later.
+    const double WEATHER_TIMEOUT_MIN_S = 29.5, WEATHER_TIMEOUT_MAX_S = 33.0;
+    const qint64 WEATHER_NOTIFIER_MAX_MS = 2000;
+    struct HeaderInk {
+        int bg = -1, textRight = -1, itemLeft = -1, itemRight = -1, beyond = 0, textContrast = 0, itemContrast = 0;
+    };
+    auto headerInk = [&]() {
+        HeaderInk ink;
+        const DashboardPane::Rect& box = pane.headerWeather;
+        const int x0 = weatherContent.x, x1 = pane.pauseBox.x, w = x1 - x0;
+        const QByteArray strip = w > 0 ? decoder.luma(x0, box.y, w, box.height) : QByteArray();
+        if (strip.isEmpty())
+            return ink;
+        int histogram[256] = {0};
+        for (char c : strip)
+            ++histogram[static_cast<unsigned char>(c)];
+        ink.bg = static_cast<int>(std::max_element(histogram, histogram + 256) - histogram);
+        const auto* p = reinterpret_cast<const unsigned char*>(strip.constData());
+        for (int col = 0; col < w; ++col) {
+            int worst = 0;
+            for (int row = 0; row < box.height; ++row)
+                worst = std::max(worst, std::abs(static_cast<int>(p[row * w + col]) - ink.bg));
+            if (worst <= WEATHER_INK)
+                continue;
+            const int x = x0 + col;
+            if (x < box.x) {
+                ink.textRight = x;
+                ink.textContrast = std::max(ink.textContrast, worst);
+            } else if (x < box.x + box.width) {
+                if (ink.itemLeft < 0)
+                    ink.itemLeft = x;
+                ink.itemRight = x;
+                ink.itemContrast = std::max(ink.itemContrast, worst);
+            } else {
+                ++ink.beyond;
+            }
+        }
+        return ink;
+    };
+    auto weatherNight = [&]() { return !labSensors || labSensors->night(); };
+    // One line about the header: where the text ends, where the item's ink is, and how
+    // many clear columns lie between the text and the item's box.
+    auto weatherHeaderLine = [&](const QString& label) {
+        const HeaderInk ink = headerInk();
+        const DashboardPane::Rect& box = pane.headerWeather;
+        const int clear = ink.textRight < 0 ? box.x - weatherContent.x : box.x - 1 - ink.textRight;
+        out << "receiver_weather=header " << label << " picture=" << decoder.frames << " night=" << (weatherNight() ? "true" : "false")
+            << " box=" << box.x << "," << box.y << "+" << box.width << "x" << box.height << " pause_x=" << pane.pauseBox.x
+            << " bg=" << ink.bg << " text_right=" << ink.textRight << " clear=" << clear << " item=" << ink.itemLeft << ".."
+            << ink.itemRight << " beyond=" << ink.beyond << " text_contrast=" << ink.textContrast << " item_contrast="
+            << ink.itemContrast << " warm=" << inPane(box, warmPixel) << "\n";
+        out.flush();
+        return clear;
+    };
+    auto weatherRender = [&](const QString& what) {
+        out << "receiver_weather=render " << what << "-" << (weatherNight() ? "night" : "day") << " picture=" << decoder.frames << "\n";
+        out.flush();
+    };
+    auto weatherPalette = [&]() {
+        if (!labSensors)
+            return;
+        check(labSensors->sendNight(!labSensors->night()), "NIGHT_DATA could not be sent for the other palette");
+        out << "receiver_weather=palette night=" << (labSensors->night() ? "true" : "false") << "\n";
+        out.flush();
+    };
+    // The hand-offs with the lab (tools/emulator-lab.sh): the receiver says what it has seen,
+    // and waits for what the lab has done; each line is a word and epoch milliseconds.
+    auto weatherTell = [&](const QString& word) {
+        QFile file(weatherDir + "/weather-receiver.txt");
+        if (file.open(QIODevice::Append | QIODevice::Text)) {
+            file.write(QString("%1 %2\n").arg(word).arg(QDateTime::currentMSecsSinceEpoch()).toUtf8());
+            file.close();
+        }
+        out << "receiver_weather=told " << word << " picture=" << decoder.frames << "\n";
+        out.flush();
+    };
+    auto weatherHeard = [&](const QString& word) -> qint64 {
+        QFile file(weatherDir + "/weather-lab.txt");
+        if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+            return -1;
+        const QStringList lines = QString::fromUtf8(file.readAll()).split('\n');
+        for (const QString& line : lines) {
+            const QStringList parts = line.trimmed().split(' ');
+            if (!parts.isEmpty() && parts[0] == word)
+                return parts.size() > 1 ? parts[1].toLongLong() : 0;
+        }
+        return -1;
+    };
+    auto weatherPress = [&](QPoint at, const char* what) {
+        const QPoint touchPoint = caps.toTouch(at);
+        const oaa::hu::InputChannelHandler::Pointer pointer{touchPoint.x(), touchPoint.y(), 0};
+        input->sendTouchIndication(1, &pointer, 0, 0, uptime.elapsed() * 1000);
+        input->sendTouchIndication(1, &pointer, 0, 1, uptime.elapsed() * 1000 + 1);
+        ++taps;
+        out << "receiver_weather=press " << what << " frame=" << at.x() << "," << at.y() << " touch=" << touchPoint.x() << ","
+            << touchPoint.y() << " picture=" << decoder.frames << "\n";
+        out.flush();
+    };
+    // Waits for [ok] or the deadline; then says and checks it. False while still waiting.
+    QStringList weatherResults;
+    auto weatherWait = [&](bool ok, const QString& what, const QString& detail) {
+        if (!ok && uptime.elapsed() < stepDeadline)
+            return false;
+        out << "receiver_weather=" << what << " " << (ok ? "ok" : "FAILED") << " picture=" << decoder.frames << " " << detail << "\n";
+        out.flush();
+        weatherResults << QString("%1=%2").arg(what, ok ? "ok" : "failed");
+        check(ok, QString("weather: %1 (%2)").arg(what, detail));
+        return true;
+    };
+    // The show, tap and notifier views carry the fixture's partly cloudy glyph; the stale
+    // one is cloudy and the unsupported one a status line, so only the tile's change counts.
+    const bool weatherWarmView = weatherMode == "show" || weatherMode == "tap" || weatherMode == "notifier";
+    // A view that is only a status line (unsupported) changes about 6% of the tile.
+    const double weatherViewChanged = weatherMode == "unsupported" ? 0.03 : WEATHER_TILE_CHANGED;
+    QByteArray weatherTileRef, weatherTileOpen, weatherHeaderRef, weatherNotificationTile;
+    qint64 weatherSettleAt = -1, weatherPressedAt = -1, weatherNotifiedAt = -1;
+    double weatherTimeoutS = -1.0, weatherHeaderMark = -1.0;
+    qint64 weatherNotifierMs = -1;
+    int weatherOpens = 0;
+    auto weatherTileDetail = [&](const QByteArray& from) {
+        return QString("changed=%1 warm=%2 dark_red=%3")
+            .arg(changedFraction(from, paneLuma(pane.flexTile), TRACK_LUMA_THRESHOLD), 0, 'f', 3)
+            .arg(inPane(pane.flexTile, warmPixel))
+            .arg(inPane(pane.flexTile, darkRedPixel));
+    };
+    auto weatherIsOpen = [&]() {
+        return changedFraction(weatherTileRef, paneLuma(pane.flexTile), TRACK_LUMA_THRESHOLD) >= weatherViewChanged
+               && (!weatherWarmView || inPane(pane.flexTile, warmPixel) >= WEATHER_WARM_TILE_MIN);
+    };
+    auto weatherIsClosed = [&]() {
+        return changedFraction(weatherTileOpen, paneLuma(pane.flexTile), TRACK_LUMA_THRESHOLD) >= weatherViewChanged
+               && (!weatherWarmView || inPane(pane.flexTile, warmPixel) < WEATHER_WARM_TILE_MIN / 4);
+    };
+    if (projection && script == "weather") {
+        out << "receiver_weather=layout mode=" << weatherMode << " item=" << pane.headerWeather.x << "," << pane.headerWeather.y
+            << "+" << pane.headerWeather.width << "x" << pane.headerWeather.height << " pause=" << pane.pauseBox.x << ","
+            << pane.pauseBox.y << "+" << pane.pauseBox.width << "x" << pane.pauseBox.height << " flex=" << pane.flexTile.x << ","
+            << pane.flexTile.y << "+" << pane.flexTile.width << "x" << pane.flexTile.height << "\n";
+        out.flush();
+    }
     if (projection && script != "none") {
         QObject::connect(&scriptTimer, &QTimer::timeout, &app, [&]() {
             if (!video || !input || decoder.frames == 0)
@@ -2336,6 +2707,10 @@ int main(int argc, char** argv)
                 base = 1200;
             else if (script == "voice")
                 base = 1300;
+            else if (script == "traffic")
+                base = 1400;
+            else if (script == "weather")
+                base = 1500;
             switch (step + base) {
             case 0:
             case 2:
@@ -3263,6 +3638,626 @@ int main(int argc, char** argv)
                 ++step;
                 break;
             }
+            // P9 (plan §8). Parked at the drive's first point until the source has put the
+            // route on the cluster, then by --traffic-mode: offer waits for the divided turn
+            // card, frames it in the other palette and back (the renders for James), presses
+            // Keep, waits for the next offer (the lab has made the queue heavier meanwhile) and
+            // presses Take; closure watches the cluster re-route round the closure the lab has
+            // moved onto the route, and the closure's colour in the map before it; off drives
+            // the drive, and the source must fetch nothing. The app's report, the stand-in
+            // server's counts and tools/emulator-lab.sh say the rest.
+            case 1400: {
+                if (!navigation || !trackPlayer || !labSensors || !navStates.contains("1"))
+                    return;
+                if (stepDeadline == 0) {
+                    // Three seconds for the card, the trip panel and the route line to settle.
+                    stepDeadline = uptime.elapsed() + 3000;
+                    return;
+                }
+                if (uptime.elapsed() < stepDeadline)
+                    return;
+                trafficRouteStates = navStates.size();
+                trafficAmberBase = inPane(pane.mapFull, amberPixel);
+                trafficClosedBase = inPane(pane.mapFull, closedPixel);
+                trafficMapBefore = paneLuma(pane.offerView);
+                out << "receiver_traffic=route mode=" << trafficMode << " layout=" << (offerStacked ? "stacked" : "side-by-side")
+                    << " picture=" << decoder.frames << " amber=" << trafficAmberBase << " red=" << inPane(pane.mapFull, redPixel)
+                    << " closed=" << trafficClosedBase << " eta_s=" << navTimeToArrival << " states=" << navStates.join(',')
+                    << " take=" << pane.offerTake.x << "," << pane.offerTake.y << "+" << pane.offerTake.width << "x"
+                    << pane.offerTake.height << " keep=" << pane.offerKeep.x << "," << pane.offerKeep.y << "+"
+                    << pane.offerKeep.width << "x" << pane.offerKeep.height << "\n";
+                out.flush();
+                if (trafficMode == "off") {
+                    trackPlayer->depart();
+                    step = 50;
+                } else if (trafficMode == "drive") {
+                    // The lab turns traffic on 15 s after the route; the drive leaves once it has
+                    // had time to arrive, so the colours are ahead of the vehicle when it goes.
+                    stepDeadline = uptime.elapsed() + 30000;
+                    step = 60;
+                } else {
+                    trafficDeadline = uptime.elapsed() + (trafficMode == "closure" ? TRAFFIC_REROUTE_MS : TRAFFIC_OFFER_MS);
+                    step = trafficMode == "closure" ? 30 : 1;
+                }
+                break;
+            }
+            case 1401:
+            case 1406: {
+                // Waiting for an offer: the first, or the one after Keep. The amber is sampled
+                // once a second on the way, and the view the offer will reframe with it.
+                const qint64 now = uptime.elapsed();
+                const bool up = offerUp();
+                if (now >= trafficSampleAt) {
+                    trafficSampleAt = now + 1000;
+                    const int amber = inPane(pane.mapFull, amberPixel);
+                    if (amber > trafficAmberMax) {
+                        trafficAmberMax = amber;
+                        trafficAmberMaxPicture = decoder.frames;
+                    }
+                    if (trafficAmberFirstPicture < 0 && amber - std::max(0, trafficAmberBase) >= TRAFFIC_AMBER_MIN) {
+                        trafficAmberFirstPicture = decoder.frames;
+                        out << "receiver_traffic=amber picture=" << decoder.frames << " amber=" << amber
+                            << " eta_s=" << navTimeToArrival << "\n";
+                        out.flush();
+                    }
+                    if (!up)
+                        trafficMapBefore = paneLuma(pane.offerView);
+                }
+                if (up) {
+                    ++trafficOffers;
+                    out << "receiver_traffic=offer " << trafficOffers << " up picture=" << decoder.frames
+                        << " waited_s=" << (now - (trafficDeadline - TRAFFIC_OFFER_MS)) / 1000 << "\n";
+                    out.flush();
+                    // Four seconds for the fit's tiles and labels before it is measured.
+                    stepDeadline = now + 4000;
+                    ++step;
+                    break;
+                }
+                if (now > trafficDeadline) {
+                    check(false, QString("no traffic offer %1 appeared within %2 min").arg(trafficOffers + 1).arg(TRAFFIC_OFFER_MS / 60000));
+                    step = 99;
+                }
+                return;
+            }
+            case 1402:
+            case 1407: {
+                const qint64 now = uptime.elapsed();
+                if (now < stepDeadline)
+                    return;
+                const int index = step == 2 ? 0 : 1;
+                trafficFit[index] = changedFraction(trafficMapBefore, paneLuma(pane.offerView), TRACK_LUMA_THRESHOLD);
+                out << "receiver_traffic=offer " << (index + 1) << " framed picture=" << decoder.frames
+                    << " fit_changed=" << trafficFit[index] << " amber=" << inPane(pane.mapFull, amberPixel)
+                    << " red=" << inPane(pane.mapFull, redPixel) << " closed=" << inPane(pane.mapFull, closedPixel)
+                    << " night=" << (labSensors->night() ? "true" : "false") << " still_up=" << (offerUp() ? "true" : "false") << "\n";
+                out.flush();
+                if (index == 1) {
+                    // The second offer: Take it.
+                    trafficPress(pane.offerTake, "take");
+                    stepDeadline = now + 8000;
+                    step = 8;
+                    break;
+                }
+                // P9.6's renders: the same card in the other palette, then back.
+                check(labSensors->sendNight(!labSensors->night()), "NIGHT_DATA could not be sent for the other palette");
+                out << "receiver_traffic=palette night=" << (labSensors->night() ? "true" : "false") << "\n";
+                stepDeadline = now + 8000;
+                ++step;
+                break;
+            }
+            case 1403: {
+                const qint64 now = uptime.elapsed();
+                if (now < stepDeadline)
+                    return;
+                trafficOtherPalette = offerUp();
+                out << "receiver_traffic=offer 1 other palette picture=" << decoder.frames << " night="
+                    << (labSensors->night() ? "true" : "false") << " still_up=" << (trafficOtherPalette ? "true" : "false") << "\n";
+                check(labSensors->sendNight(!labSensors->night()), "NIGHT_DATA could not be sent back");
+                out << "receiver_traffic=palette night=" << (labSensors->night() ? "true" : "false") << "\n";
+                out.flush();
+                stepDeadline = now + 8000;
+                ++step;
+                break;
+            }
+            case 1404: {
+                const qint64 now = uptime.elapsed();
+                if (now < stepDeadline)
+                    return;
+                trafficOfferMap = paneLuma(pane.offerView);
+                out << "receiver_traffic=offer 1 back picture=" << decoder.frames << " still_up=" << (offerUp() ? "true" : "false") << "\n";
+                trafficPress(pane.offerKeep, "keep");
+                stepDeadline = now + 8000;
+                ++step;
+                break;
+            }
+            case 1405: {
+                // Keep: the card whole again at once, and the map back on the vehicle.
+                const qint64 now = uptime.elapsed();
+                trafficKeepWhole = !offerUp();
+                trafficRefollow = changedFraction(trafficOfferMap, paneLuma(pane.offerView), TRACK_LUMA_THRESHOLD);
+                if (!(trafficKeepWhole && trafficRefollow >= TRACK_MOVED_MIN) && now < stepDeadline)
+                    return;
+                out << "receiver_traffic=kept picture=" << decoder.frames << " whole=" << (trafficKeepWhole ? "true" : "false")
+                    << " map_changed=" << trafficRefollow << "\n";
+                out.flush();
+                if (trafficMode == "render") {
+                    // The renders need no second offer: a few seconds of the card whole again.
+                    stepDeadline = now + 5000;
+                    step = 9;
+                    break;
+                }
+                trafficDeadline = now + TRAFFIC_OFFER_MS;
+                trafficSampleAt = 0;
+                ++step;
+                break;
+            }
+            case 1408: {
+                const qint64 now = uptime.elapsed();
+                trafficTakeWhole = !offerUp();
+                if (!trafficTakeWhole && now < stepDeadline)
+                    return;
+                out << "receiver_traffic=taken picture=" << decoder.frames << " whole=" << (trafficTakeWhole ? "true" : "false")
+                    << " states=" << navStates.join(',') << "\n";
+                out.flush();
+                // Time for the route through the offer's via point to be computed and followed.
+                stepDeadline = now + 30000;
+                ++step;
+                break;
+            }
+            case 1409: {
+                if (uptime.elapsed() < stepDeadline)
+                    return;
+                step = 99;
+                break;
+            }
+            case 1430:
+            case 1431:
+            case 1432: {
+                // Closure: sampled at every tick until the new route is followed, since the
+                // closure is on the route only between its match and the re-route's answer.
+                const qint64 now = uptime.elapsed();
+                if (step < 32 || now >= trafficSampleAt) {
+                    trafficSampleAt = now + 1000;
+                    const int closed = inPane(pane.mapFull, closedPixel);
+                    if (step < 32 && closed > trafficClosedMax) {
+                        trafficClosedMax = closed;
+                        trafficClosedMaxPicture = decoder.frames;
+                    }
+                    if (step == 32)
+                        trafficClosedAfter = closed;
+                }
+                if (step == 30) {
+                    const int at = navStates.indexOf("3", std::max(trafficRouteStates, 0));
+                    if (at >= 0) {
+                        trafficReroutingAt = at;
+                        out << "receiver_traffic=rerouting picture=" << decoder.frames << " states=" << navStates.join(',')
+                            << " closed_max=" << trafficClosedMax << "@" << trafficClosedMaxPicture << "\n";
+                        out.flush();
+                        ++step;
+                    } else if (now > trafficDeadline) {
+                        check(false, QString("the cluster never heard REROUTING within %1 min").arg(TRAFFIC_REROUTE_MS / 60000));
+                        step = 99;
+                    }
+                    return;
+                }
+                if (step == 31) {
+                    const int at = navStates.indexOf("1", trafficReroutingAt);
+                    if (at >= 0) {
+                        trafficResumedAt = at;
+                        out << "receiver_traffic=rerouted picture=" << decoder.frames << " states=" << navStates.join(',') << "\n";
+                        out.flush();
+                        // Long enough for the lab to turn traffic off and watch for requests.
+                        stepDeadline = now + 60000;
+                        ++step;
+                    } else if (now > trafficDeadline) {
+                        check(false, "no new route became active after the closure's REROUTING");
+                        step = 99;
+                    }
+                    return;
+                }
+                if (now < stepDeadline)
+                    return;
+                step = 99;
+                break;
+            }
+            case 1460: {
+                if (uptime.elapsed() < stepDeadline)
+                    return;
+                trackPlayer->depart();
+                out << "receiver_traffic=departed picture=" << decoder.frames << " amber=" << inPane(pane.mapFull, amberPixel)
+                    << " eta_s=" << navTimeToArrival << "\n";
+                out.flush();
+                step = 50;
+                break;
+            }
+            case 1450: {
+                if (trafficMode == "drive" && uptime.elapsed() >= trafficSampleAt) {
+                    trafficSampleAt = uptime.elapsed() + 1000;
+                    const int amber = inPane(pane.mapFull, amberPixel);
+                    if (amber > trafficAmberMax) {
+                        trafficAmberMax = amber;
+                        trafficAmberMaxPicture = decoder.frames;
+                    }
+                }
+                if (!trackPlayer->finished())
+                    return;
+                out << "receiver_traffic=drove travelled_m=" << qRound(trackPlayer->travelled()) << " states=" << navStates.join(',') << "\n";
+                out.flush();
+                stepDeadline = uptime.elapsed() + 5000;
+                ++step;
+                break;
+            }
+            case 1451: {
+                if (uptime.elapsed() < stepDeadline)
+                    return;
+                step = 99;
+                break;
+            }
+            // P10 (plan §8). The weather script: the header's weather item, found drawn (or,
+            // off, not) once the first read is in, then by --weather-mode. show, stale and
+            // unsupported open the view, frame it in both palettes for the renders and close it
+            // with a second press; tap closes it each of the three ways and then presses it
+            // during a call; alert waits for a notification, then for the lab's alert over it,
+            // and dismisses both alerts; off presses where the item would be; notifier times the
+            // temperature against the lab's notifier. The app's report, the stand-in's query log
+            // and tools/emulator-lab.sh say the rest.
+            case 1500: {
+                const qint64 now = uptime.elapsed();
+                if (stepDeadline == 0) {
+                    stepDeadline = now + 90000;
+                    // Off and unsupported have nothing to wait for; stale waits for the lab's read.
+                    weatherSettleAt = weatherMode == "stale" ? -1 : now + (weatherMode == "off" || weatherMode == "unsupported" ? 10000 : 3000);
+                    return;
+                }
+                if (weatherMode == "stale" && weatherSettleAt < 0 && weatherHeard("cued") >= 0)
+                    weatherSettleAt = now + 4000;
+                const int warm = inPane(pane.headerWeather, warmPixel);
+                const bool settled = weatherSettleAt >= 0 && now >= weatherSettleAt;
+                const bool drawn = weatherMode == "off" || weatherMode == "stale" || weatherMode == "unsupported"
+                                       ? settled
+                                       : settled && warm >= WEATHER_WARM_HEADER_MIN;
+                if (!drawn && now < stepDeadline)
+                    return;
+                const int clear = weatherHeaderLine("first");
+                if (weatherMode == "off") {
+                    check(warm <= 2, QString("with weather off the header has %1 warm pixels where the item would be").arg(warm));
+                } else {
+                    check(drawn, QString("the header's weather item was not drawn within 90 s (%1 warm pixels)").arg(warm));
+                    // Plan §5.1: the text never runs into the item.
+                    check(clear >= 2, QString("the header text ends %1 px from the weather item").arg(clear));
+                }
+                weatherHeaderRef = paneLuma(pane.headerWeather);
+                weatherTileRef = paneLuma(pane.flexTile);
+                weatherTell("shown");
+                if (weatherMode == "tap") {
+                    step = 20;
+                } else if (weatherMode == "alert") {
+                    step = 40;
+                } else if (weatherMode == "off") {
+                    step = 60;
+                } else if (weatherMode == "notifier") {
+                    step = 70;
+                } else {
+                    step = 1;
+                }
+                stepDeadline = now + (weatherMode == "alert" ? 90000 : weatherMode == "notifier" ? 90000 : 2000);
+                break;
+            }
+            // show, stale, unsupported.
+            case 1501:
+            case 1520:
+            case 1524:
+            case 1528:
+            case 1531: {
+                const qint64 now = uptime.elapsed();
+                if (now < stepDeadline)
+                    return;
+                weatherTileRef = paneLuma(pane.flexTile);
+                weatherPressedAt = now;
+                weatherPress(weatherItem, "open");
+                stepDeadline = now + TAP_DEADLINE_MS;
+                ++step;
+                break;
+            }
+            case 1502:
+            case 1521:
+            case 1525:
+            case 1529:
+            case 1532: {
+                const bool open = weatherIsOpen();
+                if (!weatherWait(open, QString("opened-%1").arg(weatherOpens + 1), weatherTileDetail(weatherTileRef)))
+                    return;
+                ++weatherOpens;
+                weatherTileOpen = paneLuma(pane.flexTile);
+                const qint64 now = uptime.elapsed();
+                if (step == 29) {
+                    // Untouched from here: the app closes it at 30 s.
+                    stepDeadline = weatherPressedAt + 45000;
+                } else if (step == 32) {
+                    weatherTell("call");
+                    stepDeadline = now + 120000;
+                } else {
+                    stepDeadline = now + (step == 2 ? 3000 : 2000);
+                }
+                ++step;
+                break;
+            }
+            case 1503:
+            case 1504: {
+                const qint64 now = uptime.elapsed();
+                if (now < stepDeadline)
+                    return;
+                weatherRender(weatherMode + "-view");
+                weatherHeaderLine(step == 3 ? "view" : "view-other-palette");
+                weatherPalette();
+                stepDeadline = now + (step == 3 ? 8000 : 5000);
+                ++step;
+                break;
+            }
+            case 1505:
+            case 1522:
+            case 1526: {
+                const qint64 now = uptime.elapsed();
+                if (now < stepDeadline)
+                    return;
+                weatherTileOpen = paneLuma(pane.flexTile);
+                if (step == 26)
+                    weatherPress(weatherTileCentre, "view");
+                else
+                    weatherPress(weatherItem, "close");
+                stepDeadline = now + TAP_DEADLINE_MS;
+                ++step;
+                break;
+            }
+            case 1506:
+            case 1523:
+            case 1527: {
+                const bool closed = weatherIsClosed();
+                const char* what = step == 27 ? "closed-by-view-tap" : "closed-by-second-tap";
+                if (!weatherWait(closed, what, weatherTileDetail(weatherTileOpen)))
+                    return;
+                stepDeadline = uptime.elapsed() + (step == 6 ? 3000 : 2000);
+                ++step;
+                break;
+            }
+            case 1507:
+                if (uptime.elapsed() < stepDeadline)
+                    return;
+                step = 99;
+                break;
+            // tap: the untouched view closes by itself.
+            case 1530: {
+                const qint64 now = uptime.elapsed();
+                const bool closed = weatherIsClosed();
+                weatherTimeoutS = (now - weatherPressedAt) / 1000.0;
+                if (!weatherWait(closed, "closed-by-timeout", weatherTileDetail(weatherTileOpen) + QString(" after_s=%1").arg(weatherTimeoutS)))
+                    return;
+                check(closed && weatherTimeoutS >= WEATHER_TIMEOUT_MIN_S && weatherTimeoutS <= WEATHER_TIMEOUT_MAX_S,
+                      QString("the untouched view closed %1 s after it was opened").arg(weatherTimeoutS));
+                stepDeadline = now + 2000;
+                ++step;
+                break;
+            }
+            // tap: the lab's modem call rings over the open view; a press is then ignored.
+            case 1533: {
+                const bool ringing = answerGreen();
+                if (!weatherWait(ringing, "call-ringing", weatherTileDetail(weatherTileOpen)))
+                    return;
+                const int warm = inPane(pane.flexTile, warmPixel);
+                check(!ringing || warm < WEATHER_WARM_TILE_MIN / 4, QString("the weather view stayed over the ringing call: %1 warm").arg(warm));
+                stepDeadline = uptime.elapsed() + 2000;
+                step = ringing ? 34 : 99;
+                break;
+            }
+            case 1534: {
+                const qint64 now = uptime.elapsed();
+                if (now < stepDeadline)
+                    return;
+                weatherTileRef = paneLuma(pane.flexTile);
+                weatherPress(weatherItem, "in-call");
+                stepDeadline = now + 3000;
+                ++step;
+                break;
+            }
+            case 1535: {
+                const qint64 now = uptime.elapsed();
+                if (now < stepDeadline)
+                    return;
+                const int warm = inPane(pane.flexTile, warmPixel);
+                const bool ignored = answerGreen() && warm < WEATHER_WARM_TILE_MIN / 4;
+                weatherWait(ignored, "in-call-press-ignored", weatherTileDetail(weatherTileRef));
+                weatherRender("tap-in-call");
+                weatherTell("tapped");
+                stepDeadline = now + 90000;
+                ++step;
+                break;
+            }
+            case 1536: {
+                const bool gone = !answerGreen();
+                if (!weatherWait(gone, "call-gone", weatherTileDetail(weatherTileRef)))
+                    return;
+                stepDeadline = uptime.elapsed() + 6000;
+                ++step;
+                break;
+            }
+            case 1537: {
+                if (uptime.elapsed() < stepDeadline)
+                    return;
+                const int warm = inPane(pane.flexTile, warmPixel);
+                weatherWait(warm < WEATHER_WARM_TILE_MIN / 4, "view-not-back-after-call", weatherTileDetail(weatherTileOpen));
+                step = 99;
+                break;
+            }
+            // alert: the lab player's notification in the tile, then the lab's alert over it.
+            case 1540: {
+                const bool arrived = changedFraction(weatherTileRef, paneLuma(pane.flexTile), TRACK_LUMA_THRESHOLD) >= WEATHER_NOTIFICATION_MIN;
+                if (!weatherWait(arrived, "notification-arrived", weatherTileDetail(weatherTileRef)))
+                    return;
+                stepDeadline = uptime.elapsed() + 3000;
+                ++step;
+                break;
+            }
+            case 1541: {
+                const qint64 now = uptime.elapsed();
+                if (now < stepDeadline)
+                    return;
+                weatherNotificationTile = paneLuma(pane.flexTile);
+                weatherHeaderRef = paneLuma(pane.headerWeather);
+                weatherRender("alert-before");
+                weatherHeaderLine("before-alert");
+                weatherTell("notification");
+                stepDeadline = now + 90000;
+                ++step;
+                break;
+            }
+            case 1542: {
+                const bool shown = changedFraction(weatherNotificationTile, paneLuma(pane.flexTile), TRACK_LUMA_THRESHOLD) >= WEATHER_TILE_CHANGED
+                                   && inPane(pane.flexTile, warmPixel) >= WEATHER_WARM_TILE_MIN;
+                if (!weatherWait(shown, "alert-took-the-tile", weatherTileDetail(weatherNotificationTile)))
+                    return;
+                stepDeadline = uptime.elapsed() + 3000;
+                step = shown ? 43 : 99;
+                break;
+            }
+            case 1543:
+            case 1544: {
+                const qint64 now = uptime.elapsed();
+                if (now < stepDeadline)
+                    return;
+                if (step == 43) {
+                    // Same palette as the reference: the glyph's warning mark.
+                    weatherHeaderMark = changedFraction(weatherHeaderRef, paneLuma(pane.headerWeather), TRACK_LUMA_THRESHOLD);
+                    weatherWait(weatherHeaderMark >= WEATHER_MARK_MIN, "header-warning-mark",
+                                QString("changed=%1 warm=%2").arg(weatherHeaderMark, 0, 'f', 4).arg(inPane(pane.headerWeather, warmPixel)));
+                }
+                weatherRender("alert");
+                weatherHeaderLine(step == 43 ? "alert" : "alert-other-palette");
+                weatherPalette();
+                stepDeadline = now + (step == 43 ? 8000 : 5000);
+                ++step;
+                break;
+            }
+            case 1545:
+            case 1547: {
+                const qint64 now = uptime.elapsed();
+                if (now < stepDeadline)
+                    return;
+                if (step == 47)
+                    weatherRender("alert-second");
+                weatherTileOpen = paneLuma(pane.flexTile);
+                weatherPress(weatherTileCentre, step == 45 ? "dismiss-1" : "dismiss-2");
+                stepDeadline = now + 6000;
+                ++step;
+                break;
+            }
+            case 1546: {
+                const QByteArray tile = paneLuma(pane.flexTile);
+                const bool second = changedFraction(weatherTileOpen, tile, TRACK_LUMA_THRESHOLD) >= 0.03
+                                    && changedFraction(weatherNotificationTile, tile, TRACK_LUMA_THRESHOLD) >= WEATHER_TILE_CHANGED
+                                    && inPane(pane.flexTile, darkRedPixel) >= WEATHER_WARM_TILE_MIN;
+                if (!weatherWait(second, "second-alert-shown", weatherTileDetail(weatherTileOpen)))
+                    return;
+                stepDeadline = uptime.elapsed() + 3000;
+                ++step;
+                break;
+            }
+            case 1548: {
+                const double fromNotification = changedFraction(weatherNotificationTile, paneLuma(pane.flexTile), TRACK_LUMA_THRESHOLD);
+                const bool back = fromNotification >= 0.0 && fromNotification < 0.05
+                                  && inPane(pane.flexTile, warmPixel) < WEATHER_WARM_TILE_MIN / 4
+                                  && inPane(pane.flexTile, darkRedPixel) < WEATHER_WARM_TILE_MIN / 4;
+                if (!weatherWait(back, "notification-back", weatherTileDetail(weatherNotificationTile)))
+                    return;
+                stepDeadline = uptime.elapsed() + 3000;
+                ++step;
+                break;
+            }
+            case 1549: {
+                if (uptime.elapsed() < stepDeadline)
+                    return;
+                // Dismissing takes the alert off the tile, not the mark off the header.
+                const double mark = changedFraction(weatherHeaderRef, paneLuma(pane.headerWeather), TRACK_LUMA_THRESHOLD);
+                weatherWait(mark >= WEATHER_MARK_MIN, "header-mark-stays", QString("changed=%1").arg(mark, 0, 'f', 4));
+                weatherRender("alert-dismissed");
+                step = 99;
+                break;
+            }
+            // off: a press where the item would be opens nothing; then the lab's cues.
+            case 1560: {
+                const qint64 now = uptime.elapsed();
+                if (now < stepDeadline)
+                    return;
+                weatherTileRef = paneLuma(pane.flexTile);
+                weatherRender("off");
+                weatherPress(weatherItem, "where-the-item-would-be");
+                stepDeadline = now + 4000;
+                ++step;
+                break;
+            }
+            case 1561: {
+                const qint64 now = uptime.elapsed();
+                if (now < stepDeadline)
+                    return;
+                const double changed = changedFraction(weatherTileRef, paneLuma(pane.flexTile), TRACK_LUMA_THRESHOLD);
+                weatherWait(changed >= 0.0 && changed < 0.02, "off-press-opened-nothing", weatherTileDetail(weatherTileRef));
+                weatherTell("off-pressed");
+                stepDeadline = now + 90000;
+                ++step;
+                break;
+            }
+            case 1562: {
+                const bool cued = weatherHeard("off-cued") >= 0;
+                if (!weatherWait(cued, "lab-cued-with-weather-off", ""))
+                    return;
+                stepDeadline = uptime.elapsed() + 5000;
+                ++step;
+                break;
+            }
+            case 1563: {
+                if (uptime.elapsed() < stepDeadline)
+                    return;
+                const int warm = inPane(pane.headerWeather, warmPixel);
+                weatherWait(warm <= 2, "still-no-item", QString("warm=%1").arg(warm));
+                weatherHeaderLine("off-after-cues");
+                step = 99;
+                break;
+            }
+            // notifier: the header's temperature, timed from the lab's broadcast.
+            case 1570: {
+                const qint64 at = weatherHeard("notified");
+                if (at < 0 && uptime.elapsed() < stepDeadline)
+                    return;
+                if (at < 0) {
+                    check(false, "the lab never sent the notifier");
+                    step = 99;
+                    break;
+                }
+                weatherNotifiedAt = at;
+                stepDeadline = uptime.elapsed() + 10000;
+                ++step;
+                break;
+            }
+            case 1571: {
+                const double changed = changedFraction(weatherHeaderRef, paneLuma(pane.headerWeather), TRACK_LUMA_THRESHOLD);
+                const bool moved = changed >= 0.02;
+                weatherNotifierMs = QDateTime::currentMSecsSinceEpoch() - weatherNotifiedAt;
+                if (!weatherWait(moved, "notifier-temperature",
+                                 QString("changed=%1 after_ms=%2").arg(changed, 0, 'f', 3).arg(weatherNotifierMs)))
+                    return;
+                check(moved && weatherNotifierMs <= WEATHER_NOTIFIER_MAX_MS,
+                      QString("the header showed the notifier's read %1 ms after the broadcast").arg(weatherNotifierMs));
+                stepDeadline = uptime.elapsed() + 2000;
+                ++step;
+                break;
+            }
+            case 1572: {
+                if (uptime.elapsed() < stepDeadline)
+                    return;
+                weatherRender("notifier");
+                weatherHeaderLine("after-notifier");
+                step = 99;
+                break;
+            }
             default:
                 scriptTimer.stop();
                 QTimer::singleShot(holdMs, &app, [&]() {
@@ -3370,6 +4365,51 @@ int main(int argc, char** argv)
                   QString("back on, the toggle differs by %1 from how it started").arg(voiceBackToOn));
             out << "receiver_voice=toggle off_changed=" << voiceOffChanged << " on_changed=" << voiceOnChanged
                 << " back_to_on=" << voiceBackToOn << " on_frame=" << voiceOnFrame << " off_frame=" << voiceOffFrame << "\n";
+        }
+        if (script == "traffic") {
+            // P9, from the receiver's side: what the picture and the cluster showed. The app's
+            // report and the stand-in's counts are checked by tools/emulator-lab.sh.
+            check(step >= 99, QString("the traffic script stopped at step %1").arg(step));
+            if (trafficMode == "offer" || trafficMode == "render") {
+                check(trafficAmberMax - std::max(0, trafficAmberBase) >= TRAFFIC_AMBER_MIN,
+                      QString("the route line never turned amber in the map pane: %1 pixels at most, %2 before")
+                          .arg(trafficAmberMax).arg(trafficAmberBase));
+                const int wanted = trafficMode == "offer" ? 2 : 1;
+                check(trafficOffers >= wanted, QString("%1 offers appeared on the turn card, not %2").arg(trafficOffers).arg(wanted));
+                check(trafficFit[0] >= TRACK_MOVED_MIN, QString("the map did not reframe for the first offer: %1").arg(trafficFit[0]));
+                check(trafficOtherPalette, "the offer was not on the card in the other palette");
+                check(trafficKeepWhole, "the card was not whole again after Keep");
+                check(trafficRefollow >= TRACK_MOVED_MIN, QString("the map did not go back to the vehicle after Keep: %1").arg(trafficRefollow));
+                check(trafficMode == "render" || trafficTakeWhole, "the card was not whole again after Take");
+                check(etaFirstRiseFrom >= 0, "the cluster's time to the destination never rose by traffic's delay");
+            } else if (trafficMode == "closure") {
+                check(trafficReroutingAt > 0 && trafficResumedAt > trafficReroutingAt,
+                      QString("the closure did not re-route on the cluster: states %1").arg(navStates.join(',')));
+                check(trafficClosedMax - std::max(0, trafficClosedBase) >= TRAFFIC_CLOSED_MIN,
+                      QString("the closure's colour never showed in the map pane: %1 pixels at most, %2 before")
+                          .arg(trafficClosedMax).arg(trafficClosedBase));
+            } else {
+                check(trackPlayer && trackPlayer->finished(), "the drive did not finish");
+                if (trafficMode == "drive")
+                    check(trafficAmberMax - std::max(0, trafficAmberBase) >= TRAFFIC_AMBER_MIN,
+                          QString("the route line never turned amber on the drive: %1 pixels at most, %2 before")
+                              .arg(trafficAmberMax).arg(trafficAmberBase));
+            }
+            out << "receiver_traffic=summary mode=" << trafficMode << " offers=" << trafficOffers << " amber=" << trafficAmberBase
+                << "->" << trafficAmberMax << "@" << trafficAmberMaxPicture << " first_amber_picture=" << trafficAmberFirstPicture
+                << " fit=" << trafficFit[0] << "," << trafficFit[1] << " refollow=" << trafficRefollow
+                << " keep_whole=" << (trafficKeepWhole ? "true" : "false") << " take_whole=" << (trafficTakeWhole ? "true" : "false")
+                << " closed=" << trafficClosedBase << "->" << trafficClosedMax << "@" << trafficClosedMaxPicture << "->" << trafficClosedAfter
+                << " eta_first_rise=" << etaFirstRiseFrom << "->" << etaFirstRiseTo << " eta_max_rise=" << etaMaxRise
+                << " states=" << navStates.join(',') << "\n";
+        }
+        if (script == "weather") {
+            // P10, from the receiver's side: what the header and the flex tile showed. The
+            // app's report and the stand-in's query log are checked by tools/emulator-lab.sh.
+            check(step >= 99, QString("the weather script stopped at step %1").arg(step));
+            out << "receiver_weather=summary mode=" << weatherMode << " opens=" << weatherOpens
+                << " timeout_s=" << weatherTimeoutS << " header_mark=" << weatherHeaderMark
+                << " notifier_ms=" << weatherNotifierMs << " " << weatherResults.join(' ') << "\n";
         }
         if (guidanceDrive && navigation) {
             // P6.5, from the receiver's own decode: the source put a route on the cluster,
@@ -3527,6 +4567,8 @@ int main(int argc, char** argv)
         videoOut.close();
     if (audioOut.isOpen())
         audioOut.close();
+    if (etaOut.isOpen())
+        etaOut.close();
     if (session)
         session->finalize();
     return failures > 0 ? 4 : status;

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- P9.1: Maps & routing → Live traffic (docs/p9-plan.md §3). A file of its own so the
+     P9 work does not share strings.xml's lines with other slices. -->
+<resources>
+    <string name="traffic_title">Live traffic</string>
+    <string name="traffic_caption">Traffic from HERE, with your own HERE API key, while a route is being followed. With this off, the app makes no network connection at all.</string>
+    <string name="traffic_switch">Use live traffic</string>
+    <string name="traffic_switch_help">Asks HERE for traffic on the road ahead while a route is followed on the truck\'s screen, to colour the route, add the delay to the arrival time and offer a faster way round. It needs your own HERE API key, saved below, before it can be turned on. The first time you turn it on, the phone shows exactly what it sends. Off, nothing is sent and nothing connects.</string>
+    <string name="traffic_disclosure_title">What live traffic sends</string>
+    <string name="traffic_disclosure">While a route is being followed, every 10 minutes (or as set), the rectangle around the next 30 km of the route, and your key. That shows HERE roughly where you are. HERE also sees your IP address and when you asked. It does not receive your destination or the route itself.</string>
+    <string name="traffic_terms">HERE\'s End User Terms: https://legal.here.com/us-en/terms/here-end-user-terms\nHERE\'s Privacy Policy: https://legal.here.com/us-en/privacy</string>
+    <string name="traffic_turn_on">Turn on</string>
+    <string name="traffic_key_label">HERE API key</string>
+    <string name="traffic_key_hint">Paste or type your key</string>
+    <string name="traffic_key_help">Your own key from HERE\'s platform account. It is kept only in this app\'s private storage on the phone, never backed up and never shown again once saved, and is sent only to HERE with each request. HERE bills the key\'s owner for use above its free allowance.</string>
+    <string name="traffic_key_save">Save key</string>
+    <string name="traffic_key_remove">Remove key</string>
+    <string name="traffic_key_saved">A key is saved.</string>
+    <string name="traffic_key_none">No key saved. Save one to turn live traffic on.</string>
+    <string name="traffic_key_invalid">That is not a key: it is empty, or has spaces in it.</string>
+    <string name="traffic_test">Test</string>
+    <string name="traffic_test_help">Makes one request to HERE, for incidents in a small fixed area of downtown Dallas that says nothing about where you are, and shows \"works\" or HERE\'s own error. It counts towards the monthly limit. Only with live traffic on.</string>
+    <string name="traffic_testing">Testing…</string>
+    <string name="traffic_test_result">Test: %1$s</string>
+    <string name="traffic_refresh_label">Refresh every</string>
+    <string name="traffic_refresh_help">How often to ask again while a route is followed, and once more after a re-route. Each time is two requests: flow and incidents. At 10 minutes, two hours of driving a day is about 720 requests a month.</string>
+    <string name="traffic_look_ahead_label">Look ahead</string>
+    <string name="traffic_look_ahead_help">How much of the route ahead to ask about. HERE is sent the rectangle around that much of the route, so a longer look ahead shows it a larger area and costs more mobile data.</string>
+    <string name="traffic_limit_label">Monthly request limit</string>
+    <string name="traffic_limit_help">When this many requests have been made this month, live traffic stops until the 1st of next month and this card says so. HERE\'s free allowance is 5,000 a month; after that it charges the key\'s owner. The count is kept on the phone, as numbers only.</string>
+    <string name="traffic_limit_invalid">Not saved: enter a number from 2 to 1,000,000.</string>
+    <string name="traffic_lab_override">Debug build: requests go to the lab\'s stand-in server %1$s, not to HERE.</string>
+    <string name="traffic_test_crashed">Test: could not run (%1$s)</string>
+</resources>

@@ -467,6 +467,10 @@ turns notifications on:
 
 ### 5.9 Weather — future, research first
 
+**Built as P10** (30 September 2026): researched in `docs/weather-research.md`, planned in
+`docs/p10-plan.md`, and recorded in `docs/p10-results.md`. Breezy's content provider was
+chosen over the Gadgetbridge broadcast.
+
 Wanted later as a flex-tile source (§1.1), without adding `INTERNET`: the forecast has to
 come from another app on the phone. James already uses **Breezy Weather**, which sends
 weather to **Gadgetbridge**. Before anything is designed, this needs finding out:
@@ -483,6 +487,11 @@ weather to **Gadgetbridge**. Before anything is designed, this needs finding out
 
 No slice number until those are answered. The tile itself is small: conditions, a
 temperature, the next few hours. Getting the data is the hard part.
+
+**Answered 28 September 2026** in `docs/weather-research.md`. The broadcast goes to any
+app the user ticks in Breezy, and Breezy also has a permission-guarded content provider
+(pre-1.0) with alerts. No app can make Breezy refresh. James chose the provider and numbered it
+**P10**: `docs/p10-plan.md`.
 
 ## 6. The phone app (P7.7)
 

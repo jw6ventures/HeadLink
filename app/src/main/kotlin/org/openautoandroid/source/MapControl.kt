@@ -125,6 +125,21 @@ class MapControl(
     var tileSize: Int = DEFAULT_TILE_SIZE
         private set
 
+    /**
+     * Whether the camera is on a view [fit] chose (P9.6, the offer's view of both routes)
+     * and the driver has not moved it since. While it is, the map is not following, the
+     * rotation is held where the fit measured it, and [unfit] puts the map back on the
+     * vehicle at the zoom it had before.
+     */
+    var fitted: Boolean = false
+        private set
+
+    /** The rotation a fit measured the routes in, held while [fitted]. */
+    private var fitRotation = 0f
+
+    /** The zoom before the fit, given back by [unfit] and by the recentre bubble. */
+    private var fitFromScale = DEFAULT_SCALE
+
     /** Where the pane is centred once a drag has taken it off the position source. */
     private var freeLatitude = 0.0
     private var freeLongitude = 0.0
@@ -168,6 +183,7 @@ class MapControl(
     private var recentres = 0L
     private var flips = 0L
     private var longPresses = 0L
+    private var fits = 0L
     private var pinched = false
 
     /** Degrees clockwise from north at the top of the pane, as last drawn. */
@@ -197,7 +213,9 @@ class MapControl(
     fun camera(follow: Pair<Double, Double>?, bearing: Double?, below: Int = 0): MapCamera? {
         if (bearing != null) heading = wrap(bearing.toFloat())
         val base = if (orientation == MapOrientation.HEADING_UP) heading else 0f
-        val rotation = wrap(base + turn)
+        // A fitted view keeps the rotation it was measured in: turned with every bend in
+        // direction-of-travel-up, the two routes it framed would swing out of the pane.
+        val rotation = if (fitted) fitRotation else wrap(base + turn)
         val centre = if (following) {
             val (latitude, longitude) = follow ?: return null
             if (below == 0) {
@@ -240,11 +258,90 @@ class MapControl(
         return if (pane.contains(x, y)) x to y else null
     }
 
-    /** Puts the pane back on the position source. */
+    /**
+     * Puts the pane back on the position source. From a fitted view it also gives back the
+     * zoom the fit took away: the driver asked for the vehicle, not for the overview.
+     */
     fun recentre() {
         if (!following) recentres++
+        if (fitted) scale = fitFromScale
+        fitted = false
         following = true
         travelled = 0f
+    }
+
+    /**
+     * Frames every point of [latitudes] and [longitudes] (one array pair per line) inside
+     * [view], a part of [pane], and leaves following to show them (P9.6, docs/p9-plan.md §7:
+     * the offer's "zoom to both routes"). Returns whether the camera changed.
+     *
+     * The points are measured in the rotation on show, so the box they need is the one the
+     * driver sees, not a north-up one; the zoom is the largest that fits both extents,
+     * clamped to the pinch's range and never closer in than the map already was, since a
+     * fit is an overview. The middle of their extent goes to the middle of [view], which
+     * sits below the turn card rather than at the pane's centre.
+     *
+     * Only the offer calls this; [unfit] undoes it. A drag, a pinch, a twist, a zoom bubble
+     * or the compass after it is the driver taking the map, and clears [fitted], so the
+     * offer's end does not pull the map from under them.
+     */
+    fun fit(latitudes: List<DoubleArray>, longitudes: List<DoubleArray>, pane: Box, view: Box): Boolean {
+        val rotation = last?.rotation ?: wrap((if (orientation == MapOrientation.HEADING_UP) heading else 0f) + turn)
+        val radians = Math.toRadians(rotation.toDouble())
+        val c = cos(radians)
+        val s = sin(radians)
+        var minU = Double.MAX_VALUE
+        var maxU = -Double.MAX_VALUE
+        var minV = Double.MAX_VALUE
+        var maxV = -Double.MAX_VALUE
+        for (line in latitudes.indices) {
+            val lats = latitudes[line]
+            val lons = longitudes.getOrNull(line) ?: continue
+            for (i in 0 until minOf(lats.size, lons.size)) {
+                val wx = worldX(lons[i])
+                val wy = worldY(lats[i])
+                // Screen axes of a world point, as [marker] turns them into pixels.
+                val u = wx * c + wy * s
+                val v = -wx * s + wy * c
+                if (u < minU) minU = u
+                if (u > maxU) maxU = u
+                if (v < minV) minV = v
+                if (v > maxV) maxV = v
+            }
+        }
+        if (minU > maxU || view.width <= 0 || view.height <= 0) return false
+        val from = if (fitted) fitFromScale else scale
+        val spanU = maxU - minU
+        val spanV = maxV - minV
+        val across = if (spanU > 0.0) view.width / (spanU * tileSize) else Double.MAX_VALUE
+        val down = if (spanV > 0.0) view.height / (spanV * tileSize) else Double.MAX_VALUE
+        val zoom = minOf(across, down, from).coerceIn(MIN_SCALE, MAX_SCALE)
+        // The camera's centre, in the same axes: the extent's middle, less the view's offset
+        // from the pane's centre at the new zoom.
+        val k = zoom * tileSize
+        val u = (minU + maxU) / 2 - (view.centerX - pane.centerX) / k
+        val v = (minV + maxV) / 2 - (view.centerY - pane.centerY) / k
+        centreOn(u * c - v * s, u * s + v * c)
+        fitted = true
+        fitFromScale = from
+        fitRotation = rotation
+        scale = zoom
+        following = false
+        fits++
+        return true
+    }
+
+    /**
+     * Ends a fitted view: back to following the vehicle at the zoom it had before. Returns
+     * false, and changes nothing, when the driver has moved the map since the fit.
+     */
+    fun unfit(): Boolean {
+        if (!fitted) return false
+        fitted = false
+        scale = fitFromScale
+        following = true
+        travelled = 0f
+        return true
     }
 
     /**
@@ -256,11 +353,13 @@ class MapControl(
      * next junction should not have to press recentre afterwards.
      */
     fun zoomBy(levels: Int) {
+        fitted = false
         scale = (scale * Math.pow(2.0, levels.toDouble())).coerceIn(MIN_SCALE, MAX_SCALE)
     }
 
     /** Switches between north-up and direction-of-travel-up, and squares up the twist. */
     fun flipOrientation() {
+        fitted = false
         orientation = if (orientation == MapOrientation.HEADING_UP) {
             MapOrientation.NORTH_UP
         } else {
@@ -342,7 +441,7 @@ class MapControl(
             "turn=${Math.round(turn)} " +
             "gestures=$gestures multi_pointer=$multiPointer pointers_max=$pointersMax " +
             "pans=$pans recentres=$recentres orientation_flips=$flips long_presses=$longPresses " +
-            "tile_size=$tileSize"
+            "tile_size=$tileSize fits=$fits fitted=$fitted"
 
     /** The zoom level behind [scale], for the report; VTM's scale is 2^zoom. */
     private fun zoom(): Double = ln(scale) / ln(2.0)
@@ -402,6 +501,10 @@ class MapControl(
                     // Fingers turning clockwise turn the picture clockwise, which moves
                     // whatever was to the left of the top round to the top: the heading
                     // on show decreases by the angle the hand turned through.
+                    // A twist of a fitted view carries on from the rotation on show, and
+                    // makes the view the driver's.
+                    if (fitted) turn = wrap(camera.rotation - (if (orientation == MapOrientation.HEADING_UP) heading else 0f))
+                    fitted = false
                     turn = wrap(turn - spun)
                     nextRotation = wrap(camera.rotation - spun)
                 }
@@ -411,6 +514,8 @@ class MapControl(
         }
 
         travelled += hypot(nextFocalX - focalX, nextFocalY - focalY)
+        // A fitted view becomes the driver's once they drag it past the slop or pinch it.
+        if (fitted && (travelled > PAN_SLOP || nextScale != scale)) fitted = false
         if (following && travelled > PAN_SLOP) {
             // Only a deliberate drag lets go of the vehicle. A pinch is anchored on the
             // pane centre while the map is following, so zooming out to see the next

@@ -160,6 +160,18 @@ class ProjectionPipeline(
     /** The route the map engine was last given. Scene thread; reset with the renderer. */
     private var shownRoute: Route? = null
     private var shownAlternatives: List<LiveAlternative>? = null
+
+    /** The offer's proposed route the map engine was last given (P9.6). Scene thread. */
+    private var shownOfferRoute: Route? = null
+
+    /**
+     * Told when Take or Keep is pressed on the divided turn card (P9.6): the offer's id, and
+     * true for Take. Called on the main thread, from [touch], after the dashboard has let go
+     * of its lock, so it may start a route or record the refusal directly. Installed by the
+     * service with the traffic loop; null drops the answer, and the card is whole again
+     * either way.
+     */
+    var offerListener: ((id: Long, take: Boolean) -> Unit)? = null
     private var startedNs = 0L
     private var nextFrameNs = 0L
 
@@ -272,12 +284,23 @@ class ProjectionPipeline(
                 if (route !== shownRoute) {
                     renderer.setRoute(route)
                     shownRoute = route
+                    board.followedRoute(route)
                 }
                 // Likewise the live alternatives, a list replaced whole on the main thread.
                 val alternatives = LiveAlternatives.shown
                 if (alternatives !== shownAlternatives) {
                     renderer.setAlternatives(alternatives.map { it.route })
                     shownAlternatives = alternatives
+                }
+                // P9: the traffic colours on the route ahead, every frame, because where the
+                // vehicle is decides which part is ahead; the map engine rebuilds its layers
+                // only when that or the traffic changes (TrafficLines). After the route, so a
+                // new route and the traffic matched to it land in the same frame.
+                renderer.setTraffic(board.trafficDisplay().traffic, board.followPosition())
+                val offerRoute = board.shownOffer()?.route
+                if (offerRoute !== shownOfferRoute) {
+                    renderer.setOffer(offerRoute)
+                    shownOfferRoute = offerRoute
                 }
                 val snapshot = board.nextFrame(System.currentTimeMillis())
                 renderer.draw(board.layout, snapshot, now - startedNs)
@@ -425,7 +448,20 @@ class ProjectionPipeline(
         // keeps the first pointer and its unmapped coordinates; the dashboard's map
         // pane is the only thing here that has any use for a second finger.
         scene?.touch(action, first.x, first.y, first.rawX, first.rawY)
-        return dashboard?.touch(action, pointers)
+        val board = dashboard ?: return null
+        val pressed = board.touch(action, pointers)
+        // P9.6: Take or Keep, handed on outside the dashboard's lock.
+        board.takeOfferAnswer()?.let { offerListener?.invoke(it.id, it.take) }
+        return pressed
+    }
+
+    /**
+     * What the projected map shows of traffic (P9.3, P9.4, P9.6), from the traffic loop on
+     * the main thread, whole, whenever the traffic, the delay or the offer changes: the
+     * route's colours, "Traffic © HERE", "+N min traffic" and the divided turn card.
+     */
+    fun traffic(display: TrafficDisplay) {
+        dashboard?.traffic(display)
     }
 
     /** A destination a long press on the projected map picked, once, or null. */
@@ -483,6 +519,19 @@ class ProjectionPipeline(
     fun call(state: CallState) {
         dashboard?.call(state)
     }
+
+    /** P10: the weather the header and the flex tile draw, from [Weather]; replaces it whole. */
+    fun weather(state: WeatherState) {
+        dashboard?.weather(state)
+    }
+
+    /** P10: Show weather and Alerts shown from, changed mid-session. */
+    fun weatherChoices(on: Boolean, level: AlertLevel) {
+        dashboard?.weatherChoices(on, level)
+    }
+
+    /** Where the vehicle, else the phone, is: the location weather is chosen by (P10 plan §2). */
+    fun followPosition(): Pair<Double, Double>? = dashboard?.followPosition()
 
     /** The call card's and keypad's presses since the last call, in order, once (P7.9). */
     fun takeCallActions(): List<CallAction> = dashboard?.takeCallActions() ?: emptyList()
@@ -653,8 +702,11 @@ class ProjectionPipeline(
         renderer = null
         dashboardRenderer?.release()
         dashboardRenderer = null
-        // A rebuilt renderer has a new map engine with no line on it.
+        // A rebuilt renderer has a new map engine with no line on it, and none of the
+        // alternatives or the offer's proposal either.
         shownRoute = null
+        shownAlternatives = null
+        shownOfferRoute = null
     }
 
     private fun layoutWidth(): Int = scene?.layout?.width ?: dashboard?.layout?.width ?: params.width

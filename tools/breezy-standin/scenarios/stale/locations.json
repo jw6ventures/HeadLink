@@ -1,0 +1,4 @@
+[
+  {"id": "31.549300&-97.146700&openmeteo", "latitude": 31.5493, "longitude": -97.1467, "is_current_position": 0, "timezone": "America/Chicago", "custom_name": null, "country": "United States", "country_code": "US", "admin1": "Texas", "admin1_code": "TX", "admin2": "McLennan County", "admin2_code": null, "admin3": null, "admin3_code": null, "admin4": null, "admin4_code": null, "city": "Waco", "district": null},
+  {"id": "43.020600&-71.600300&openmeteo", "latitude": 43.0206, "longitude": -71.6003, "is_current_position": 0, "timezone": "America/New_York", "custom_name": null, "country": "United States", "country_code": "US", "admin1": "New Hampshire", "admin1_code": "NH", "admin2": "Hillsborough County", "admin2_code": null, "admin3": null, "admin3_code": null, "admin4": null, "admin4_code": null, "city": "Goffstown", "district": null}
+]

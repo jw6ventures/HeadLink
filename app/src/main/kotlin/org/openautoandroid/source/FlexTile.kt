@@ -100,6 +100,12 @@ enum class FlexSource(val key: String) {
     /** A call, ringing or in progress (P7.9). */
     CALL("call"),
 
+    /** P10: the weather view, opened by tapping the header's weather item (docs/p10-plan.md §5.2). */
+    WEATHER("weather"),
+
+    /** P10: a weather alert in force at or above the chosen level and not dismissed (§5.3). */
+    WEATHER_ALERT("weather_alert"),
+
     /** Alerting notifications, turned on and not paused with Ⓟ (P7.8). */
     NOTIFICATIONS("notifications"),
 
@@ -175,11 +181,23 @@ object FlexRules {
 
     /**
      * Which source the tile shows: a call first, because a missed call is costlier than a
-     * missed message (and Ⓟ does not hide calls, plan §10 question 2); then notifications
-     * while not paused and there are any; else the quiet empty state.
+     * missed message (and Ⓟ does not hide calls, plan §10 question 2); then, since P10, the
+     * weather view the driver opened, which carries any alert in its strip, and then a
+     * weather alert, which Ⓟ does not hide either, since it pauses notifications and not
+     * safety information (docs/p10-plan.md §5.3); then notifications while not paused and
+     * there are any; else the quiet empty state. Weather never fills an empty tile by itself.
      */
-    fun source(call: CallState, paused: Boolean, notifications: Int): FlexSource = when {
+    @JvmOverloads
+    fun source(
+        call: CallState,
+        paused: Boolean,
+        notifications: Int,
+        weatherView: Boolean = false,
+        weatherAlert: Boolean = false,
+    ): FlexSource = when {
         call.phase != CallPhase.NONE -> FlexSource.CALL
+        weatherView -> FlexSource.WEATHER
+        weatherAlert -> FlexSource.WEATHER_ALERT
         !paused && notifications > 0 -> FlexSource.NOTIFICATIONS
         else -> FlexSource.EMPTY
     }
@@ -210,6 +228,8 @@ object FlexRules {
             CallPhase.ENDED -> "call ended"
             CallPhase.NONE -> "call"
         }
+        FlexSource.WEATHER -> WeatherText.LABEL_VIEW
+        FlexSource.WEATHER_ALERT -> WeatherText.LABEL_ALERT
         FlexSource.NOTIFICATIONS, FlexSource.EMPTY -> "notifications"
     }
 

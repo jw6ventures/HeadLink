@@ -2,9 +2,15 @@ package org.openautoandroid.source
 
 /**
  * The numbers Home's route line shows (P7 plan §6.5): distance and time to go, and the
- * wall-clock arrival, or null for no arrival.
+ * wall-clock arrival, or null for no arrival. [trafficSeconds] is the live traffic delay
+ * already inside [seconds] (P9.4), for its "+N min traffic"; 0 without it.
  */
-class RouteFigures(val metres: Double, val seconds: Int, val arrivalMillis: Long?) {
+class RouteFigures @JvmOverloads constructor(
+    val metres: Double,
+    val seconds: Int,
+    val arrivalMillis: Long?,
+    val trafficSeconds: Int = 0,
+) {
     companion object {
         /**
          * Pure, so the host test holds the choice to its rules.
@@ -20,17 +26,25 @@ class RouteFigures(val metres: Double, val seconds: Int, val arrivalMillis: Long
          * ([computedAtMillis], negative when not seen) plus BRouter's estimate. An arrival
          * already in the past is dropped: it says the estimate is spent, not when the
          * vehicle will get there. No route and no live figures is null.
+         *
+         * [trafficSeconds] is the traffic delay inside [live]'s seconds ([Guide.trafficDelay]);
+         * it is carried only with the live figures, the only ones that have it.
          */
+        @JvmOverloads
         fun choose(
             live: Pair<Double, Int>?,
             totalMetres: Int?,
             totalSeconds: Int?,
             computedAtMillis: Long,
             nowMillis: Long,
+            trafficSeconds: Int = 0,
         ): RouteFigures? {
             if (live != null) {
                 val seconds = live.second.coerceAtLeast(0)
-                return RouteFigures(live.first.coerceAtLeast(0.0), seconds, nowMillis + seconds * 1000L)
+                return RouteFigures(
+                    live.first.coerceAtLeast(0.0), seconds, nowMillis + seconds * 1000L,
+                    trafficSeconds.coerceIn(0, seconds),
+                )
             }
             if (totalMetres == null || totalSeconds == null) return null
             val arrival = if (computedAtMillis < 0) null else (computedAtMillis + totalSeconds * 1000L).takeIf { it >= nowMillis }
@@ -72,7 +86,10 @@ object RouteClock {
         }
     }
 
-    /** Home's figures for the route [Routing] holds now: [Guide]'s live ones, else the totals. */
+    /**
+     * Home's figures for the route [Routing] holds now: [Guide]'s live ones, with live
+     * traffic's delay in them (P9.4), else the totals.
+     */
     fun figures(nowMillis: Long): RouteFigures? {
         val result = Routing.last
         val route = result?.route
@@ -83,6 +100,7 @@ object RouteClock {
             route?.seconds,
             computedAt,
             nowMillis,
+            if (route != null) Guide.trafficDelay() else 0,
         )
     }
 }

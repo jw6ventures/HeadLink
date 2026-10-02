@@ -7,7 +7,9 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import org.openautoandroid.source.AlertLevel;
 import org.openautoandroid.source.Box;
+import org.openautoandroid.source.ClockFormat;
 import org.openautoandroid.source.Dashboard;
 import org.openautoandroid.source.DashboardChoices;
 import org.openautoandroid.source.DashboardLayout;
@@ -1027,8 +1029,15 @@ public final class DashboardTest {
         Dashboard.Snapshot blueFrame = blue.nextFrame(0L);
         check(!frame.equals(blueFrame), "a colour change alone is a chrome change");
         String report = yellow.report();
-        check(report.contains("dashboard_marker=yellow dashboard_diagnostics=true dashboard_notifications_paused=true "),
+        check(report.contains("dashboard_marker=yellow dashboard_clock=24 dashboard_diagnostics=true dashboard_notifications_paused=true "),
                 "the report names the choices: " + report);
+        check("00:00".equals(frame.getClock()), "a 24-hour clock unless chosen: " + frame.getClock());
+        Dashboard twelve = new Dashboard(new DashboardLayout(0, 0, 1920, 1080, true), "123456",
+                ZoneId.of("UTC"), SpeedUnit.MPH, MapOrientation.NORTH_UP, o -> kotlin.Unit.INSTANCE,
+                new DashboardChoices(MarkerColour.BLUE, DayNightMode.AUTO, false, false, null, true, false,
+                        AlertLevel.Companion.getDEFAULT(), ClockFormat.H12), new DashboardSaves());
+        check("12:00".equals(twelve.nextFrame(0L).getClock()), "the 12-hour choice reaches the header clock, with no marker: " + twelve.nextFrame(0L).getClock());
+        check(twelve.report().contains("dashboard_clock=12 "), "and the report");
 
         // The lab receiver sends bearing and speed in thousandths, which no drive has
         // confirmed; Ford's 1e6 bearing has been, by eye.

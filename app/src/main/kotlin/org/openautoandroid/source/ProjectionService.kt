@@ -81,6 +81,8 @@ class ProjectionService : Service() {
         var callListener: ((CallState) -> Unit)? = null
         /** P8.2: tells the dashboard once a second whether speech can happen, for the toggle. */
         var speechCheck: Runnable? = null
+        /** P10: weather's report, kept when projection stopped and the feed was reset. */
+        var weatherReport: String? = null
         /**
          * Latest vehicle position and motion, and the latest restriction.
          *
@@ -532,6 +534,9 @@ class ProjectionService : Service() {
                 notificationsPaused = saved.notificationsPaused,
                 rememberedNight = AppSettings.lastNight(this),
                 voiceGuidance = saved.voice.enabled,
+                weather = saved.weather.enabled,
+                alertLevel = saved.weather.alertLevel,
+                clockFormat = saved.clockFormat,
             ),
             dashboardSaves(),
             MapData.resolveAll(this, session.attempt.settings.mapFile),
@@ -557,6 +562,12 @@ class ProjectionService : Service() {
             pipeline.alternatives(list.map { AlternativeMark(it.id, it.labelLat, it.labelLon, it.label) })
         }
         LiveAlternatives.listener?.invoke(LiveAlternatives.shown)
+        // P9.3, P9.4, P9.6: live traffic's colours, delay and offer, starting with what the
+        // loop already holds, and Take or Keep on the divided turn card back to it. Both
+        // on main: the loop publishes there, and touch() calls the listener there.
+        Traffic.listener = { display -> pipeline.traffic(display) }
+        pipeline.traffic(Traffic.display())
+        pipeline.offerListener = { id, take -> Traffic.answer(id, take) }
         // P8.3: the phone's Voice guidance switch, shown on the trip panel's toggle.
         Guide.voiceListener = { on ->
             SessionController.note("phone voice guidance ${if (on) "on" else "off"}")
@@ -654,6 +665,15 @@ class ProjectionService : Service() {
             }
             session.speechCheck = speechCheck
             speechCheck.run()
+            // P10: weather from Breezy (docs/p10-plan.md §3), read now, on its notifier and
+            // every 15 min, only while this projects and only with Show weather on. After
+            // Speaker.bind, since an alert in the first read may be spoken.
+            Weather.listener = { state -> if (running === session) session.pipeline?.weather(state) }
+            Weather.choicesListener = { settings ->
+                if (running === session) session.pipeline?.weatherChoices(settings.enabled, settings.alertLevel)
+            }
+            session.weatherReport = null
+            Weather.start(this, saved.weather) { session.pipeline?.followPosition() }
             // P7.9: the in-call component is enabled only while projecting, and only with
             // the setting on (plan §5.8); releaseIfDone turns it off at the session's end.
             if (saved.callControls) {
@@ -662,6 +682,18 @@ class ProjectionService : Service() {
             }
         }
         SessionController.projectionPipelineReport(projectionReport(session, pipeline))
+        // Debug builds: the lab's `lab_report` extra brings the dashboard's and the map's part
+        // of the saved report up to date mid-projection (P9 lab); otherwise it is taken only at
+        // the start and the end. The note after it writes the report out.
+        labReport = {
+            main.post {
+                val live = session.pipeline
+                if (running === session && live != null) {
+                    SessionController.projectionPipelineReport(projectionReport(session, live))
+                    SessionController.note("lab report refreshed (debug build)")
+                }
+            }
+        }
         if (failure != null) {
             SessionController.note("encoder unavailable: $failure")
             NativeBridge.videoFailed(session.handle, failure)
@@ -701,6 +733,11 @@ class ProjectionService : Service() {
     }
 
     private fun stopProjection(session: Running) {
+        // P10: weather's counts into the report before its reading is dropped.
+        session.weatherReport = Weather.report()
+        Weather.listener = null
+        Weather.choicesListener = null
+        Weather.stop()
         // Speech first, so its report counts what projection's end cut off and shows the
         // focus grant given back (P8.1, plan §4). Its counts outlive the release.
         Speaker.readingListener = null
@@ -726,6 +763,9 @@ class ProjectionService : Service() {
         Routing.nameMaps = null
         Guide.turnListener = null
         LiveAlternatives.listener = null
+        Traffic.listener = null
+        labReport = null
+        pipeline.offerListener = null
         Guide.voiceListener = null
         Guide.detach(session.handle)
         // Keep the app-side evidence before the pipeline is torn down.
@@ -749,6 +789,8 @@ class ProjectionService : Service() {
         append(NotificationFeed.report())
         append(Speaker.report())
         append(CallControl.report())
+        // P10: counts only; the report taken as it stopped, once it has.
+        append(session.weatherReport ?: Weather.report())
     }
 
     /**
@@ -879,6 +921,9 @@ class ProjectionService : Service() {
                 session.phone?.release()
                 Speaker.readingListener = null
                 Speaker.release()
+                Weather.listener = null
+                Weather.choicesListener = null
+                Weather.stop()
                 NotificationFeed.enabled = false
                 session.notificationsListener?.let(NotificationFeed::removeListener)
                 session.callListener?.let(CallControl::removeListener)
@@ -943,6 +988,10 @@ class ProjectionService : Service() {
     }
 
     companion object {
+        /** Refreshes the projection's part of the saved report, while one projects; see [ConnectionActivity]'s `lab_report`. */
+        @Volatile
+        var labReport: (() -> Unit)? = null
+
         const val ACTION_START = "org.openautoandroid.source.action.START_SESSION"
         const val ACTION_STOP = "org.openautoandroid.source.action.STOP_SESSION"
         const val EXTRA_GENERATION = "org.openautoandroid.source.extra.GENERATION"
