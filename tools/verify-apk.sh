@@ -28,9 +28,19 @@ line "native-code: 'arm64-v8a'"
 # P9 adds INTERNET for live traffic alone (APP10 as amended 28 September 2026,
 # docs/p9-plan.md §2): off by default, and no socket opens unless the operator turns it on
 # with their own HERE key (host-tested in TrafficClientTest; this script cannot see that).
+# W0 (docs/wireless-investigation.md): a debuggable build alone adds BLUETOOTH_CONNECT,
+# for the wireless probe's SDP query and nothing else. A release build stays without any
+# Bluetooth permission, and without the probe's launcher entry.
 permissions=$(printf '%s\n' "$badging" | sed -n "s/^uses-permission: name='\([^']*\)'.*/\1/p" | LC_ALL=C sort | tr '\n' ' ')
-[ "$permissions" = "android.permission.ACCESS_COARSE_LOCATION android.permission.ACCESS_FINE_LOCATION android.permission.ACCESS_NETWORK_STATE android.permission.FOREGROUND_SERVICE android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE android.permission.INTERNET android.permission.MANAGE_ONGOING_CALLS android.permission.POST_NOTIFICATIONS android.permission.READ_PHONE_STATE org.breezyweather.READ_PROVIDER " ] \
+bluetooth=
+if printf '%s\n' "$badging" | grep -q '^application-debuggable'; then
+    bluetooth="android.permission.BLUETOOTH_CONNECT "
+fi
+[ "$permissions" = "android.permission.ACCESS_COARSE_LOCATION android.permission.ACCESS_FINE_LOCATION android.permission.ACCESS_NETWORK_STATE ${bluetooth}android.permission.FOREGROUND_SERVICE android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE android.permission.INTERNET android.permission.MANAGE_ONGOING_CALLS android.permission.POST_NOTIFICATIONS android.permission.READ_PHONE_STATE org.breezyweather.READ_PROVIDER " ] \
     || fail "unexpected permission set: $permissions"
+if [ -z "$bluetooth" ] && printf '%s\n' "$badging" | grep -q 'WirelessProbeActivity'; then
+    fail "a release build must not carry the wireless probe"
+fi
 
 printf '%s\n' "$badging" | grep -qx "  uses-feature: name='android.hardware.usb.accessory'" \
     || fail "required uses-feature android.hardware.usb.accessory"
