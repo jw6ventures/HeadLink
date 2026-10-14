@@ -29,8 +29,9 @@ line "native-code: 'arm64-v8a'"
 # docs/p9-plan.md §2): off by default, and no socket opens unless the operator turns it on
 # with their own HERE key (host-tested in TrafficClientTest; this script cannot see that).
 # W0 adds BLUETOOTH_CONNECT (spec §5.2 as amended 14 October 2026,
-# docs/wireless-investigation.md): the wireless probe's SDP query and nothing else, asked
-# for only when the operator opens the probe from Diagnostics.
+# docs/wireless-investigation.md): the wireless probe's SDP query and, on a second tap
+# after an advertised verdict, W1's one RFCOMM bootstrap read; nothing else. Asked for only
+# when the operator opens the probe from Diagnostics.
 permissions=$(printf '%s\n' "$badging" | sed -n "s/^uses-permission: name='\([^']*\)'.*/\1/p" | LC_ALL=C sort | tr '\n' ' ')
 [ "$permissions" = "android.permission.ACCESS_COARSE_LOCATION android.permission.ACCESS_FINE_LOCATION android.permission.ACCESS_NETWORK_STATE android.permission.BLUETOOTH_CONNECT android.permission.FOREGROUND_SERVICE android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE android.permission.INTERNET android.permission.MANAGE_ONGOING_CALLS android.permission.POST_NOTIFICATIONS android.permission.READ_PHONE_STATE org.breezyweather.READ_PROVIDER " ] \
     || fail "unexpected permission set: $permissions"

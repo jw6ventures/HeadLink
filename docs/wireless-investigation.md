@@ -1,7 +1,8 @@
 # Wireless projection investigation, 11 October 2026
 
 **Status: W0 passed on the truck, 14 October 2026: SYNC 4 advertises the bootstrap service
-([results](wireless-w0-results.md)).** Research, plus the W0 probe on branch `wireless`.
+([results](wireless-w0-results.md)). W1 is built and awaits its truck run
+([procedure](wireless-w1-procedure.md)).** Research, plus the W0 probe on branch `wireless`.
 The probe was built 13 October 2026 in the debug build only, and moved into release builds
 on 14 October at James's request; spec §5.2 is amended for its `BLUETOOTH_CONNECT`. The
 procedure is [wireless-w0-procedure.md](wireless-w0-procedure.md). There is no plan
@@ -118,7 +119,8 @@ From `WifiNetworkFactory.java`:
   `fetchUuidsWithSdp()` on the paired truck and records whether `4de17a00-…` is
   advertised. The only spec change is the `BLUETOOTH_CONNECT` grant (§5.2, amended
   14 October 2026). If the UUID is absent, stop here.
-- **W1 — bootstrap probe.** Connect RFCOMM, record WifiVersion/Start/Info messages, and
+- **W1 — bootstrap probe. Built 14 October 2026 ([procedure](wireless-w1-procedure.md)).**
+  Connect RFCOMM, record WifiVersion/Start/Info messages, and
   send WifiInfoRequest. Log SSID, BSSID, security and AP type with the **key redacted**
   (spec §10). Do not join Wi-Fi yet. Repeat across two drives to see whether the SSID or
   BSSID changes.

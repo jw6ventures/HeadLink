@@ -8,6 +8,7 @@ import android.bluetooth.BluetoothClass
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
+import android.bluetooth.BluetoothSocket
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -19,13 +20,20 @@ import android.os.Handler
 import android.os.Looper
 import android.os.ParcelUuid
 import android.os.SystemClock
+import android.view.View
 import android.view.WindowInsets
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import java.io.File
+import java.io.IOException
+import java.security.SecureRandom
 import java.time.Instant
 import java.util.UUID
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * W0 of docs/wireless-investigation.md, opened from Diagnostics: pick a paired device,
@@ -34,19 +42,25 @@ import java.util.UUID
  * screen opens. The verdict and report are [WirelessProbe]'s. The report goes into
  * the ordinary report store, so Export saved reports under Diagnostics carries it.
  *
- * Read-only: nothing is connected to or sent to the head unit beyond the SDP query
- * Android makes on our behalf. Device names appear on this screen only, to pick the
- * truck. The report has neither names nor addresses (spec §10).
+ * W0 is read-only: nothing is connected to or sent to the head unit beyond the SDP query
+ * Android makes on our behalf. After an `advertised` verdict, W1 (spec §5.2, the W1
+ * amendment of 14 October 2026) connects to that service over RFCOMM and runs
+ * [WirelessBootstrap.Session] as far as the head unit's Wi-Fi details, then closes; it
+ * joins no network. Device names
+ * appear on this screen only, to pick the truck. Neither report has names or addresses
+ * (spec §10), and W1's keeps no Wi-Fi key.
  */
 class WirelessProbeActivity : Activity() {
     private val main = Handler(Looper.getMainLooper())
     private lateinit var status: TextView
     private lateinit var devices: LinearLayout
     private lateinit var result: TextView
+    private lateinit var bootstrapButton: Button
     private var adapter: BluetoothAdapter? = null
     private var hfp: BluetoothProfile? = null
     private var a2dp: BluetoothProfile? = null
     private var probe: Probe? = null
+    private var bootstrap: Thread? = null
 
     /** One probe in flight: the device, what was read before the query, and the answers so far. */
     private inner class Probe(val device: BluetoothDevice, val before: WirelessProbe.Device, val utc: Instant) {
@@ -83,7 +97,12 @@ class WirelessProbeActivity : Activity() {
             typeface = android.graphics.Typeface.MONOSPACE
             setPadding(0, pad, 0, 0)
         }
+        bootstrapButton = Button(this).apply {
+            isAllCaps = false
+            visibility = View.GONE
+        }
         column.addView(status)
+        column.addView(bootstrapButton)
         column.addView(devices)
         column.addView(result)
         setContentView(ScrollView(this).apply {
@@ -173,7 +192,8 @@ class WirelessProbeActivity : Activity() {
 
     @SuppressLint("MissingPermission")
     private fun start(device: BluetoothDevice) {
-        if (probe != null || !granted()) return
+        if (probe != null || bootstrap != null || !granted()) return
+        bootstrapButton.visibility = View.GONE
         val before = WirelessProbe.Device(
             deviceClass = device.bluetoothClass?.deviceClass,
             type = device.type,
@@ -222,10 +242,174 @@ class WirelessProbeActivity : Activity() {
         }
         result.text = text
         setButtons(true)
+        if (WirelessProbe.verdict(p.before.cached, sdp.answers) == WirelessProbe.Verdict.ADVERTISED) offerBootstrap(p.device)
+    }
+
+    /** W1 is offered only for a device that has just advertised the bootstrap service. */
+    @SuppressLint("MissingPermission")
+    private fun offerBootstrap(device: BluetoothDevice) {
+        val label = device.name ?: getString(R.string.wireless_probe_unnamed)
+        bootstrapButton.text = getString(R.string.wireless_bootstrap_button, label)
+        bootstrapButton.setOnClickListener { runBootstrap(device, label) }
+        bootstrapButton.visibility = View.VISIBLE
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun runBootstrap(device: BluetoothDevice, label: String) {
+        if (probe != null || bootstrap != null || !granted()) return
+        setButtons(false)
+        result.text = null
+        status.text = getString(R.string.wireless_bootstrap_running, label)
+        val utc = Instant.now()
+        val deviceClass = device.bluetoothClass?.deviceClass
+        val worker = Thread({
+            val (text, outcome) = converse(device, utc, deviceClass)
+            // Saved from here, so the report survives the screen being closed mid-run.
+            val name = WirelessProbe.reportName(utc, UUID.randomUUID().toString())
+            val store = ReportPersistence.store
+            store?.save(name, text)
+            main.post {
+                bootstrap = null
+                if (isDestroyed) return@post
+                status.text = if (store != null) {
+                    getString(R.string.wireless_bootstrap_saved, outcome, name)
+                } else {
+                    getString(R.string.wireless_bootstrap_unsaved, outcome)
+                }
+                result.text = text
+                setButtons(true)
+            }
+        }, "wireless-bootstrap")
+        bootstrap = worker
+        worker.start()
+    }
+
+    /**
+     * Worker thread. Connects, then feeds the session from a reader thread's frames and a
+     * 100 ms tick until it is done, writing whatever it answers. Returns the report and the
+     * outcome key.
+     */
+    @SuppressLint("MissingPermission")
+    private fun converse(device: BluetoothDevice, utc: Instant, deviceClass: Int?): Pair<String, String> {
+        val session = WirelessBootstrap.Session(WirelessBootstrap.Redactor(salt()))
+        val connectStart = SystemClock.elapsedRealtime()
+        var connectError: String? = null
+        var socket: BluetoothSocket? = null
+        try {
+            val s = device.createRfcommSocketToServiceRecord(UUID.fromString(WirelessProbe.BOOTSTRAP_UUID))
+            socket = s
+            val connected = AtomicBoolean(false)
+            val watchdog = Thread({
+                try {
+                    Thread.sleep(WirelessBootstrap.CONNECT_TIMEOUT_MS)
+                    if (!connected.get()) s.close()
+                } catch (e: InterruptedException) {
+                    // Connected (or failed) in time.
+                } catch (e: IOException) {
+                    // Closing an unconnected socket; the connect reports the failure.
+                }
+            }, "wireless-bootstrap-watchdog").apply { isDaemon = true }
+            watchdog.start()
+            try {
+                s.connect()
+                connected.set(true)
+            } finally {
+                watchdog.interrupt()
+            }
+        } catch (e: IOException) {
+            connectError = e.toString()
+        } catch (e: SecurityException) {
+            connectError = e.toString()
+        }
+        val connectMs = SystemClock.elapsedRealtime() - connectStart
+        val s = socket
+        if (connectError == null && s != null) {
+            try {
+                talk(s, session)
+            } finally {
+                try {
+                    s.close()
+                } catch (e: IOException) {
+                    // Closing; nothing left to report.
+                }
+            }
+        } else {
+            try {
+                s?.close()
+            } catch (e: IOException) {
+                // Never connected.
+            }
+        }
+        val text = WirelessBootstrap.report(utc, versionName(), Build.VERSION.SDK_INT, deviceClass, connectMs, connectError, session)
+        val outcome = if (connectError != null) WirelessBootstrap.Outcome.CONNECT_FAILED else session.outcome()
+        return text to outcome.key
+    }
+
+    private fun talk(socket: BluetoothSocket, session: WirelessBootstrap.Session) {
+        val queue = LinkedBlockingQueue<Any>()
+        val input = socket.inputStream
+        val output = socket.outputStream
+        Thread({
+            val buffer = ByteArray(1024)
+            val deframer = WirelessBootstrap.Deframer()
+            try {
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) {
+                        queue.put("end of stream")
+                        break
+                    }
+                    deframer.push(buffer, count).forEach { queue.put(it) }
+                }
+            } catch (e: IOException) {
+                queue.put("read failed: $e")
+            }
+        }, "wireless-bootstrap-reader").apply { isDaemon = true }.start()
+        val origin = SystemClock.elapsedRealtime()
+        fun now() = SystemClock.elapsedRealtime() - origin
+        while (!session.done) {
+            val item = queue.poll(100, TimeUnit.MILLISECONDS)
+            val out = when (item) {
+                null -> session.tick(now())
+                is WirelessBootstrap.Frame -> session.received(item, now()) + session.tick(now())
+                else -> {
+                    session.closed(now(), item.toString())
+                    emptyList<WirelessBootstrap.Frame>()
+                }
+            }
+            for (frame in out) {
+                try {
+                    output.write(WirelessBootstrap.encode(frame))
+                    output.flush()
+                } catch (e: IOException) {
+                    session.closed(now(), "write failed: $e")
+                    break
+                }
+            }
+        }
+    }
+
+    /** The app-private salt for W1's hashes: random once per install, so hashes compare between runs here and nowhere else. */
+    private fun salt(): ByteArray {
+        val file = File(filesDir, SALT_FILE)
+        try {
+            val existing = file.readBytes()
+            if (existing.size == SALT_BYTES) return existing
+        } catch (e: IOException) {
+            // First run.
+        }
+        val salt = ByteArray(SALT_BYTES).also { SecureRandom().nextBytes(it) }
+        try {
+            file.writeBytes(salt)
+        } catch (e: IOException) {
+            // Hashes still work for this run; they just will not match the next one.
+        }
+        return salt
     }
 
     private fun setButtons(enabled: Boolean) {
         for (i in 0 until devices.childCount) devices.getChildAt(i).isEnabled = enabled
+        bootstrapButton.isEnabled = enabled
     }
 
     private fun versionName(): String =
@@ -237,5 +421,7 @@ class WirelessProbeActivity : Activity() {
 
     private companion object {
         const val REQUEST_CONNECT = 1
+        const val SALT_FILE = "wireless-salt"
+        const val SALT_BYTES = 16
     }
 }

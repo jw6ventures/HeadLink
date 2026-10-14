@@ -157,6 +157,10 @@
 # * WirelessProbeTest: W0's wireless probe - the verdict for each way an SDP query can end,
 #   the UUID labels, and a report with no name or address that ends complete. The query,
 #   its broadcast and the Nearby devices prompt need a phone.
+# * WirelessBootstrapTest: W1's bootstrap read - framing across RFCOMM chunks, the protobuf
+#   reader, the redaction rule, and the session against scripted head units (start first,
+#   version first, endpoint only in the version request, pings, silence, a dropped socket),
+#   with no key, SSID, BSSID or VIN in the report. The socket and the truck need a phone.
 # LabDrive.java and LabTraffic.java are compiled here but not run: they are generators run
 # by hand, the second writing the P9 lab's stand-in HERE scenarios and traffic drive
 # (tools/here-standin/, docs/p9-lab-results.md).
@@ -212,6 +216,7 @@ java -cp "$out:$classes:$stdlib" ObfTest "${OBF_DIR:-}"
 java -cp "$out:$classes:$stdlib" AddressSearchTest "${OBF_DIR:-}"
 java -cp "$out:$classes:$stdlib:$brouter" SearchAheadTest "${ROUTING_SEGMENTS:-}" "${OBF_DIR:-}"
 java -cp "$out:$classes:$stdlib" WirelessProbeTest
+java -cp "$out:$classes:$stdlib" WirelessBootstrapTest
 status=0
 java -Xcheck:jni --add-opens java.base/sun.nio.ch=ALL-UNNAMED -Djava.library.path=target/release \
     -cp "$out:$classes:$stdlib" JniContractTest > "$out/output.txt" 2>&1 || status=$?

@@ -3,9 +3,9 @@
 <resources>
     <string name="wireless_probe_label">Wireless probe</string>
     <string name="wireless_probe_title">Wireless probe</string>
-    <string name="wireless_probe_card">Checks whether the truck offers wireless Android Auto to this phone. Read-only; asks for Nearby devices when opened.</string>
+    <string name="wireless_probe_card">Checks whether the truck offers wireless Android Auto to this phone, then (W1) reads its wireless setup without joining its Wi-Fi. Asks for Nearby devices when opened.</string>
     <string name="wireless_probe_open">Open wireless probe</string>
-    <string name="wireless_probe_intro">Checks whether a paired device advertises the wireless Android Auto service over Bluetooth. Read-only: it asks the device which services it offers and connects to nothing.\n\nHave the truck on and connected to this phone over Bluetooth as usual, with the USB cable unplugged. Then tap the truck below. Each run is saved as a report; use Export saved reports under Diagnostics to take it off the phone.</string>
+    <string name="wireless_probe_intro">Checks whether a paired device advertises the wireless Android Auto service over Bluetooth. This first check is read-only: it asks the device which services it offers and connects to nothing.\n\nIf it does, a second button appears (W1). That one connects to the service and reads what the truck sends, including its Wi-Fi details, then disconnects without joining the Wi-Fi. The Wi-Fi password is never kept; the network name and address are kept only as scrambled fingerprints.\n\nHave the truck on and connected to this phone over Bluetooth as usual, with the USB cable unplugged. Then tap the truck below. Each run is saved as a report; use Export saved reports under Diagnostics to take it off the phone.</string>
     <string name="wireless_probe_pick">Tap the device to probe:</string>
     <string name="wireless_probe_device">Probe %1$s</string>
     <string name="wireless_probe_unnamed">(no name)</string>
@@ -16,4 +16,8 @@
     <string name="wireless_probe_no_permission">The probe needs Nearby devices. Allow it in Settings, Apps, then reopen the probe.</string>
     <string name="wireless_probe_no_bluetooth">Bluetooth is off or missing. Turn it on and reopen the probe.</string>
     <string name="wireless_probe_no_devices">No paired devices. Pair the truck in Bluetooth settings first.</string>
+    <string name="wireless_bootstrap_button">Read wireless setup from %1$s (W1)</string>
+    <string name="wireless_bootstrap_running">Connecting to the wireless Android Auto service on %1$s and reading what it sends… (up to 35 s)</string>
+    <string name="wireless_bootstrap_saved">W1 outcome: %1$s. Saved as %2$s.</string>
+    <string name="wireless_bootstrap_unsaved">W1 outcome: %1$s. Not saved: the report store is not available.</string>
 </resources>

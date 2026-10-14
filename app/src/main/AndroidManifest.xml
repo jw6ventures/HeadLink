@@ -81,8 +81,10 @@
          14 October 2026). A runtime grant (Nearby devices), asked for only when the
          operator opens Diagnostics, Wireless probe; nothing else in the app touches
          Bluetooth. With it the probe lists paired devices and asks the one picked which
-         services it offers (one SDP query). It opens no connection and sends the head unit
-         nothing else, and its report carries no device name or address. -->
+         services it offers (one SDP query). After an advertised verdict, and only on a
+         second tap, W1 opens one RFCOMM connection to that service, reads the head unit's
+         wireless setup and closes; it joins no network. Neither report carries a device
+         name or address, and W1's keeps no Wi-Fi key (spec.md 5.2, the W1 amendment). -->
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
     <!-- P7.5: the idle media pane lists player apps that can be resumed with no session
