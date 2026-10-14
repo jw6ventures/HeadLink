@@ -30,6 +30,7 @@ object NativeBridge {
     const val EVENT_AUDIO_START = 12
     const val EVENT_AUDIO_STOP = 13
     const val EVENT_VEHICLE = 14
+    const val EVENT_VIDEO_RESTART = 15
 
     /** [submitVideo] results; negative values are contract errors. */
     const val SUBMIT_ACCEPTED = 0
@@ -293,6 +294,7 @@ object NativeBridge {
                     if (settings.setupField != SessionSettings.SETUP_FIELD_CODEC) {
                         append("setup_field=${settings.setupField}\n")
                     }
+                    append("congestion_restart=${settings.congestionRestart}\n")
                 } else {
                     settings.holdMs?.let { append("hold_ms=$it\n") }
                 }
@@ -494,6 +496,12 @@ data class SessionSettings(
      * route being followed (projection only; P6.5 made the route the default).
      */
     val navigationScript: Boolean = false,
+    /**
+     * Restart the video stream when the head unit keeps falling behind (projection only,
+     * spec §8.2), as a screen switch does. Always written, so the app never depends on
+     * the native default.
+     */
+    val congestionRestart: Boolean = true,
 ) {
     companion object {
         const val STOP_AFTER_VERSION = "version"

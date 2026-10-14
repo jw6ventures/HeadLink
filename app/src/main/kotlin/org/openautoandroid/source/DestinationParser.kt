@@ -24,6 +24,12 @@ enum class DestinationSource(val label: String) {
 
     /** A tap on the dashboard's favorites tile: a place saved on the connection screen. */
     FAVORITE("favorite"),
+
+    /** A suggestion picked from the connection screen's typed search over OsmAnd's maps (P11.4). */
+    SEARCH("search"),
+
+    /** Go on the dashboard's POI card: a Gas, Food or Shop marker tapped on the projected map (P11.5). */
+    MAP_POI("map-poi"),
 }
 
 /**

@@ -983,9 +983,10 @@ fn window_bounds_outstanding_units_and_congestion_recovers_at_an_idr() {
         ]
     );
     pump(&mut s, &mut hu, t0);
-    // Configuration takes no credit: IDR and one other frame fill the window of 2.
+    // Configuration takes no credit: IDR and one other frame fill the window of 2. No
+    // keyframe is asked for while frames from before the drop still wait.
     assert_eq!(hu.media.len(), 3);
-    assert_eq!(s.take_app_events(), vec![AppEvent::KeyframeRequest]);
+    assert_eq!(s.take_app_events(), vec![]);
     let p = s.report().projection.clone().unwrap();
     assert_eq!((p.outstanding, p.outstanding_max), (2, 2));
 
@@ -1049,6 +1050,244 @@ fn window_bounds_outstanding_units_and_congestion_recovers_at_an_idr() {
         .take_app_events()
         .iter()
         .any(|e| matches!(e, AppEvent::VideoStop { .. })));
+}
+
+/// A head unit that withholds acknowledgements, with a window of two.
+fn withholding_hu() -> hu_sim::Config {
+    hu_sim::Config {
+        projection: hu_sim::Projection {
+            ack: Ack::Withhold,
+            max_unacked: Some(2),
+            ..Default::default()
+        },
+        ..hu_sim::Config::default()
+    }
+}
+
+/// One congestion episode at `at`: frames until the queue overflows, then the head unit
+/// catches up and an IDR ends it, as the encoder's own interval would supply.
+fn congestion_episode(
+    s: &mut Session,
+    hu: &mut HeadUnit,
+    source: &mut Source,
+    at: Instant,
+    pts: &mut i64,
+) {
+    let link = s.media();
+    loop {
+        let (bytes, flags) = source.frame(false);
+        *pts += 16_667;
+        if link.submit(flags, *pts, &bytes) == Submit::DroppedCongested {
+            break;
+        }
+    }
+    for _ in 0..4 {
+        hu.release_acks();
+        pump(s, hu, at);
+    }
+    let (bytes, flags) = source.frame(true);
+    *pts += 16_667;
+    assert_eq!(link.submit(flags, *pts, &bytes), Submit::Accepted);
+    pump(s, hu, at);
+    hu.release_acks();
+    pump(s, hu, at);
+}
+
+/// 2026-10-11 (report d11eec1e): asking for an IDR the instant the queue overflowed kept
+/// Ford SYNC 4.0 behind — 5,200 episodes in an hour, two keyframes a second. The IDR that
+/// ends an episode now waits for the queue to drain, and is asked for only a spacing after
+/// the last keyframe went out.
+#[test]
+fn congestion_waits_for_the_queue_to_drain_and_spaces_its_keyframe_request() {
+    let (mut s, mut hu, t0) = start(withholding_hu(), |_| {});
+    s.take_app_events();
+    let link = s.media();
+    let mut source = Source::new(800, 480);
+    assert_eq!(link.submit(CONFIG, 0, &source.config()), Submit::Accepted);
+    for i in 0..4 {
+        let (bytes, flags) = source.frame(i == 0);
+        assert_eq!(link.submit(flags, i * 16_667, &bytes), Submit::Accepted);
+    }
+    let (bytes, flags) = source.frame(false);
+    assert_eq!(
+        link.submit(flags, 4 * 16_667, &bytes),
+        Submit::DroppedCongested
+    );
+    pump(&mut s, &mut hu, t0);
+    assert!(s.take_app_events().is_empty());
+
+    // An IDR while two frames from before the drop still wait is dropped too.
+    let (bytes, flags) = source.frame(true);
+    assert_eq!(
+        link.submit(flags, 5 * 16_667, &bytes),
+        Submit::DroppedAwaitingKeyframe
+    );
+    assert_eq!(link.counters().dropped_draining, 1);
+
+    // The head unit catches up; the queue drains, and the request waits for the spacing
+    // from the keyframe that went out at t0.
+    for _ in 0..2 {
+        hu.release_acks();
+        pump(&mut s, &mut hu, t0);
+    }
+    assert!(s.take_app_events().is_empty());
+    assert!(s.next_deadline().unwrap() <= t0 + Duration::from_secs(1));
+    s.on_timer(t0 + Duration::from_millis(999));
+    assert!(!s
+        .take_app_events()
+        .iter()
+        .any(|e| matches!(e, AppEvent::KeyframeRequest)));
+    s.on_timer(t0 + Duration::from_secs(1));
+    assert_eq!(
+        s.take_app_events()
+            .iter()
+            .filter(|e| matches!(e, AppEvent::KeyframeRequest))
+            .count(),
+        1
+    );
+    s.on_timer(t0 + Duration::from_secs(2));
+    assert!(s.take_app_events().is_empty(), "asked once per episode");
+    let p = s.report().projection.clone().unwrap();
+    assert_eq!((p.keyframe_requests, p.keyframe_requests_drained), (1, 1));
+
+    let (bytes, flags) = source.frame(true);
+    assert_eq!(link.submit(flags, 6 * 16_667, &bytes), Submit::Accepted);
+    let m = link.counters();
+    assert_eq!((m.congestion_events, m.dropped_congested), (1, 1));
+    assert_eq!(m.dropped_awaiting_keyframe, 1);
+}
+
+/// A head unit that keeps falling behind has its stream restarted as a screen switch does
+/// — stop indication, start under a new session id, rebuilt encoder — and no more than
+/// once a cooldown. Counted apart from focus transitions.
+#[test]
+fn repeated_congestion_restarts_the_stream_once_per_cooldown() {
+    let (mut s, mut hu, t0) = start(withholding_hu(), |_| {});
+    s.take_app_events();
+    let link = s.media();
+    let mut source = Source::new(800, 480);
+    assert_eq!(link.submit(CONFIG, 0, &source.config()), Submit::Accepted);
+    let mut pts = 0;
+    let first_session = s.report().projection.clone().unwrap().start_session;
+    // 0x8002 is also used on other channels, so stop indications are counted, not looked for.
+    let stops = |hu: &HeadUnit| {
+        hu.ids()
+            .iter()
+            .filter(|&&id| id == ids::av::STOP_INDICATION)
+            .count()
+    };
+    let stops_before = stops(&hu);
+
+    for n in 0..4 {
+        congestion_episode(
+            &mut s,
+            &mut hu,
+            &mut source,
+            t0 + Duration::from_secs(n),
+            &mut pts,
+        );
+    }
+    assert!(!s
+        .take_app_events()
+        .iter()
+        .any(|e| matches!(e, AppEvent::VideoRestart { .. })));
+    assert_eq!(stops(&hu), stops_before);
+
+    congestion_episode(
+        &mut s,
+        &mut hu,
+        &mut source,
+        t0 + Duration::from_secs(4),
+        &mut pts,
+    );
+    let events = s.take_app_events();
+    let restart = events
+        .iter()
+        .position(|e| matches!(e, AppEvent::VideoRestart { .. }))
+        .expect("five episodes within ten seconds restart the stream");
+    assert!(
+        matches!(&events[restart], AppEvent::VideoRestart { reason } if reason == "5 congestion episodes within 10000 ms"),
+        "{events:?}"
+    );
+    let keyframe = events
+        .iter()
+        .position(|e| matches!(e, AppEvent::KeyframeRequest))
+        .expect("the restarted stream asks for its IDR");
+    assert!(restart < keyframe, "{events:?}");
+    assert_eq!(stops(&hu), stops_before + 1);
+    let p = s.report().projection.clone().unwrap();
+    assert_ne!(p.start_session, first_session, "a new session id");
+    assert_eq!(p.congestion_restarts, 1);
+    assert_eq!((p.focus_stop_indications, p.focus_restarts), (0, 0));
+    assert_eq!(category(&s), None, "{}", detail(&s));
+
+    // Five more inside the cooldown: due, held, and counted.
+    for n in 5..10 {
+        congestion_episode(
+            &mut s,
+            &mut hu,
+            &mut source,
+            t0 + Duration::from_secs(n),
+            &mut pts,
+        );
+    }
+    let p = s.report().projection.clone().unwrap();
+    assert_eq!((p.congestion_restarts, p.congestion_restarts_held), (1, 1));
+
+    // After it, the next run of five restarts again.
+    for n in 70..75 {
+        congestion_episode(
+            &mut s,
+            &mut hu,
+            &mut source,
+            t0 + Duration::from_secs(n),
+            &mut pts,
+        );
+    }
+    let p = s.report().projection.clone().unwrap();
+    assert_eq!(p.congestion_restarts, 2);
+
+    // The timeline names the minutes it happened in.
+    let rows: Vec<(u32, u32, u32)> = p
+        .timeline
+        .iter()
+        .map(|r| (r.minute, r.episodes, r.restarts))
+        .collect();
+    assert_eq!(rows, vec![(0, 10, 1), (1, 5, 1)]);
+    let text = p.to_string();
+    assert!(text.contains("video_timeline=0:"), "{text}");
+    assert!(
+        text.contains("video_congestion_restarts=2 video_congestion_restarts_held=1"),
+        "{text}"
+    );
+}
+
+#[test]
+fn congestion_restart_can_be_turned_off() {
+    let (mut s, mut hu, t0) = start(withholding_hu(), |c| {
+        c.projection.congestion_restart = false;
+    });
+    s.take_app_events();
+    let link = s.media();
+    let mut source = Source::new(800, 480);
+    assert_eq!(link.submit(CONFIG, 0, &source.config()), Submit::Accepted);
+    let mut pts = 0;
+    for n in 0..8 {
+        congestion_episode(
+            &mut s,
+            &mut hu,
+            &mut source,
+            t0 + Duration::from_secs(n),
+            &mut pts,
+        );
+    }
+    assert!(!s
+        .take_app_events()
+        .iter()
+        .any(|e| matches!(e, AppEvent::VideoRestart { .. })));
+    let p = s.report().projection.clone().unwrap();
+    assert_eq!((p.congestion_restarts, p.congestion_restarts_held), (0, 0));
+    assert_eq!(p.timeline.first().map(|r| r.episodes), Some(8));
 }
 
 /// Spec §8.2: a focus transition stops and restarts the stream. The head unit must see the

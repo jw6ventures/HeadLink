@@ -372,12 +372,15 @@ object LiveAlternatives {
         if (traffic) trafficLooks++
         val maps = Routing.nameMaps
         val app = context.applicationContext
-        Routing.explore(context) { router, started, cancelled ->
-            val begun = System.nanoTime()
-            val routes = ArrayList<Route>()
-            try {
-                AlternativeSearch.find(router, trip, aroundTraffic, RoutePlanner.MAX_RUNNING_MS, started, cancelled) { routes += it }
-            } finally {
+        // Answered in done, which runs even when the planner skips the look for a route
+        // request: a re-route that fails keeps the token, and nothing else would clear
+        // looking for it.
+        val routes = ArrayList<Route>()
+        var begun = System.nanoTime()
+        var ran = false
+        Routing.explore(
+            context,
+            done = {
                 // Named, so a route taken from a bubble says its roads on the cluster.
                 val named = routes.map { route ->
                     try {
@@ -387,8 +390,13 @@ object LiveAlternatives {
                     }
                 }
                 val took = (System.nanoTime() - begun) / 1_000_000L
-                main.post { finished(app, forToken, follower, ahead, aheadAlongM, named, took) }
-            }
+                val looked = ran
+                main.post { finished(app, forToken, follower, ahead, aheadAlongM, named, took, looked) }
+            },
+        ) { router, started, cancelled ->
+            ran = true
+            begun = System.nanoTime()
+            AlternativeSearch.find(router, trip, aroundTraffic, RoutePlanner.MAX_RUNNING_MS, started, cancelled) { routes += it }
         }
     }
 
@@ -400,8 +408,14 @@ object LiveAlternatives {
         aheadAlongM: Double,
         routes: List<Route>,
         tookMs: Long,
+        looked: Boolean,
     ) {
         looking = false
+        if (!looked) {
+            // Skipped for a route request: what is on show stays, and the next fix may look.
+            if (lookAgain && forToken == token && forToken == Routing.token) lookNow(context)
+            return
+        }
         lastLookMsTaken = tookMs
         // The same token is the same route, so the follower that was asked about is still the one following it.
         if (forToken != token || forToken != Routing.token) return

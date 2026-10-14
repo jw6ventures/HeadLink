@@ -23,6 +23,7 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.text.format.DateFormat
 import android.util.TypedValue
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
@@ -107,6 +108,7 @@ class ConnectionActivity : Activity() {
     private lateinit var captureVideoCheck: CheckBox
     private lateinit var openAllChannelsCheck: CheckBox
     private lateinit var resumeInPlaceCheck: CheckBox
+    private lateinit var congestionRestartCheck: CheckBox
     private lateinit var waitForFocusCheck: CheckBox
     private lateinit var keyframeSpinner: Spinner
     private lateinit var setupFieldSpinner: Spinner
@@ -220,6 +222,10 @@ class ConnectionActivity : Activity() {
     private lateinit var importRoutingButton: Button
     private lateinit var removeDataButton: Button
     private lateinit var routeInput: EditText
+    /** P11.4: live suggestions from OsmAnd's maps under [routeInput]. */
+    private lateinit var searchSuggestions: SearchSuggestions
+    /** P11.1: Settings → OsmAnd maps. */
+    private lateinit var osmAndMapsCard: OsmAndMapsCard
     private lateinit var routeButton: Button
     private lateinit var clearRouteButton: Button
     private lateinit var previewButton: Button
@@ -365,11 +371,15 @@ class ConnectionActivity : Activity() {
                 ?: SessionController.note("lab route \"$route\" is not lat,lon lat,lon; ignored")
         }
         // Saved places for the favorites tile, `name@lat,lon;name@lat,lon`, replacing the
-        // list: how the lab gets a tile with rows in it to draw and scroll.
+        // list: how the lab gets a tile with rows in it to draw and scroll. A recent
+        // destination, `name@lat,lon`, goes above them, or none: the tile lists only what
+        // the lab gave it.
         val favorites = intent?.getStringExtra(EXTRA_LAB_FAVORITES)
         if (favorites != null && applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
             Favorites.replace(this, labFavorites(favorites))
-            SessionController.note("lab favorites: ${Favorites.list(this).size} saved")
+            val recent = intent.getStringExtra(EXTRA_LAB_RECENT)?.let { labFavorites(it).firstOrNull() }
+            if (recent != null) Favorites.setRecent(this, recent) else Favorites.clearRecent(this)
+            SessionController.note("lab favorites: ${Favorites.list(this).size} saved, ${if (recent != null) "a" else "no"} recent one")
         }
         // P8.1: the emulator has no A2DP output, so the lab lets Speaker's Bluetooth gate
         // pass on any output (plan §10). Debug builds only; the report says speech_gate=lab.
@@ -423,6 +433,7 @@ class ConnectionActivity : Activity() {
             captureVideo = intent.getBooleanExtra(EXTRA_LAB_CAPTURE_VIDEO, false),
             openAllChannels = intent.getBooleanExtra(EXTRA_LAB_OPEN_ALL_CHANNELS, false),
             rebuildOnRegain = !intent.getBooleanExtra(EXTRA_LAB_RESUME_IN_PLACE, false),
+            congestionRestart = intent.getBooleanExtra(EXTRA_LAB_CONGESTION_RESTART, true),
             requestFocus = !intent.getBooleanExtra(EXTRA_LAB_WAIT_FOR_FOCUS, false),
             keyframeSeconds = intent.getIntExtra(EXTRA_LAB_KEYFRAME_SECONDS, 1),
             setupField = intent.getStringExtra(EXTRA_LAB_SETUP_FIELD) ?: SessionSettings.SETUP_FIELD_CODEC,
@@ -468,7 +479,21 @@ class ConnectionActivity : Activity() {
             Favorite.of(name, lat, lon)
         }
 
+    /** P11.1: OsmAnd's maps stay open while this screen is in front, for typed search. */
+    override fun onStart() {
+        super.onStart()
+        ObfLibrary.listener = { if (!isDestroyed) render() }
+        ObfLibrary.hold(MAPS_HOLDER, true)
+    }
+
+    override fun onStop() {
+        searchSuggestions.hide()
+        ObfLibrary.hold(MAPS_HOLDER, false)
+        super.onStop()
+    }
+
     override fun onDestroy() {
+        ObfLibrary.listener = null
         SessionController.removeListener(render)
         unregisterReceiver(permissionReceiver)
         unregisterReceiver(detachReceiver)
@@ -875,12 +900,23 @@ class ConnectionActivity : Activity() {
             importRouting(uri)
             return
         }
-        if (requestCode == REQUEST_DROP_FOLDER) {
-            try {
-                DropFolder.choose(this, uri)
+        if (requestCode == REQUEST_MAPS_FOLDER) {
+            val message = try {
+                if (ObfLibrary.choose(this, uri)) null else getString(R.string.osmand_maps_is_drop_folder)
             } catch (e: SecurityException) {
-                Toast.makeText(this, getString(R.string.drop_folder_failed, e.message ?: e.toString()), Toast.LENGTH_LONG).show()
+                getString(R.string.osmand_maps_failed, e.message ?: e.toString())
             }
+            message?.let { Toast.makeText(this, it, Toast.LENGTH_LONG).show() }
+            render()
+            return
+        }
+        if (requestCode == REQUEST_DROP_FOLDER) {
+            val message = try {
+                if (DropFolder.choose(this, uri)) null else getString(R.string.drop_folder_is_maps_folder)
+            } catch (e: SecurityException) {
+                getString(R.string.drop_folder_failed, e.message ?: e.toString())
+            }
+            message?.let { Toast.makeText(this, it, Toast.LENGTH_LONG).show() }
             render()
             return
         }
@@ -1097,6 +1133,37 @@ class ConnectionActivity : Activity() {
     }
 
     /**
+     * P11.1: Settings → OsmAnd maps → Choose folder. A read-only grant ([ObfLibrary.choose]);
+     * the picker opens wherever it last was, and the card's help says where OsmAnd keeps them.
+     */
+    private fun chooseMapsFolder() {
+        try {
+            startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), REQUEST_MAPS_FOLDER)
+        } catch (e: android.content.ActivityNotFoundException) {
+            SessionController.note("no folder picker available: $e")
+        }
+    }
+
+    /**
+     * Where typed search ranks from (plan §4): the vehicle while projecting, else the
+     * phone's newest cached fix. Read on the main thread when a search starts; it goes to
+     * the search engine only, never a note or the report.
+     */
+    private fun searchPoint(): Pair<Double, Double>? =
+        Navigation.vehicleFix?.invoke() ?: lastKnownLocation()?.let { it.latitude to it.longitude }
+
+    /**
+     * A tapped suggestion routes there as a share does (P11.4): the same [Navigation.set]
+     * and toast. The log says only that it came from search; the place stays on the phone.
+     */
+    private fun routeToSuggestion(suggestion: Suggestion) {
+        SessionController.note("search suggestion picked")
+        val message = Navigation.set(this, Destination(suggestion.latitude, suggestion.longitude, suggestion.label), DestinationSource.SEARCH)
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+        render()
+    }
+
+    /**
      * A tap on a favorite routes there, exactly as a tap on the dashboard's tile does
      * (P7 plan §6.4). The log says only that it came from the phone.
      */
@@ -1107,15 +1174,33 @@ class ConnectionActivity : Activity() {
         render()
     }
 
-    /** A long press: Rename or Remove, each naming exactly the place it changes. */
+    /** A long press: Rename, Move to top or Remove, each naming exactly the place it changes. */
     private fun favoriteActions(favorite: Favorite) {
+        val actions = arrayOf(getString(R.string.rename_favorite), getString(R.string.favorite_to_top), getString(R.string.remove_favorite))
         AlertDialog.Builder(this)
             .setTitle(favorite.name)
-            .setItems(arrayOf(getString(R.string.rename_favorite), getString(R.string.remove_favorite))) { _, which ->
-                if (which == 0) renameFavorite(favorite) else removeFavorite(favorite)
+            .setItems(actions) { _, which ->
+                when (which) {
+                    0 -> renameFavorite(favorite)
+                    1 -> moveFavorite(favorite, 0)
+                    else -> removeFavorite(favorite)
+                }
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
+    }
+
+    /**
+     * Puts one saved place at row [to], the dashboard's tile following at once. The place
+     * is looked up again here, as [removeFavorite] does: the list may have changed since
+     * the drag or the menu began.
+     */
+    private fun moveFavorite(favorite: Favorite, to: Int) {
+        val from = Favorites.list(this).indexOf(favorite)
+        if (from < 0 || from == to) return
+        Favorites.move(this, from, to)
+        SessionController.note("favorite moved (${Favorites.list(this).size} saved)")
+        render()
     }
 
     /**
@@ -1254,7 +1339,7 @@ class ConnectionActivity : Activity() {
         captureUnhandledCheck.isEnabled =
             idle && stopAfterSpinner.selectedItem != SessionSettings.STOP_AFTER_VERSION
         for (view in listOf(
-            captureVideoCheck, openAllChannelsCheck, resumeInPlaceCheck, waitForFocusCheck,
+            captureVideoCheck, openAllChannelsCheck, resumeInPlaceCheck, congestionRestartCheck, waitForFocusCheck,
             keyframeSpinner, setupFieldSpinner,
         )) {
             view.isEnabled =
@@ -1382,6 +1467,7 @@ class ConnectionActivity : Activity() {
         renderSettings()
         renderTraffic()
         renderWeather()
+        osmAndMapsCard.render(AppSettings.load(this).speedUnit)
         renderTabs()
     }
 
@@ -1472,10 +1558,11 @@ class ConnectionActivity : Activity() {
 
     /**
      * One saved place: its name large, its coordinates small, the whole row a touch
-     * target. Tap routes there; a long press offers Rename and Remove.
+     * target. Tap routes there; a long press offers Rename, Move to top and Remove; the
+     * handle at the end drags the row to another position.
      */
     private fun favoriteRow(favorite: Favorite): View = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
+        orientation = LinearLayout.HORIZONTAL
         minimumHeight = ui.dp(56)
         gravity = android.view.Gravity.CENTER_VERTICAL
         setPadding(ui.dp(4), ui.dp(8), ui.dp(4), ui.dp(8))
@@ -1489,14 +1576,77 @@ class ConnectionActivity : Activity() {
             favoriteActions(favorite)
             true
         }
-        addView(ui.primary(TextView(this@ConnectionActivity)).apply {
-            text = favorite.name
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
-        })
-        addView(ui.caption().apply {
-            text = String.format(java.util.Locale.ROOT, "%.5f, %.5f", favorite.latitude, favorite.longitude)
-            setPadding(0, 0, 0, 0)
-        })
+        val text = LinearLayout(this@ConnectionActivity).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(ui.primary(TextView(this@ConnectionActivity)).apply {
+                text = favorite.name
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
+            })
+            addView(ui.caption().apply {
+                text = String.format(java.util.Locale.ROOT, "%.5f, %.5f", favorite.latitude, favorite.longitude)
+                setPadding(0, 0, 0, 0)
+            })
+        }
+        addView(text, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        addView(favoriteHandle(this, favorite), LinearLayout.LayoutParams(ui.dp(48), ViewGroup.LayoutParams.MATCH_PARENT))
+    }
+
+    /**
+     * The drag handle of [row]. The row follows the finger and the rows it passes step
+     * aside, all by translation: the views are not re-ordered until the finger lifts,
+     * because taking the row out of its parent mid-gesture would end the gesture. The
+     * drop is then one [moveFavorite], and the render that follows rebuilds the list.
+     */
+    @android.annotation.SuppressLint("ClickableViewAccessibility")
+    private fun favoriteHandle(row: View, favorite: Favorite): View = ui.caption().apply {
+        text = "≡"
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
+        gravity = android.view.Gravity.CENTER
+        setPadding(0, 0, 0, 0)
+        contentDescription = getString(R.string.favorite_drag_handle)
+        var startY = 0f
+        var target = -1
+        fun settle() {
+            for (i in 0 until favoritesList.childCount) favoritesList.getChildAt(i).translationY = 0f
+            row.translationZ = 0f
+            row.alpha = 1f
+            target = -1
+        }
+        setOnTouchListener { handle, event ->
+            val from = favoritesList.indexOfChild(row)
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    if (from < 0) return@setOnTouchListener false
+                    // The page scrolls; while a row is held, the drag is the row's.
+                    handle.parent.requestDisallowInterceptTouchEvent(true)
+                    startY = event.rawY
+                    target = from
+                    row.translationZ = ui.dp(4).toFloat()
+                    row.alpha = 0.85f
+                }
+                MotionEvent.ACTION_MOVE -> if (target >= 0 && from >= 0) {
+                    val dy = (event.rawY - startY).coerceIn(-row.top.toFloat(), (favoritesList.height - row.bottom).toFloat())
+                    row.translationY = dy
+                    // The row takes the place of each neighbour whose middle its edge has passed.
+                    target = from
+                    for (i in 0 until favoritesList.childCount) {
+                        val other = favoritesList.getChildAt(i)
+                        if (other === row) continue
+                        val middle = other.top + other.height / 2
+                        val passed = if (i > from) row.bottom + dy > middle else row.top + dy < middle
+                        other.translationY = if (!passed) 0f else if (i > from) -row.height.toFloat() else row.height.toFloat()
+                        if (passed && (i > from && i > target || i < from && i < target)) target = i
+                    }
+                }
+                MotionEvent.ACTION_UP -> {
+                    val to = target
+                    settle()
+                    if (to >= 0) moveFavorite(favorite, to)
+                }
+                MotionEvent.ACTION_CANCEL -> settle()
+            }
+            true
+        }
     }
 
     /**
@@ -1753,7 +1903,8 @@ class ConnectionActivity : Activity() {
     /**
      * The phone's newest cached fix of any age, for Setup's "no routing data for where you
      * are" only: which 5° tile the phone is in changes over hundreds of kilometres, so an
-     * old fix still answers it. Never requests a fix, and never leaves this screen.
+     * old fix still answers it. Also where typed search ranks from (P11.4) when nothing
+     * projects. Never requests a fix, and never leaves the phone.
      */
     private fun lastKnownLocation(): Location? {
         if (!hasLocation()) return null
@@ -2233,6 +2384,7 @@ class ConnectionActivity : Activity() {
         captureVideoCheck = CheckBox(this).apply { setText(R.string.capture_video_label) }
         openAllChannelsCheck = CheckBox(this).apply { setText(R.string.open_all_channels_label) }
         resumeInPlaceCheck = CheckBox(this).apply { setText(R.string.resume_in_place_label) }
+        congestionRestartCheck = CheckBox(this).apply { setText(R.string.congestion_restart_label) }
         waitForFocusCheck = CheckBox(this).apply { setText(R.string.wait_for_focus_label) }
         keyframeSpinner = spinner(SessionSettings.KEYFRAME_SECONDS.map { "$it s" })
         setupFieldSpinner = spinner(SessionSettings.SETUP_FIELDS)
@@ -2422,6 +2574,8 @@ class ConnectionActivity : Activity() {
             setHorizontallyScrolling(false)
             maxLines = 2
         }
+        searchSuggestions = SearchSuggestions(this, ui, routeInput, ::searchPoint) { routeToSuggestion(it) }
+        osmAndMapsCard = OsmAndMapsCard(this, ui) { chooseMapsFolder() }
         routeButton = button(R.string.compute_route) { computeRoute() }
         clearRouteButton = button(R.string.clear_route) {
             Navigation.clear()
@@ -2495,7 +2649,7 @@ class ConnectionActivity : Activity() {
                     .apply { setMargins(0, ui.dp(12), 0, ui.dp(6)) }
             },
             ui.card(
-                ui.title(R.string.route_title), routeSummaryText, routeInput, ui.row(routeButton, clearRouteButton),
+                ui.title(R.string.route_title), routeSummaryText, routeInput, searchSuggestions.view, ui.row(routeButton, clearRouteButton),
                 previewButton.also {
                     it.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                 },
@@ -2623,6 +2777,8 @@ class ConnectionActivity : Activity() {
                 ui.withHelp(weatherCheck, R.string.weather_switch, R.string.weather_switch_help),
                 *weatherRows.toTypedArray(),
             ),
+            // P11.1 (docs/p11-plan.md §2): the maps folder, its status, markers and search ahead.
+            osmAndMapsCard.view,
             // P8.1: applies to notification reading and, from P8.2, turn prompts (plan §7).
             ui.card(
                 ui.title(R.string.settings_speech),
@@ -2653,6 +2809,7 @@ class ConnectionActivity : Activity() {
                 ui.withHelp(captureVideoCheck, R.string.capture_video_label, R.string.capture_video_help),
                 ui.withHelp(openAllChannelsCheck, R.string.open_all_channels_label, R.string.open_all_channels_help),
                 ui.withHelp(resumeInPlaceCheck, R.string.resume_in_place_label, R.string.resume_in_place_help),
+                ui.withHelp(congestionRestartCheck, R.string.congestion_restart_label, R.string.congestion_restart_help),
                 ui.withHelp(waitForFocusCheck, R.string.wait_for_focus_label, R.string.wait_for_focus_help),
                 ui.labelled(R.string.keyframe_label, R.string.keyframe_help, keyframeSpinner, stacked = true),
                 ui.labelled(R.string.setup_field_label, R.string.setup_field_help, setupFieldSpinner, stacked = true),
@@ -2741,6 +2898,7 @@ class ConnectionActivity : Activity() {
         keepaliveSpinner.setSelection(SessionSettings.KEEPALIVE_PROFILES.indexOf(saved.keepalive))
         openAllChannelsCheck.isChecked = saved.openAllChannels
         resumeInPlaceCheck.isChecked = saved.resumeInPlace
+        congestionRestartCheck.isChecked = saved.congestionRestart
         waitForFocusCheck.isChecked = saved.waitForFocus
         keyframeSpinner.setSelection(SessionSettings.KEYFRAME_SECONDS.indexOf(saved.keyframeSeconds))
         setupFieldSpinner.setSelection(SessionSettings.SETUP_FIELDS.indexOf(saved.setupField))
@@ -2810,6 +2968,7 @@ class ConnectionActivity : Activity() {
         keepaliveSpinner.saves { s, i -> s.copy(keepalive = SessionSettings.KEEPALIVE_PROFILES[i]) }
         openAllChannelsCheck.saves { s, on -> s.copy(openAllChannels = on) }
         resumeInPlaceCheck.saves { s, on -> s.copy(resumeInPlace = on) }
+        congestionRestartCheck.saves { s, on -> s.copy(congestionRestart = on) }
         waitForFocusCheck.saves { s, on -> s.copy(waitForFocus = on) }
         keyframeSpinner.saves { s, i -> s.copy(keyframeSeconds = SessionSettings.KEYFRAME_SECONDS[i]) }
         setupFieldSpinner.saves { s, i -> s.copy(setupField = SessionSettings.SETUP_FIELDS[i]) }
@@ -2920,6 +3079,7 @@ class ConnectionActivity : Activity() {
         const val EXTRA_LAB_SOCKET = "lab_socket"
         const val EXTRA_LAB_ROUTE = "lab_route"
         const val EXTRA_LAB_FAVORITES = "lab_favorites"
+        const val EXTRA_LAB_RECENT = "lab_recent"
         const val EXTRA_LAB_STOP_AFTER = "lab_stop_after"
         const val EXTRA_LAB_PROFILE = "lab_profile"
         const val EXTRA_LAB_KEEPALIVE = "lab_keepalive"
@@ -2938,6 +3098,7 @@ class ConnectionActivity : Activity() {
         const val EXTRA_LAB_CAPTURE_VIDEO = "lab_capture_video"
         const val EXTRA_LAB_OPEN_ALL_CHANNELS = "lab_open_all_channels"
         const val EXTRA_LAB_RESUME_IN_PLACE = "lab_resume_in_place"
+        const val EXTRA_LAB_CONGESTION_RESTART = "lab_congestion_restart"
         const val EXTRA_LAB_WAIT_FOR_FOCUS = "lab_wait_for_focus"
         const val EXTRA_LAB_KEYFRAME_SECONDS = "lab_keyframe_seconds"
         const val EXTRA_LAB_SETUP_FIELD = "lab_setup_field"
@@ -2983,6 +3144,9 @@ class ConnectionActivity : Activity() {
         private const val REQUEST_PREVIEW = 9
         private const val REQUEST_WEATHER = 10
         private const val REQUEST_WEATHER_GRANT = 11
+        private const val REQUEST_MAPS_FOLDER = 12
+        /** This screen's hold on OsmAnd's open maps ([ObfLibrary.hold]). */
+        private const val MAPS_HOLDER = "screen"
 
         /** The tabs, in the bar's order (P7.7, plan §6.1). */
         private const val TAB_HOME = 0

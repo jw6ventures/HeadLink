@@ -750,6 +750,97 @@ class DashboardLayout @JvmOverloads constructor(
         Box(map.x + margin, top, maxOf(0, map.width - 2 * margin), maxOf(0, map.bottom - margin - top))
     }
 
+    // --- P11.5: POI buttons, markers and the card (docs/p11-plan.md §6) --------------
+
+    /**
+     * Where the Gas, Food and Shop column's top edge goes: a margin into the map pane, or a
+     * margin under the turn card or the divided card while one is drawn. The column runs
+     * down the pane's left edge (James, 3 October 2026: "move the bubbles to the left side
+     * and make it the icons instead of words"), above the recentre and compass bubbles in
+     * the bottom-left corner; the cards own the top during a route, so it starts under them.
+     */
+    fun poiButtonsTop(turnCard: Boolean, offer: Boolean): Int = when {
+        offer -> offerCard.bottom + margin
+        turnCard -> this.turnCard.bottom + margin
+        else -> map.y + margin
+    }
+
+    /**
+     * Button [index] of [PoiRules.ORDER] with the column's top at [top]: a round map bubble
+     * holding the kind's marker icon, a margin in from the pane's left edge and a margin
+     * apart, in the left bubbles' own column so the left edge reads as one stack.
+     */
+    fun poiButton(index: Int, top: Int): Box =
+        if (poiColumnFits(top)) {
+            Box(map.x + margin, top + index * (bubbleSize + margin), bubbleSize, bubbleSize)
+        } else {
+            Box(map.x + margin + index * (bubbleSize + margin), top, bubbleSize, bubbleSize)
+        }
+
+    /**
+     * Whether the column fits between [top] and the compass bubble with a margin to spare.
+     * Under the stacked divided card at 1080p it does not, and the three sit side by side
+     * from the left edge instead, still under the card.
+     */
+    private fun poiColumnFits(top: Int): Boolean {
+        val n = PoiRules.ORDER.size
+        val bottom = top + n * bubbleSize + (n - 1) * margin
+        return bottom + margin <= mapBubble(MAP_ACTIONS.size - 1).y
+    }
+
+    /** The button at a point with the column at [top], or null. Square targets, a margin apart. */
+    fun hitPoiButton(px: Int, py: Int, top: Int): PoiKind? =
+        PoiRules.ORDER.indices.firstOrNull { poiButton(it, top).contains(px, py) }?.let { PoiRules.ORDER[it] }
+
+    /** The whole column at [top], for the report and the lab's pixel check. */
+    fun poiButtonRow(top: Int): Box {
+        val first = poiButton(0, top)
+        val last = poiButton(PoiRules.ORDER.size - 1, top)
+        return Box(first.x, first.y, last.right - first.x, last.bottom - first.y)
+    }
+
+    /** A marker's drawn diameter: two thirds of a map bubble, so many fit without hiding the roads. */
+    val poiMarkerSize: Int = maxOf(16, bubbleSize * 2 / 3)
+
+    /**
+     * How far from a marker's centre a press still lands on it: half a bubble, larger than
+     * the drawing for the reason the bubbles' targets are square (a finger at arm's length).
+     */
+    val poiHitRadius: Int = maxOf(poiMarkerSize / 2, bubbleSize / 2)
+
+    /**
+     * The card's two buttons (index 0 the primary, Go or Add stop; 1 Close) across the flex
+     * tile's bottom, each half the tile and a map bubble tall, or a quarter of the tile if
+     * that is less.
+     */
+    fun poiCardButton(index: Int): Box {
+        val tile = tiles[FLEX_TILE]
+        val h = minOf(bubbleSize, tile.height / 4)
+        val w = maxOf(0, (tile.width - 3 * margin) / 2)
+        return Box(tile.x + margin + index * (w + margin), tile.bottom - margin - h, w, h)
+    }
+
+    /** The card's places, between the label strip and the buttons. */
+    val poiCardList: Box = run {
+        val tile = tiles[FLEX_TILE]
+        val top = tile.y + tileTitleHeight(tile)
+        Box(tile.x + margin, top, maxOf(0, tile.width - 2 * margin), maxOf(0, poiCardButton(0).y - margin - top))
+    }
+
+    /** Row [index] of [count] places on the card: the list shared equally. */
+    fun poiCardRow(index: Int, count: Int): Box {
+        val h = poiCardList.height / maxOf(1, count)
+        return Box(poiCardList.x, poiCardList.y + index * h, poiCardList.width, h)
+    }
+
+    /** The card button at a point, [POI_CARD_ACTIONS], or null. */
+    fun hitPoiCardButton(px: Int, py: Int): String? =
+        POI_CARD_ACTIONS.indices.firstOrNull { poiCardButton(it).contains(px, py) }?.let { POI_CARD_ACTIONS[it] }
+
+    /** The place row at a point of [count], or -1. */
+    fun hitPoiCardRow(px: Int, py: Int, count: Int): Int =
+        (0 until count).firstOrNull { poiCardRow(it, count).contains(px, py) } ?: -1
+
     /**
      * Text size for the empty favourites tile's two lines (P7.5, plan §5.7), sized so the
      * longer one fits the list's width rather than being cut off, as "none saved — add
@@ -817,6 +908,9 @@ class DashboardLayout @JvmOverloads constructor(
 
         /** The divided card's targets, left to right (P9.6). */
         val OFFER_ACTIONS = listOf("take", "keep")
+
+        /** P11.5: the POI card's buttons, left to right: Go (or Add stop), then Close. */
+        val POI_CARD_ACTIONS = listOf("primary", "close")
 
         /** HERE's credit (P9.3); [TrafficDisplay.ATTRIBUTION]. */
         const val TRAFFIC_ATTRIBUTION = TrafficDisplay.ATTRIBUTION
@@ -1118,6 +1212,8 @@ class Dashboard @JvmOverloads constructor(
         val favoritesScroll: Int,
         /** The favorite a finger is resting on, or -1. */
         val pressedFavorite: Int,
+        /** Whether the first of [favorites] is the recent destination, drawn with a history icon. */
+        val recentFavorite: Boolean = false,
         /**
          * The turn card over the map pane (P7.4), or null with nothing to show on it.
          * Already in words, like [mapRotation] is rounded, so it repaints the chrome only
@@ -1208,6 +1304,10 @@ class Dashboard @JvmOverloads constructor(
         val weatherView: WeatherPanel? = null,
         /** P10: the weather alert, while the flex tile shows it. */
         val weatherAlert: WeatherAlertCard? = null,
+        /** P11.5: the Gas, Food and Shop buttons along the top of the map pane. */
+        val poiButtons: PoiButtons? = null,
+        /** P11.5: the POI card, while the flex tile shows it. Names are drawn, never logged. */
+        val poiCard: PoiCardView? = null,
     ) {
         /** Leaves out everything drawn from the phone's own data, in case a snapshot is ever printed. */
         override fun toString(): String = "Snapshot(frame=$frame flex=${flex.key} keypad=$keypadOpen)"
@@ -1304,6 +1404,7 @@ class Dashboard @JvmOverloads constructor(
     private var upcomingTurn: UpcomingTurn? = null
 
     private var favorites: List<Favorite> = emptyList()
+    private var recentFavorite = false
     private var favoritePick: Favorite? = null
 
     /**
@@ -1433,6 +1534,32 @@ class Dashboard @JvmOverloads constructor(
     private var alertsDismissed = 0L
     private var weatherFar = false
 
+    // P11.5: the POI buttons, the markers on the map and the card (docs/p11-plan.md §6).
+    // Off when a projection starts and never saved. Places are drawn, never reported.
+    private val poiKinds = LinkedHashSet<PoiKind>()
+    private var pressedPoiButton: PoiKind? = null
+    private val poiToggles = ArrayList<Pair<PoiKind, Boolean>>()
+    private val poiButtonPresses = IntArray(PoiKind.entries.size)
+    private var poiMarkers: List<ObfPoi> = emptyList()
+    private var pressedPoiMarker: ObfPoi? = null
+    private var poiDownX = 0
+    private var poiDownY = 0
+    private var poiDownAt = 0L
+    private var poiCard: PoiCardContent? = null
+    private var poiSelected = 0
+    private var poiCardOpenedAt = 0L
+    private var pressedPoiCardButton: String? = null
+    private var pressedPoiRow = -1
+    private var poiAction: PoiAction? = null
+    private var poiTaps = 0L
+    private var poiCardsShown = 0L
+    private var poiPrimaryPresses = 0L
+    private var poiClosePresses = 0L
+    private var poiCardTimeouts = 0L
+    private var poiCardClosesCall = 0L
+    private var poiRowPicks = 0L
+    private var poiMarkersMax = 0
+
     @Synchronized
     fun vehicle(reading: VehicleReading) {
         vehicleEvents++
@@ -1498,6 +1625,136 @@ class Dashboard @JvmOverloads constructor(
     /** P10: the weather view is open (for the lab and the tests). */
     @Synchronized
     fun weatherOpen(): Boolean = weatherOpen
+
+    // --- P11.5: POI buttons, markers and the card ------------------------------------
+
+    /** The buttons lit now, in [PoiRules.ORDER]. */
+    @Synchronized
+    fun poiKinds(): Set<PoiKind> = PoiRules.ORDER.filter { it in poiKinds }.toSet()
+
+    /** Lights exactly [kinds] (the lab's LAB_POI at the start); not a press, not counted. */
+    @Synchronized
+    fun poiKinds(kinds: Set<PoiKind>) {
+        poiKinds.clear()
+        poiKinds.addAll(kinds)
+    }
+
+    /**
+     * The buttons pressed since the last call, in order, each with the state it left
+     * (true for lit), once. P11.5a's hook: a press that lights a button while following a
+     * route is where search ahead starts.
+     */
+    @Synchronized
+    fun takePoiToggles(): List<Pair<PoiKind, Boolean>> {
+        if (poiToggles.isEmpty()) return emptyList()
+        return poiToggles.toList().also { poiToggles.clear() }
+    }
+
+    /**
+     * Where the pane is looking and which buttons are lit, for [PoiFeed.frame]: null until
+     * a frame has been placed. Scene thread, after [mapCamera].
+     */
+    @Synchronized
+    fun poiView(): PoiView? {
+        val box = mapControl.visibleBox(layout.map) ?: return null
+        val camera = mapControl.lastCamera() ?: return null
+        return PoiView(poiKinds(), box, camera.latitude, camera.longitude, mapControl.zoomLevel(), mapControl.following)
+    }
+
+    /**
+     * The markers [PoiFeed] published, as the map draws them (scene thread, when they
+     * change): what a press is tested against. A card whose place is no longer among them
+     * stays open; it names a place, not a marker.
+     */
+    @Synchronized
+    fun pois(list: List<ObfPoi>) {
+        poiMarkers = list
+        poiMarkersMax = maxOf(poiMarkersMax, list.size)
+        if (pressedPoiMarker != null && list.none { it === pressedPoiMarker }) pressedPoiMarker = null
+    }
+
+    /**
+     * Opens the flex tile's POI card on [card], replacing any card, with its first place
+     * chosen (P11.5a's hook for its list of stops with "Add stop"). At most
+     * [PoiCardContent.MAX_ENTRIES] places are shown; an empty list closes the card. Closes
+     * the weather view, as opening the weather view closes this.
+     */
+    @Synchronized
+    @JvmOverloads
+    fun showPoiCard(card: PoiCardContent, nowMillis: Long = System.currentTimeMillis()) {
+        if (card.entries.isEmpty() && card.message == null) {
+            closePoiCard()
+            return
+        }
+        poiCard = PoiCardContent(card.label, card.entries.take(PoiCardContent.MAX_ENTRIES), card.primary, card.tag, card.message)
+        poiSelected = 0
+        poiCardOpenedAt = nowMillis
+        pressedPoiCardButton = null
+        pressedPoiRow = -1
+        poiCardsShown++
+        weatherOpen = false
+    }
+
+    /** Closes the POI card, if one is open. */
+    @Synchronized
+    fun closePoiCard() {
+        poiCard = null
+        pressedPoiCardButton = null
+        pressedPoiRow = -1
+    }
+
+    /** The card open now (for the lab and the tests), or null. */
+    @Synchronized
+    fun poiCard(): PoiCardContent? = poiCard
+
+    /** Go (or Add stop) pressed on the card since the last call, for its chosen place, once; or null. */
+    @Synchronized
+    fun takePoiAction(): PoiAction? = poiAction.also { poiAction = null }
+
+    /** The marker under a point, the nearest within [DashboardLayout.poiHitRadius], or null. */
+    private fun hitPoiMarker(px: Int, py: Int): ObfPoi? = hitPoiMarkers(px, py).firstOrNull()
+
+    /**
+     * Every marker within [DashboardLayout.poiHitRadius] of a point, nearest first. Markers
+     * overlap — a fuel station and its own convenience shop are two places on one spot — and
+     * which one VTM draws on top is its own business, so a tap on a pile lists the pile.
+     */
+    private fun hitPoiMarkers(px: Int, py: Int): List<ObfPoi> {
+        if (poiMarkers.isEmpty()) return emptyList()
+        val r = layout.poiHitRadius.toLong()
+        val hits = ArrayList<Pair<Long, ObfPoi>>()
+        for (poi in poiMarkers) {
+            val (x, y) = mapControl.marker(layout.map, poi.latitude to poi.longitude) ?: continue
+            val dx = (x - px).toLong()
+            val dy = (y - py).toLong()
+            val d = dx * dx + dy * dy
+            if (d <= r * r) hits += d to poi
+        }
+        return hits.sortedBy { it.first }.map { it.second }
+    }
+
+    /** The row's top edge now: under the turn card or the divided card while either is drawn. */
+    private fun poiTop(): Int = layout.poiButtonsTop(turnCard() != null, shownOffer() != null)
+
+    /** The card as drawn this frame, with distances from the vehicle (else the map's centre). */
+    private fun poiCardView(nowMillis: Long): PoiCardView? {
+        val card = poiCard ?: return null
+        val from = followPosition() ?: mapControl.lastCamera()?.let { it.latitude to it.longitude }
+        val rows = card.entries.map { entry ->
+            val poi = entry.poi
+            val detail = entry.detail ?: buildString {
+                append(PoiRules.kindWord(poi))
+                if (from != null) {
+                    append(" · ")
+                    append(speedUnit.distance(PoiRules.metres(from.first, from.second, poi.latitude, poi.longitude)))
+                }
+            }
+            val open = if (entry.openNow) PoiRules.openNow(poi.openingHours, nowMillis, zone) else null
+            PoiRowView(PoiRules.title(poi), detail, open, poi.kind)
+        }
+        if (card.notice) return PoiCardView(emptyList(), 0, "", pressedPoiCardButton, -1, card.message)
+        return PoiCardView(rows, poiSelected, card.primary, pressedPoiCardButton, pressedPoiRow)
+    }
 
     /** The live alternatives to put bubbles on; empty takes them away. */
     @Synchronized
@@ -1670,15 +1927,17 @@ class Dashboard @JvmOverloads constructor(
     }
 
     /**
-     * The saved places the favorites tile lists, replacing whatever it listed. The
-     * scroll position is kept where it can be, so a place added from the phone while
+     * The saved places the favorites tile lists, under the [recent] destination unless it
+     * is one of them ([Favorite.tile]), replacing whatever it listed. The scroll position is kept where it can be, so a place added from the phone while
      * projecting does not throw the list back to the top, and clamped where it cannot,
      * so a shortened list never shows an empty pane.
      */
     @Synchronized
-    fun favorites(list: List<Favorite>) {
-        favorites = list
-        favoriteList.replaced(layout.favoritesMaxScroll(list.size))
+    @JvmOverloads
+    fun favorites(list: List<Favorite>, recent: Favorite? = null) {
+        favorites = Favorite.tile(list, recent)
+        recentFavorite = favorites.size > list.size
+        favoriteList.replaced(layout.favoritesMaxScroll(favorites.size))
     }
 
     /** The favorite a completed tap on the tile chose, once, or null. */
@@ -1738,6 +1997,11 @@ class Dashboard @JvmOverloads constructor(
             if (weatherOpen) {
                 weatherOpen = false
                 weatherClosesCall++
+            }
+            // P11.5: and the POI card the same way.
+            if (poiCard != null) {
+                closePoiCard()
+                poiCardClosesCall++
             }
         }
         if (keypadOpen && !state.canDial) {
@@ -1911,9 +2175,23 @@ class Dashboard @JvmOverloads constructor(
                     val offer = shownOffer()
                     pressedOffer = if (offer != null) layout.hitOfferButton(px, py) else null
                     pressedOfferId = offer?.id ?: 0L
+                    // P11.5: the Gas, Food and Shop buttons, as the bubbles are: over the map
+                    // and everything drawn on it, and never a pan.
+                    pressedPoiButton = if (pressedMapBubble == null && pressedZoom == null && !onCard) {
+                        layout.hitPoiButton(px, py, poiTop())
+                    } else {
+                        null
+                    }
+                    val onControl = pressedMapBubble != null || pressedZoom != null || onCard || pressedPoiButton != null
                     // Under the map's own bubbles: a control drawn over an alternative wins,
                     // and so does the card over one that has slid under it.
-                    pressedAlternative = if (pressedMapBubble == null && pressedZoom == null && !onCard) hitAlternative(px, py) else null
+                    pressedAlternative = if (!onControl) hitAlternative(px, py) else null
+                    // P11.5: a marker under an alternative's bubble is under it in the picture too.
+                    // The press stays the map's, so a drag that starts on a marker still pans.
+                    pressedPoiMarker = if (!onControl && pressedAlternative == null) hitPoiMarker(px, py) else null
+                    poiDownX = px
+                    poiDownY = py
+                    poiDownAt = nowMillis
                     pressedHeaderIcon = layout.hitHeaderIcon(px, py)
                     // P10: the weather item. During a call it does not light (plan §5.2).
                     val onWeather = weatherOn && layout.hitHeaderWeather(px, py)
@@ -1923,7 +2201,7 @@ class Dashboard @JvmOverloads constructor(
                     pressedVoice = upcomingTurn != null && layout.hitVoiceToggle(px, py)
                     pressedPlayer = if (idle) layout.hitPlayer(px, py, players.size, !mediaAccess) else -1
                     // A finger on the turn card is on the card, not on the map under it.
-                    mapGesture = pressedMapBubble == null && pressedZoom == null && pressedAlternative == null && !onCard
+                    mapGesture = !onControl && pressedAlternative == null
                     // The favourites are not drawn during a trip, so they take no presses.
                     if (upcomingTurn == null && layout.favoritesList.contains(px, py)) {
                         favoriteList.down(py, layout.hitFavorite(px, py, favoriteList.scroll, favorites.size))
@@ -1943,6 +2221,17 @@ class Dashboard @JvmOverloads constructor(
                         layout.flexTile.contains(px, py)
                     pressedWeatherTile = if (weatherTile) flex else null
                     pressedWeatherAlert = if (weatherTile && flex == FlexSource.WEATHER_ALERT) shownAlert(nowMillis)?.id else null
+                    // P11.5: the POI card's two buttons and its rows.
+                    val card = poiCard
+                    if (flex == FlexSource.POI && card != null) {
+                        // A notice has Close alone: the primary's place is not a button.
+                        pressedPoiCardButton = layout.hitPoiCardButton(px, py)?.takeUnless { it == "primary" && card.notice }
+                        pressedPoiRow = if (pressedPoiCardButton == null) layout.hitPoiCardRow(px, py, card.entries.size) else -1
+                        if (layout.flexTile.contains(px, py)) poiCardOpenedAt = nowMillis
+                    } else {
+                        pressedPoiCardButton = null
+                        pressedPoiRow = -1
+                    }
                 }
             }
             "move" -> {
@@ -2009,6 +2298,7 @@ class Dashboard @JvmOverloads constructor(
                     if (resumeFailed == chosen.key) resumeFailed = null
                 }
                 if (callAction != null && callAction == wasCallAction) callPress(callAction)
+                poiUp(px, py, nowMillis)
                 weatherUp(px, py, nowMillis)
                 val wasTile = pressedTile
                 val wasMedia = pressedMedia
@@ -2073,6 +2363,10 @@ class Dashboard @JvmOverloads constructor(
                 pressedWeatherInCall = false
                 pressedWeatherTile = null
                 pressedWeatherAlert = null
+                pressedPoiButton = null
+                pressedPoiMarker = null
+                pressedPoiCardButton = null
+                pressedPoiRow = -1
                 favoriteList.cancel()
                 notificationList.cancel()
             }
@@ -2185,6 +2479,8 @@ class Dashboard @JvmOverloads constructor(
                 weatherOpen = true
                 weatherOpenedAt = nowMillis
                 weatherOpens++
+                // P11.5: one tapped view at a time in the tile.
+                closePoiCard()
             }
         }
         if (wasTile == null || !layout.flexTile.contains(px, py) || flexSource(nowMillis) != wasTile) return
@@ -2204,6 +2500,63 @@ class Dashboard @JvmOverloads constructor(
         }
     }
 
+    /**
+     * P11.5: a finger lifted. Press and release on the same target, as for every button: a
+     * POI button flips; a marker opens its card, if the press stayed put and was not a long
+     * press (that stays the map's: a destination where the finger was); the card's Go or
+     * Close, or a row, which chooses that place.
+     */
+    private fun poiUp(px: Int, py: Int, nowMillis: Long) {
+        val wasButton = pressedPoiButton
+        val wasMarker = pressedPoiMarker
+        val wasCardButton = pressedPoiCardButton
+        val wasRow = pressedPoiRow
+        pressedPoiButton = null
+        pressedPoiMarker = null
+        pressedPoiCardButton = null
+        pressedPoiRow = -1
+        if (wasButton != null && layout.hitPoiButton(px, py, poiTop()) == wasButton) {
+            poiButtonPresses[wasButton.ordinal]++
+            val on = poiKinds.add(wasButton)
+            if (!on) poiKinds.remove(wasButton)
+            poiToggles += wasButton to on
+        }
+        if (wasMarker != null) {
+            val still = Math.abs(px - poiDownX) <= POI_TAP_SLOP && Math.abs(py - poiDownY) <= POI_TAP_SLOP
+            val pile = hitPoiMarkers(px, py)
+            if (still && nowMillis - poiDownAt < MapControl.LONG_PRESS_MS && pile.firstOrNull() === wasMarker) {
+                poiTaps++
+                // One place, or up to three piled under the finger, nearest first.
+                val places = pile.take(PoiCardContent.MAX_ENTRIES)
+                val kinds = places.map { it.kind }.toSet()
+                val label = if (kinds.size == 1) PoiRules.cardLabel(kinds.first()) else PoiRules.PLACES
+                showPoiCard(PoiCardContent(label, places.map { PoiEntry(it) }), nowMillis)
+            }
+        }
+        val card = poiCard ?: return
+        if (flexSource(nowMillis) != FlexSource.POI) return
+        val button = layout.hitPoiCardButton(px, py)
+        if (button != null && button == wasCardButton) {
+            when (button) {
+                "primary" -> if (!card.notice) {
+                    poiPrimaryPresses++
+                    poiAction = PoiAction(card.entries[poiSelected.coerceIn(0, card.entries.size - 1)], card.primary, card.tag)
+                    closePoiCard()
+                }
+                "close" -> {
+                    poiClosePresses++
+                    closePoiCard()
+                }
+            }
+            return
+        }
+        val row = layout.hitPoiCardRow(px, py, card.entries.size)
+        if (row >= 0 && row == wasRow) {
+            poiRowPicks++
+            poiSelected = row
+        }
+    }
+
     /** P10: the alert the tile would show now, or null (plan §5.3). */
     private fun shownAlert(nowMillis: Long): WeatherAlert? {
         if (!weatherOn) return null
@@ -2213,7 +2566,9 @@ class Dashboard @JvmOverloads constructor(
 
     /** What the flex tile shows now ([FlexRules.source]). */
     private fun flexSource(nowMillis: Long = lastNowMillis): FlexSource =
-        FlexRules.source(call, notificationsPaused, notifications.size, weatherOn && weatherOpen, shownAlert(nowMillis) != null)
+        FlexRules.source(
+            call, notificationsPaused, notifications.size, weatherOn && weatherOpen, shownAlert(nowMillis) != null, poiCard != null,
+        )
 
     /** The single-pointer form, for a caller that has nothing to pinch with. */
     @Synchronized
@@ -2278,6 +2633,11 @@ class Dashboard @JvmOverloads constructor(
         if (weatherOpen && nowMillis - weatherOpenedAt >= WeatherRules.VIEW_TIMEOUT_MS) {
             weatherOpen = false
             weatherClosesTimeout++
+        }
+        // P11.5: an untouched POI card closes by itself, so it never hides the tile for a drive.
+        if (poiCard != null && nowMillis - poiCardOpenedAt >= POI_CARD_TIMEOUT_MS) {
+            closePoiCard()
+            poiCardTimeouts++
         }
         val vehiclePosition = vehicle.position()
         val phonePosition = phone.latitude?.let { lat -> phone.longitude?.let { lat to it } }
@@ -2352,6 +2712,7 @@ class Dashboard @JvmOverloads constructor(
             favorites = favorites,
             favoritesScroll = favoriteList.scroll,
             pressedFavorite = favoriteList.pressed,
+            recentFavorite = recentFavorite,
             turnCard = turnCard(),
             trip = tripPanel(nowMillis),
             night = resolveNight(dayNight, headUnitNight, rememberedNight),
@@ -2369,7 +2730,7 @@ class Dashboard @JvmOverloads constructor(
             resumePending = resumePending,
             resumeFailed = resumeFailed,
             flex = flex,
-            flexLabel = FlexRules.label(flex, call),
+            flexLabel = if (flex == FlexSource.POI) poiCard?.label ?: FlexRules.label(flex, call) else FlexRules.label(flex, call),
             notifications = shown,
             notificationsScroll = notificationList.scroll,
             pressedNotification = notificationList.pressed,
@@ -2391,6 +2752,8 @@ class Dashboard @JvmOverloads constructor(
             },
             weatherView = weatherView,
             weatherAlert = weatherAlert,
+            poiButtons = PoiButtons(poiKinds(), pressedPoiButton, poiTop()),
+            poiCard = if (flex == FlexSource.POI) poiCardView(nowMillis) else null,
         )
     }
 
@@ -2565,7 +2928,14 @@ class Dashboard @JvmOverloads constructor(
             "weather_view_closes_tap=$weatherClosesTap weather_view_closes_view=$weatherClosesView " +
             "weather_view_closes_timeout=$weatherClosesTimeout weather_view_closes_call=$weatherClosesCall " +
             "weather_taps_in_call=$weatherTapsInCall weather_alerts_shown=${shownAlerts.size} " +
-            "weather_alerts_dismissed=$alertsDismissed weather_far=$weatherFar\n"
+            "weather_alerts_dismissed=$alertsDismissed weather_far=$weatherFar\n" +
+            // P11.5: how the POI buttons, markers and card were used; never a place or a name.
+            "poi_on=${poiKinds().joinToString(",") { it.label }.ifEmpty { "-" }} " +
+            "poi_button_presses=${PoiRules.ORDER.joinToString(",") { "${it.label}:${poiButtonPresses[it.ordinal]}" }} " +
+            "poi_markers_shown=${poiMarkers.size} poi_markers_shown_max=$poiMarkersMax poi_taps=$poiTaps " +
+            "poi_cards=$poiCardsShown poi_primary_presses=$poiPrimaryPresses poi_close_presses=$poiClosePresses " +
+            "poi_row_picks=$poiRowPicks poi_card_timeouts=$poiCardTimeouts poi_card_closes_call=$poiCardClosesCall " +
+            "poi_buttons=${layout.poiButtonRow(layout.poiButtonsTop(false, false)).let { "${it.x},${it.y}+${it.width}x${it.height}" }}\n"
 
     companion object {
         /** Above 5 mph the marker becomes an arrow along the direction of travel. */
@@ -2589,6 +2959,12 @@ class Dashboard @JvmOverloads constructor(
 
         /** Keys the keypad's strip keeps: more than a PIN or an extension, fewer than would overflow it. */
         const val ECHO_MAX = 24
+
+        /** P11.5: an untouched POI card closes after this long. */
+        const val POI_CARD_TIMEOUT_MS = 60_000L
+
+        /** P11.5: a press on a marker is a tap if it moves no further than this and lifts sooner than a long press. */
+        const val POI_TAP_SLOP = 24
 
         private fun wrapDegrees(degrees: Double): Double = ((degrees % 360) + 360) % 360
 

@@ -239,6 +239,13 @@ public final class AppSettingsTest {
         AttemptSettings inPlace = stored("resume_in_place", true).attempt(PINS, PerAttempt.Companion.getNONE());
         check(!inPlace.getRebuildOnRegain(), "resume in place clears the rebuild");
 
+        // Spec 8.2: restarting the stream when the head unit keeps falling behind is on
+        // unless cleared.
+        check(new SavedSettings().attempt(PINS, PerAttempt.Companion.getNONE()).getCongestionRestart(),
+                "the congestion restart is on by default");
+        check(!stored("congestion_restart", false).attempt(PINS, PerAttempt.Companion.getNONE()).getCongestionRestart(),
+                "and can be cleared");
+
         // The saved value is kept even while the stage hides it.
         check(discoveryOnly.getAudio() && discoveryOnly.getEncoderFps() == 30, "a hidden choice is still saved");
     }
@@ -264,7 +271,7 @@ public final class AppSettingsTest {
         SavedSettings changed = stored(
                 "profile", "legacy-1.5", "stop_after", SessionSettings.STOP_AFTER_DISCOVERY,
                 "tls_profile", "tls12-cbc-compat", "keepalive", "encrypted", "open_all_channels", true,
-                "resume_in_place", true, "wait_for_focus", true, "keyframe_seconds", 60,
+                "resume_in_place", true, "congestion_restart", false, "wait_for_focus", true, "keyframe_seconds", 60,
                 "setup_field", "config-index", "sensors", SessionSettings.SENSORS_RESTRICTION,
                 "media_info", false, "audio", true, "navigation", false,
                 "navigation_units", "metric", "navigation_force", false, "navigation_script", true,
@@ -281,10 +288,11 @@ public final class AppSettingsTest {
                 && changed.getClockFormat() == ClockFormat.H12
                 && changed.getDayNight() == DayNightMode.NIGHT && changed.getNotificationExclusions().equals(excluded)
                 && !changed.getAutoStart() && changed.getCallControls() && !changed.getMapOnLeft()
-                && !changed.getReadAloud() && changed.getSpeechMedia() == SpeechMedia.DUCK,
+                && !changed.getReadAloud() && changed.getSpeechMedia() == SpeechMedia.DUCK
+                && !changed.getCongestionRestart(),
                 "every key read: " + changed);
         Map<String, Object> form = changed.toStored();
-        check(form.size() == 55, "55 fields stored, one key each: " + form.size());
+        check(form.size() == 56, "56 fields stored, one key each: " + form.size());
         check(SavedSettings.Companion.fromStored(form).equals(changed), "the stored form reads back whole");
         check(SavedSettings.Companion.fromStored(d.toStored()).equals(d), "and so do the defaults");
         for (Object value : form.values()) {

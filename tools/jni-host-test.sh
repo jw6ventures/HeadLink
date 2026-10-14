@@ -11,8 +11,8 @@
 #   P7.6 also the zoom bubbles, the header's icons, signal and battery at 1080p and
 #   800x480, day/night resolution before and after the head unit's first NIGHT_DATA,
 #   and both chrome palettes' contrast.
-# * FavoritesTest: the saved places' stored form and bounds, and which destination arrived
-#   at is already one of them; the dashboard tile that lists them is under DashboardTest.
+# * FavoritesTest: the saved places' stored form and bounds, which destination arrived
+#   at is already one of them, and the recent one listed above them; the dashboard tile that lists them is under DashboardTest.
 # * DashboardTripTest: P7.4 and P7.5 — the turn card and its maneuver icons, the trip
 #   panel in the favourites tile with End route, the marker moved down under the card, the
 #   idle media pane's player rows with Resume, and the empty favourites text, at 1080p,
@@ -43,6 +43,10 @@
 #   Written against OsmAnd's source; only a real share on the phone confirms the strings.
 # * DropFolderTest: which dropped files are taken, waited for or left, and the map
 #   import's refusal of a file cut short. The document API itself needs a device.
+# * ObfLibraryTest: P11.1's maps folder - which files are opened (no .obf.download, contour,
+#   Wikipedia or basemap), a replaced file's new key, regions from OsmAnd's names, which
+#   persisted grant each folder keeps, the card's status lines, and Settings -> OsmAnd maps'
+#   defaults, repair and stored keys. The grants and the document API need a device.
 # * MapReadGuardTest: the map's retry of tiles VTM read badly and reported as loaded.
 #   MAP_FILE=<Mapsforge file covering 42.42,-71.21> adds a pass through VTM's own reader;
 #   without it the summary line says that pass was skipped.
@@ -121,6 +125,35 @@
 #   a report. It also parses the lab stand-in's own scenarios (tools/breezy-standin/), whose
 #   pure Scenarios.java is compiled here too. Fixtures are in Breezy's shape from its source;
 #   no real blob from a phone has been read yet (docs/p10-plan.md P10.0).
+# * ObfTest: P11.2-P11.3's OBF reader - the wire walker (varints, zigzag, OsmAnd's wire type 6
+#   with 4- and 8-byte big-endian lengths, unknown fields of every wire type), tile arithmetic,
+#   the Gas/Food/Shop rules, and a synthetic .obf built from the vendored OBF.proto: contents,
+#   cities, a postcode, streets, an interpolation range, the POI box tree pruned by area and
+#   category, precisionXY and text-tag names. OBF_DIR=<dir of OsmAnd's Texas .obf files> adds
+#   the real Austin, Amarillo and Lubbock files, positions checked against OpenStreetMap in
+#   metres, and timings; the files are not in the repository, so by default that is skipped
+#   and the summary line says so.
+# * AddressSearchTest: P11.4's typed search - the parser's readings of US-style input (house
+#   numbers with letters and halves, street type and direction words both ways, FM/RM/SH/US/
+#   I-35/CR roads, a city being typed, state and ZIP), and the search over a synthetic file:
+#   exact, estimated along odd, even, step and lettered ranges, the closest number on the same
+#   side and on another stretch of a split street, streets without numbers, cities, ZIPs,
+#   places by name, the order, the state filter, cancellation, a failing file, and a report
+#   line with no place in it. OBF_DIR with Us_texas_austin_northamerica.obf adds real searches
+#   around the Capitol, distances in metres and host timings; without it the line says so.
+# * DashboardPoiTest: P11.5's Gas, Food and Shop buttons along the top of the map pane at 1080p,
+#   726x480 and 800x480 both sides, clear of the bubbles, credits and cards; their presses; a
+#   tapped marker's card with Go and Close, and the three-place list with its own button that
+#   P11.5a uses; the card among the flex tile's sources; the query capped per kind nearest the
+#   centre over a fake ObfSource; the refresh cadence and stale results; the open-now line;
+#   the marker colours; and no name or place in a report. The VTM markers need the lab.
+# * SearchAheadTest: P11.5a's search ahead on the route - places projected onto the route ahead
+#   (metres ahead, metres off, side of the road; behind, too close and off-corridor dropped; one
+#   per place), the corridor's query boxes ending at the destination, A and B 2 km either side
+#   and clamped, the detour's two short routes and arithmetic, the best-stop rule, the words in
+#   miles and km with and without a name or a stop, the via point's release, and a report of
+#   counts only. ROUTING_SEGMENTS with W100_N30.rd5 and OBF_DIR with the Austin file add a real
+#   search north on I-35 toward Round Rock: gas in the corridor, BRouter's detours, timings.
 # LabDrive.java and LabTraffic.java are compiled here but not run: they are generators run
 # by hand, the second writing the P9 lab's stand-in HERE scenarios and traffic drive
 # (tools/here-standin/, docs/p9-lab-results.md).
@@ -154,6 +187,7 @@ java -cp "$out:$classes:$stdlib:$brouter" RoutePreviewTest "${ROUTING_SEGMENTS:-
 java -cp "$out:$classes:$stdlib:$brouter" GuidanceTest "${ROUTING_SEGMENTS:-}"
 java -cp "$out:$classes:$stdlib:$brouter:$vtm" StreetNamesTest "${ROUTING_SEGMENTS:-}" "${MAP_FILE:-}"
 java -cp "$out:$classes:$stdlib:$brouter" DropFolderTest
+java -cp "$out:$classes:$stdlib" ObfLibraryTest
 java -cp "$out:$classes:$stdlib:$brouter" DestinationTest
 java -cp "$out:$classes:$stdlib:$vtm" MapReadGuardTest "${MAP_FILE:-}"
 java -cp "$out:$classes:$stdlib" SimSignalTest
@@ -168,8 +202,12 @@ java -cp "$out:$classes:$stdlib" TrafficClientTest
 java -cp "$out:$classes:$stdlib:$brouter" TrafficMatchTest "${ROUTING_SEGMENTS:-}"
 java -cp "$out:$classes:$stdlib:$brouter" NogoRoutingTest "${ROUTING_SEGMENTS:-}"
 java -cp "$out:$classes:$stdlib:$brouter:$vtm" DashboardTrafficTest
+java -cp "$out:$classes:$stdlib" DashboardPoiTest
 java -cp "$out:$classes:$stdlib:$brouter" TrafficFeedTest "${ROUTING_SEGMENTS:-}"
 java -cp "$out:$classes:$stdlib" WeatherTest tools/breezy-standin/scenarios
+java -cp "$out:$classes:$stdlib" ObfTest "${OBF_DIR:-}"
+java -cp "$out:$classes:$stdlib" AddressSearchTest "${OBF_DIR:-}"
+java -cp "$out:$classes:$stdlib:$brouter" SearchAheadTest "${ROUTING_SEGMENTS:-}" "${OBF_DIR:-}"
 status=0
 java -Xcheck:jni --add-opens java.base/sun.nio.ch=ALL-UNNAMED -Djava.library.path=target/release \
     -cp "$out:$classes:$stdlib" JniContractTest > "$out/output.txt" 2>&1 || status=$?

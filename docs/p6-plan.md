@@ -661,7 +661,8 @@ document of its own yet, so what exists is recorded here.
 - `ProjectionService` seeds the list when a dashboard starts, forwards every change while
   it runs, and turns a pick into `Navigation.set(…, DestinationSource.FAVORITE)` — the
   same path a share takes. The connection screen gains the list, "Add favorite" and
-  "Remove favorite". The lab intent takes `lab_favorites` (`name@lat,lon;…`) in a debug
+  "Remove favorite"; since 4 October 2026 each row also has a drag handle that reorders
+  the list (`Favorites.move`), and the long-press menu a "Move to top". The lab intent takes `lab_favorites` (`name@lat,lon;…`) in a debug
   build, and `tools/emulator-lab.sh` passes `LAB_FAVORITES` through.
 - Report: `dashboard_favorites=<n> dashboard_favorite_taps=<n> dashboard_favorite_scrolls=<n>`
   on the dashboard line, and `routing_destination_source=favorite` when one was used. No

@@ -175,6 +175,11 @@ class DashboardRenderer(
         engine?.setTraffic(traffic, position)
     }
 
+    /** P11.5: the POI markers for the next map frame, [size] px across; empty for none. */
+    fun setPois(pois: List<ObfPoi>, size: Int, emphasised: Long?) {
+        engine?.setPois(pois, size, emphasised)
+    }
+
     /** The offer's proposed route for the next map frame, or null for none (P9.6). */
     fun setOffer(route: Route?) {
         engine?.setOffer(route)

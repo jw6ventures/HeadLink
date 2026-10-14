@@ -287,7 +287,7 @@ public final class JniContractTest {
                 null, SessionSettings.SENSORS_NONE, false, false, false,
                 false, SessionSettings.NAVIGATION_UNITS_IMPERIAL, false,
                 SessionSettings.VIDEO_PREFERENCE_LARGEST, 0,
-                SessionSettings.SCENE_AREA_CONTENT, false, false, false, true, SessionSettings.SETUP_FIELD_CODEC, false);
+                SessionSettings.SCENE_AREA_CONTENT, false, false, false, true, SessionSettings.SETUP_FIELD_CODEC, false, true);
         String settingsText = new String(
                 BRIDGE.config(gen, UUID.randomUUID().toString(), settings), StandardCharsets.US_ASCII);
         check(settingsText.contains("capture_discovery=true\n") && settingsText.contains("keepalive=encrypted\n"),
@@ -305,7 +305,7 @@ public final class JniContractTest {
                 identity.toString(), true, List.of(), null, false, SessionSettings.KEEPALIVE_MIRROR, null,
                 SessionSettings.SENSORS_NONE, false, false, false,
                 false, SessionSettings.NAVIGATION_UNITS_IMPERIAL, false,
-                SessionSettings.VIDEO_PREFERENCE_LARGEST, 0, SessionSettings.SCENE_AREA_CONTENT, false, false, false, true, SessionSettings.SETUP_FIELD_CODEC, false);
+                SessionSettings.VIDEO_PREFERENCE_LARGEST, 0, SessionSettings.SCENE_AREA_CONTENT, false, false, false, true, SessionSettings.SETUP_FIELD_CODEC, false, true);
         String text = new String(BRIDGE.config(next, UUID.randomUUID().toString(), ready), StandardCharsets.US_ASCII);
         check(text.contains("stop_after=auth\n") && text.contains("peer_policy=first-use\n")
                 && !text.contains("peer_pins") && !text.contains("capture_discovery") && text.contains("keepalive=mirror\n"),
@@ -317,7 +317,7 @@ public final class JniContractTest {
                 "tls12-aead", identity.toString(), true, List.of(), 5000L, false,
                 SessionSettings.KEEPALIVE_MIRROR, 60000L, SessionSettings.SENSORS_ALL, true, false, false,
                 false, SessionSettings.NAVIGATION_UNITS_IMPERIAL, false,
-                SessionSettings.VIDEO_PREFERENCE_LARGEST, 0, SessionSettings.SCENE_AREA_CONTENT, false, false, false, true, SessionSettings.SETUP_FIELD_CODEC, false);
+                SessionSettings.VIDEO_PREFERENCE_LARGEST, 0, SessionSettings.SCENE_AREA_CONTENT, false, false, false, true, SessionSettings.SETUP_FIELD_CODEC, false, true);
         String projectionText = new String(
                 BRIDGE.config(generation, UUID.randomUUID().toString(), projecting), StandardCharsets.US_ASCII);
         check(projectionText.contains("stop_after=projection\n") && projectionText.contains("projection_ms=60000\n")
@@ -338,12 +338,15 @@ public final class JniContractTest {
         // change what we encode and where we draw.
         check(projectionText.contains("video_preference=largest\n"),
                 "the video preference is always sent\n" + projectionText);
+        // So is the congestion restart (spec 8.2), on unless cleared, and only with projection.
+        check(projectionText.contains("congestion_restart=true\n") && !text.contains("congestion_restart"),
+                "the congestion restart is always sent with projection\n" + projectionText);
         SessionSettings pinned = new SessionSettings("legacy-1.5", SessionSettings.STOP_AFTER_PROJECTION,
                 "tls12-aead", identity.toString(), true, List.of(), 5000L, false,
                 SessionSettings.KEEPALIVE_MIRROR, 60000L, SessionSettings.SENSORS_RESTRICTION, false, true, true,
                 true, "metric", true,
                 "800x480", 30,
-                SessionSettings.SCENE_AREA_FRAME, true, false, false, true, SessionSettings.SETUP_FIELD_CODEC, false);
+                SessionSettings.SCENE_AREA_FRAME, true, false, false, true, SessionSettings.SETUP_FIELD_CODEC, false, true);
         String pinnedText = new String(
                 BRIDGE.config(generation, UUID.randomUUID().toString(), pinned), StandardCharsets.US_ASCII);
         check(pinnedText.contains("video_preference=800x480\n") && !pinnedText.contains("encoder_fps")
@@ -364,9 +367,11 @@ public final class JniContractTest {
                 SessionSettings.KEEPALIVE_MIRROR, 60000L, SessionSettings.SENSORS_NONE, false, false, false,
                 true, SessionSettings.NAVIGATION_UNITS_IMPERIAL, false,
                 "1920x1080", 0,
-                SessionSettings.SCENE_AREA_CONTENT, false, false, true, false, "config-index", true);
+                SessionSettings.SCENE_AREA_CONTENT, false, false, true, false, "config-index", true, false);
         String imitatingText = new String(
                 BRIDGE.config(generation, UUID.randomUUID().toString(), imitating), StandardCharsets.US_ASCII);
+        check(imitatingText.contains("congestion_restart=false\n"),
+                "a cleared congestion restart reaches native\n" + imitatingText);
         check(imitatingText.contains("open_all_channels=true\n")
                 && imitatingText.contains("request_focus=false\n")
                 && imitatingText.contains("setup_field=config-index\n"),

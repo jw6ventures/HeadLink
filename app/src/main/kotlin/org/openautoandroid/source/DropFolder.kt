@@ -46,7 +46,7 @@ object DropFolder {
     /** The granted folder, or null. */
     fun folder(context: Context): Uri? =
         context.contentResolver.persistedUriPermissions
-            .firstOrNull { it.isReadPermission && it.isWritePermission }
+            .firstOrNull { ObfRules.isDropGrant(it.isReadPermission, it.isWritePermission) }
             ?.uri
 
     /** A readable name for the folder: the provider's own path, such as `primary:Download/OpenAuto`. */
@@ -57,16 +57,26 @@ object DropFolder {
             uri.toString()
         }
 
-    /** Makes [tree] the drop folder, letting go of any earlier one, and sweeps it. */
-    fun choose(context: Context, tree: Uri) {
+    /**
+     * Makes [tree] the drop folder, letting go of any earlier one, and sweeps it. Only
+     * earlier read+write grants are given up: the read-only one is P11's maps folder
+     * ([ObfLibrary]), which choosing a drop folder must not drop. False, changing
+     * nothing, when [tree] is already the maps folder: a read+write grant on it would
+     * replace the read-only one, and the maps folder would be gone without a word.
+     * Throws [SecurityException] when the grant cannot be kept.
+     */
+    fun choose(context: Context, tree: Uri): Boolean {
         val resolver = context.contentResolver
         val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-        resolver.persistedUriPermissions
-            .filter { it.uri != tree }
+        val grants = resolver.persistedUriPermissions
+        if (grants.any { it.uri == tree && ObfRules.isMapsGrant(it.isReadPermission, it.isWritePermission) }) return false
+        grants
+            .filter { it.uri != tree && ObfRules.isDropGrant(it.isReadPermission, it.isWritePermission) }
             .forEach { resolver.releasePersistableUriPermission(it.uri, flags) }
         resolver.takePersistableUriPermission(tree, flags)
         SessionController.note("drop folder set to ${describe(tree)}")
         sweep(context)
+        return true
     }
 
     /** Sweeps the folder on the worker thread, unless a sweep is already waiting to start. */

@@ -112,6 +112,9 @@ pub enum EventKind {
     /// `-`; nothing here is scaled into units. See
     /// [`aap_session::projection::VehicleState`] for why.
     Vehicle = 14,
+    /// The source restarted the video stream itself because the head unit kept falling
+    /// behind: rebuild the encoder as on a focus regain. `reason`.
+    VideoRestart = 15,
 }
 
 /// The payload delivered with an app event: one `key=value` field per line, like a
@@ -129,6 +132,9 @@ pub fn event_payload(event: &AppEvent) -> (EventKind, String) {
             format!("{start}\n").replace(' ', "\n"),
         ),
         AppEvent::VideoStop { reason } => (EventKind::VideoStop, format!("reason={reason}\n")),
+        AppEvent::VideoRestart { reason } => {
+            (EventKind::VideoRestart, format!("reason={reason}\n"))
+        }
         AppEvent::AudioStart(start) => (
             EventKind::AudioStart,
             format!("{start}\n").replace(' ', "\n"),
@@ -234,6 +240,9 @@ pub struct StartConfig {
 /// P6.5 adds `navigation_source` (`script` by default, or `route`): where the maneuvers
 /// come from. `route` plays what the app publishes through `submit_guidance` instead of
 /// the scripted demonstration.
+///
+/// `congestion_restart` (`true`/`false`, default `true`, projection only): restart the
+/// video stream when the head unit keeps falling behind (spec §8.2).
 ///
 /// P5.2 adds `sensor_location` (`true`/`false`, default `false`), which puts head-unit
 /// latitude and longitude in the report. Those identify the vehicle, so it is off by
@@ -382,6 +391,10 @@ pub fn parse_config(bytes: &[u8]) -> Result<StartConfig, String> {
             }
             "request_focus" => {
                 session.projection.request_focus = boolean(key, value)?;
+                projection_keys = true;
+            }
+            "congestion_restart" => {
+                session.projection.congestion_restart = boolean(key, value)?;
                 projection_keys = true;
             }
             "setup_field" => {

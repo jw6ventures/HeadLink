@@ -58,8 +58,10 @@ class ProjectionService : Service() {
     private var notifiedText: String? = null
     private val renderNotification: () -> Unit = { updateNotification() }
 
-    /** Every change to the saved places reaches the dashboard being projected, if any. */
-    private val favoritesChanged: (List<Favorite>) -> Unit = { list -> running?.pipeline?.favorites(list) }
+    /** Every change to the saved places or the recent one reaches the dashboard being projected, if any. */
+    private val favoritesChanged: (List<Favorite>, Favorite?) -> Unit = { list, recent ->
+        running?.pipeline?.favorites(list, recent)
+    }
 
     /** Main-thread record of the one session this service owns. */
     private class Running(val attempt: Attempt, val accessory: UsbAccessory?) {
@@ -83,6 +85,11 @@ class ProjectionService : Service() {
         var speechCheck: Runnable? = null
         /** P10: weather's report, kept when projection stopped and the feed was reset. */
         var weatherReport: String? = null
+
+        /** P11.5: the POI markers' query thread, for the length of the projection. */
+        var poiExecutor: java.util.concurrent.ExecutorService? = null
+        /** P11.5a: search ahead on the route, for the length of the projection. */
+        var ahead: AheadSearcher? = null
         /**
          * Latest vehicle position and motion, and the latest restriction.
          *
@@ -275,6 +282,7 @@ class ProjectionService : Service() {
                 navigationScript = settings.navigationScript,
                 videoPreference = settings.videoPreference,
                 encoderFps = settings.encoderFps,
+                congestionRestart = settings.congestionRestart,
             ),
         )
         // Ownership of the detached number passes to native on this call.
@@ -372,6 +380,12 @@ class ProjectionService : Service() {
                 stopProjection(session)
             }
             NativeBridge.EVENT_KEYFRAME_REQUEST -> session.pipeline?.requestKeyframe()
+            NativeBridge.EVENT_VIDEO_RESTART -> {
+                // The native session restarted the stream because the head unit kept falling
+                // behind; the encoder is rebuilt as on a focus regain.
+                SessionController.note("video restarted: ${fields["reason"] ?: "-"}")
+                session.pipeline?.restartEncoder()
+            }
             NativeBridge.EVENT_FOCUS -> {
                 val projected = fields["projected"] == "true"
                 SessionController.note("video focus projected=$projected mode=${fields["mode"]}")
@@ -404,6 +418,25 @@ class ProjectionService : Service() {
                 pipeline.takeFavoritePick()?.let { favorite ->
                     SessionController.note("dashboard favorite tapped")
                     Navigation.set(this, Destination(favorite.latitude, favorite.longitude, favorite.name), DestinationSource.FAVORITE)
+                }
+                // P11.5: the POI buttons, and Go on the card a marker opened, routed like a
+                // favourite with the place's own name as its label. The notes name a kind or
+                // the button, never a place.
+                // P11.5a: a press that lights one while a route is followed also searches the
+                // route ahead, and Add stop on that card makes the place the route's stop.
+                for ((kind, on) in pipeline.takePoiToggles()) {
+                    SessionController.note("dashboard poi ${kind.label} ${if (on) "on" else "off"}")
+                    session.ahead?.pressed(kind, on)
+                }
+                pipeline.takePoiAction()?.let { action ->
+                    SessionController.note("dashboard poi ${action.primary.lowercase()} pressed")
+                    when (action.tag) {
+                        PoiCardContent.TAG_MAP -> {
+                            val poi = action.entry.poi
+                            Navigation.set(this, Destination(poi.latitude, poi.longitude, PoiRules.title(poi)), DestinationSource.MAP_POI)
+                        }
+                        PoiCardContent.TAG_AHEAD -> session.ahead?.addStop(action.entry)
+                    }
                 }
                 // P7.4: End route on the trip panel is the phone's Clear route, pressed
                 // from the car: the route line, the card and the panel go, and the cluster
@@ -545,6 +578,29 @@ class ProjectionService : Service() {
             // Encoder thread: tell the session, which ends with ENCODER_FAILED.
             NativeBridge.videoFailed(session.handle, detail)
         }
+        // P11: OsmAnd's maps stay open for the drive (docs/p11-plan.md §2). Held before the
+        // markers' first query, which opens nothing without a hold.
+        ObfLibrary.hold(MAPS_HOLDER, true)
+        // P11.5: the map's Gas, Food and Shop markers, read from OsmAnd's maps on a thread of
+        // their own, one query at a time; the files stay open while this projects. Buttons
+        // start off and are not saved; a debug build's lab may light some (lab-poi).
+        if (dashboardScene) {
+            val app = applicationContext
+            val executor = java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
+                Thread(runnable, "aap-poi").apply { isDaemon = true }
+            }
+            session.poiExecutor = executor
+            pipeline.poiFeed = PoiFeed({ ObfLibrary.sources(app) }, { PoiSettings.markersPerKind(app) }, executor)
+            session.ahead = AheadSearcher(app, executor, session.attempt.settings.speedUnit, { pipeline.poiFeed }, { pipeline.dashboard })
+            if (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+                val lab = java.io.File(filesDir, LAB_POI_FILE)
+                val kinds = if (lab.isFile) PoiRules.parseKinds(runCatching { lab.readText() }.getOrNull()) else emptySet()
+                if (kinds.isNotEmpty()) {
+                    pipeline.poiKinds(kinds)
+                    SessionController.note("lab poi buttons on: ${kinds.joinToString(",") { it.label }} (debug build)")
+                }
+            }
+        }
         // What the sensor channel already said about night, before the first frame: it
         // opens before the video start indication, so NIGHT_DATA has normally arrived by
         // now, and handing it over after start() themed the map from the fallback and
@@ -556,7 +612,10 @@ class ProjectionService : Service() {
         Navigation.vehicleFix = { pipeline.vehiclePosition() }
         // Street names come from the maps being drawn, and the header shows the next turn.
         Routing.nameMaps = MapData.resolveAll(this, session.attempt.settings.mapFile)
-        Guide.turnListener = { pipeline.upcomingTurn(it) }
+        Guide.turnListener = { turn ->
+            pipeline.upcomingTurn(turn)
+            session.ahead?.guidance(turn)
+        }
         // The live alternatives' bubbles, starting with any already found.
         LiveAlternatives.listener = { list ->
             pipeline.alternatives(list.map { AlternativeMark(it.id, it.labelLat, it.labelLon, it.label) })
@@ -574,8 +633,8 @@ class ProjectionService : Service() {
             pipeline.voiceGuidance(on)
             pipeline.speechAvailable(Speaker.canSpeak())
         }
-        // The saved places, so the first projected frame lists them.
-        pipeline.favorites(Favorites.list(this))
+        // The saved places and the recent one, so the first projected frame lists them.
+        pipeline.favorites(Favorites.list(this), Favorites.recent(this))
         // The cluster hears what guidance says from here on, starting with what it
         // already knows (P6.5).
         Guide.attach(session.handle)
@@ -759,6 +818,8 @@ class ProjectionService : Service() {
         stopAudio(session)
         val pipeline = session.pipeline ?: return
         session.pipeline = null
+        // P11.5: no more marker queries; the files close once nothing else holds them.
+        stopPoi(session)
         Navigation.vehicleFix = null
         Routing.nameMaps = null
         Guide.turnListener = null
@@ -789,6 +850,8 @@ class ProjectionService : Service() {
         append(NotificationFeed.report())
         append(Speaker.report())
         append(CallControl.report())
+        // P11.5a: search ahead, counts and times only.
+        session.ahead?.let { append(it.report()) }
         // P10: counts only; the report taken as it stopped, once it has.
         append(session.weatherReport ?: Weather.report())
     }
@@ -898,6 +961,20 @@ class ProjectionService : Service() {
         }
     }
 
+    /**
+     * Ends the projection's marker queries and search ahead, and lets go of OsmAnd's maps.
+     * The thread is shut down, never interrupted: an interrupt mid-read closes the file's
+     * channel, which the library shares with the connection screen's search, and keeps
+     * it cached closed. A query already queued runs out and opens nothing ([ObfLibrary.sources]).
+     */
+    private fun stopPoi(session: Running) {
+        session.ahead?.stop()
+        session.ahead = null
+        session.poiExecutor?.shutdown()
+        session.poiExecutor = null
+        ObfLibrary.hold(MAPS_HOLDER, false)
+    }
+
     private fun stopIfIdle() {
         if (running != null) return
         SessionController.removeListener(renderNotification)
@@ -924,6 +1001,7 @@ class ProjectionService : Service() {
                 Weather.listener = null
                 Weather.choicesListener = null
                 Weather.stop()
+                stopPoi(session)
                 NotificationFeed.enabled = false
                 session.notificationsListener?.let(NotificationFeed::removeListener)
                 session.callListener?.let(CallControl::removeListener)
@@ -992,9 +1070,19 @@ class ProjectionService : Service() {
         @Volatile
         var labReport: (() -> Unit)? = null
 
+        /** A projection's hold on OsmAnd's open maps ([ObfLibrary.hold]). */
+        private const val MAPS_HOLDER = "projection"
+
         const val ACTION_START = "org.openautoandroid.source.action.START_SESSION"
         const val ACTION_STOP = "org.openautoandroid.source.action.STOP_SESSION"
         const val EXTRA_GENERATION = "org.openautoandroid.source.extra.GENERATION"
+
+        /**
+         * P11.5, debug builds only: `files/lab-poi`, "gas,food,shop", lights those POI buttons
+         * when a projection starts. The emulator lab writes it (LAB_POI), as it pushes the
+         * OBF files beside it, since the buttons are off at every start and never saved.
+         */
+        const val LAB_POI_FILE = "lab-poi"
         private const val CHANNEL_ID = "session"
         private const val NOTIFICATION_ID = 1
 

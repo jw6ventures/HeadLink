@@ -14,7 +14,20 @@
 # localhost/openauto-lab-receiver:p4 with tools/lab-receiver.sh build, and the debug APK
 # from tools/android-build.sh. Results go to $OPENAUTO_CACHE/emulator-lab/<UTC time>/.
 #
-#   tools/emulator-lab.sh [taps|focus|stall|audio|track|navigation|guidance|daynight|controls|endroute|calls|speech|voice|traffic|weather|none]
+#   tools/emulator-lab.sh [taps|focus|stall|audio|track|navigation|guidance|daynight|controls|endroute|calls|speech|voice|traffic|weather|congestion|none]
+#
+# The congestion script (2026-10-11, report d11eec1e) makes the receiver a head unit that
+# falls behind the video for a while and then catches up: 5 s normal, LAB_CONGESTION_SLOW_MS
+# (default 45000) acknowledging each unit only when a serial decoder of
+# LAB_CONGESTION_KBPS (default 1500) kilobits a second plus LAB_CONGESTION_FRAME_MS
+# (default 4) a frame would have finished it, then 20 s normal. The receiver checks the
+# picture decodes without an error throughout and flows again afterwards, and with
+# LAB_CONGESTION_EXPECT=restart (the default) that the app restarted the stream while slow;
+# this script checks the app's own timeline and restart counters. LAB_CONGESTION_RESTART=0
+# clears the app's restart (expect none). LAB_CONGESTION_EXPECT=any checks nothing of the
+# app's side, for a build that predates it: LAB_APK=<debug APK> installs that APK instead
+# of the workspace's, and LAB_NATIVE_TREE=<source tree> builds the emulator's native
+# library from there, so an older build's policy can be run against the same head unit.
 #
 # The audio script (P5.3) makes the receiver advertise one PCM MEDIA channel, grant audio
 # focus, and measure the PCM the app's own AudioSource produces against the tone it says
@@ -74,6 +87,12 @@
 # the lab intent before the attempt starts, so the captured frames show the list drawn
 # with rows in it (and, past three, its scrollbar). Nothing taps it: the tile's tap and
 # scroll rules are host-tested in DashboardTest, and this is the picture of them.
+# LAB_RECENT="name@lat,lon" (with LAB_FAVORITES) adds the recent destination above them,
+# drawn with its history icon.
+#
+# LAB_REORDER=1 (needs LAB_FAVORITES with two places or more) drags the first favorite's
+# handle on the phone's Home tab down one row and checks that the two rows changed places
+# on the screen and that the app said it moved one. It works under any script.
 #
 # LAB_MAP_EXTRA=<file.map> installs a second map beside LAB_MAP. The app draws every
 # installed map as one, so this checks that the pane still renders and follows the
@@ -256,6 +275,36 @@
 #     (2 s at most).
 # Every run checks that no place, condition, headline or fixture text reached the report.
 #
+# LAB_REGION=austin (P11, docs/p11-plan.md section 12 decision 6) moves the lab to Texas: LAB_MAP
+# defaults to $OPENAUTO_CACHE/maps/texas.map, the routing tile is W100_N30.rd5 (LAB_ROUTING still
+# names its directory, normally $OPENAUTO_CACHE/rd5), the receiver's fixed fix and the track's
+# start are downtown Austin by I-35 (30.2660,-97.7360; --position: the spot near downtown with
+# the most gas stations, food and shops within the 800x480 pane), LAB_ROUTE and the guidance
+# destination default to Austin points, and $OPENAUTO_CACHE/obf/Us_texas_austin_northamerica.obf
+# is mounted read-only and moved into the debug app's files/lab-obf/, which a debug build reads
+# beside the maps folder. The Lexington drives do not fit it: give LAB_DRIVE for guidance.
+#
+# LAB_POI=gas,food,shop (P11.5) lights those map buttons when the projection starts (debug builds
+# read files/lab-poi, written here; the buttons are otherwise off at every start). Needs OBF data,
+# so LAB_REGION=austin. With the track script the receiver (--poi) waits, parked, for the lit
+# kinds' markers in the map pane, counted by colour, in the palette it starts in and then the
+# other, saves renders/poi-night.png and renders/poi-day.png, taps a marker (the first window of
+# a lit kind's colour), checks the flex tile shows its card (renders/poi-card-*.png), presses
+# Close, checks the tile is back, and only then drives. The app side
+# checks its report counted queries and markers, and that no OBF file name reached it.
+#
+# LAB_POI_AHEAD=gas|food|shop (P11.5a, the track script with LAB_REGION=austin and LAB_ROUTING) is
+# search ahead on the route. Once projecting, Round Rock (north up I-35) is shared as OsmAnd shares
+# a destination, from the parked vehicle downtown; once the route is computed this script writes
+# /out/poi-ahead-go and the receiver (--poi-ahead) presses that kind's button, laid out under the
+# turn card, waits for the flex tile to show the search-ahead card (renders/poi-ahead-*.png),
+# presses Add stop on it, and only then drives. The phone side waits for the search's note and
+# for the route through the stop. The speech script's engine and Bluetooth override are used
+# (LAB_SPEECH_ENGINE, the lab player's silent stand-in by default), so the announcement is
+# counted as spoken. The app side checks the press, the search, at least one detour routed, the
+# announcement, the card, Add stop and a route through the via point after it, and that no
+# place, coordinate or OBF file reached the report.
+#
 # LAB_SCREENS=1 (P7.7) also photographs the phone screen, after any route or destination
 # step so it delays none of them: each tab of the connection screen in turn
 # (screen-home.png, screen-setup.png, ...), found by its label through uiautomator and
@@ -300,6 +349,32 @@ fi
 if [ "$SCRIPT" = weather ]; then
     if [ "$WEATHER_MODE" = tap ]; then DEFAULT_MS=360000; else DEFAULT_MS=240000; fi
 fi
+# The congestion script: 5 s, the slow phase, 20 s, and the app's start and stop around them.
+if [ "$SCRIPT" = congestion ]; then DEFAULT_MS=$(( ${LAB_CONGESTION_SLOW_MS:-45000} + 80000 )); fi
+CONGESTION_EXPECT=${LAB_CONGESTION_EXPECT:-$([ "${LAB_CONGESTION_RESTART:-1}" = 0 ] && echo none || echo restart)}
+case $CONGESTION_EXPECT in restart|none|any) ;; *) echo "emulator-lab: LAB_CONGESTION_EXPECT is restart, none or any" >&2; exit 1 ;; esac
+CONGESTION_RESTART=$([ "${LAB_CONGESTION_RESTART:-1}" = 0 ] && echo false || echo true)
+CONGESTION_ARGS=
+if [ "$SCRIPT" = congestion ]; then
+    CONGESTION_ARGS="--congestion-kbps ${LAB_CONGESTION_KBPS:-1500} --congestion-frame-ms ${LAB_CONGESTION_FRAME_MS:-4} \
+        --congestion-slow-ms ${LAB_CONGESTION_SLOW_MS:-45000} --congestion-expect $CONGESTION_EXPECT"
+fi
+# An older build against the same head unit (the congestion A/B): its APK, and the tree its
+# native library is built from. Both are mounted read-only; neither is copied into results.
+LAB_APK_MOUNT=
+if [ -n "${LAB_APK:-}" ]; then
+    [ -f "$LAB_APK" ] || { echo "emulator-lab: no APK at $LAB_APK" >&2; exit 1; }
+    LAB_APK_MOUNT="-v $(realpath "$LAB_APK"):/lab-input/app.apk:ro"
+fi
+LAB_NATIVE_MOUNT=
+if [ -n "${LAB_NATIVE_TREE:-}" ]; then
+    [ -f "$LAB_NATIVE_TREE/Cargo.toml" ] || { echo "emulator-lab: no Cargo.toml in $LAB_NATIVE_TREE" >&2; exit 1; }
+    LAB_NATIVE_MOUNT="-v $(realpath "$LAB_NATIVE_TREE"):/native"
+fi
+# P11.5: the track script waits for the POI markers in both palettes before it drives.
+if [ "$SCRIPT" = track ] && [ -n "${LAB_POI:-}" ]; then DEFAULT_MS=180000; fi
+# P11.5a: a route, a search ahead with ten short routes and a re-route, all in a debug build.
+if [ "$SCRIPT" = track ] && [ -n "${LAB_POI_AHEAD:-}" ]; then DEFAULT_MS=480000; fi
 PROJECTION_MS=${LAB_PROJECTION_MS:-$DEFAULT_MS}
 # The app-owned audio path: on for --script audio, and available alongside the others so
 # a run also covers audio interleaving with fragmenting video keyframes.
@@ -327,13 +402,53 @@ mkdir -p "$out" "$CACHE_ROOT/emulator-avd"
 # LAB_MAP=<file.map> renders the P5.5 owned map from real data. The region has to cover
 # the position LabSensorHandler reports (42.4242, -71.2121) or the pane draws an empty
 # map, which looks identical to a broken one.
+# Lab data is never copied into a run's results (once ~100 copies of a 201 MB map, 50 GB):
+# the map, the extra map and the routing tiles are mounted read-only into the emulator
+# container under /lab-data and pushed from there. The central copies live in
+# $OPENAUTO_CACHE/maps (massachusetts.map, monaco.map, texas.map) and $OPENAUTO_CACHE/rd5.
+# Scripts that cannot run without a map default LAB_MAP to the central Massachusetts one;
+# every other script still runs map-less unless LAB_MAP is given (the first-run check).
+LAB_DATA_MOUNTS=
+# P11: the Austin lab (LAB_REGION=austin): the Texas map, its routing tile, its OBF file, and the
+# receiver's fixed fix moved to downtown Austin.
+REGION=${LAB_REGION:-massachusetts}
+case $REGION in massachusetts|austin) ;; *) echo "emulator-lab: LAB_REGION is massachusetts or austin" >&2; exit 1 ;; esac
+RD5_TILE=W75_N40
+POSITION_ARGS=
+if [ "$REGION" = austin ]; then
+    RD5_TILE=W100_N30
+    LAB_MAP=${LAB_MAP:-$CACHE_ROOT/maps/texas.map}
+    POSITION_ARGS="--position 30.2660,-97.7360"
+    obf=${LAB_OBF:-$CACHE_ROOT/obf/Us_texas_austin_northamerica.obf}
+    [ -f "$obf" ] || { echo "emulator-lab: no OBF file at $obf" >&2; exit 1; }
+    LAB_DATA_MOUNTS="$LAB_DATA_MOUNTS -v $(realpath "$obf"):/lab-data/obf/$(basename "$obf"):ro"
+fi
+# P11.5: the POI buttons lit at the start, through files/lab-poi (debug builds).
+POI_ARGS=
+if [ -n "${LAB_POI:-}" ]; then
+    echo "$LAB_POI" | grep -Eq "^(gas|food|shop)(,(gas|food|shop))*$" || { echo "emulator-lab: LAB_POI is a list of gas, food and shop" >&2; exit 1; }
+    [ "$REGION" = austin ] || [ -n "${LAB_OBF:-}" ] || { echo "emulator-lab: LAB_POI needs OBF data: LAB_REGION=austin" >&2; exit 1; }
+    echo "$LAB_POI" > "$out/lab-poi"
+    [ "$SCRIPT" != track ] || POI_ARGS="--poi $LAB_POI"
+fi
+# P11.5a: search ahead from a followed route; the receiver presses the button.
+POI_AHEAD=
+if [ -n "${LAB_POI_AHEAD:-}" ]; then
+    case $LAB_POI_AHEAD in gas|food|shop) ;; *) echo "emulator-lab: LAB_POI_AHEAD is gas, food or shop" >&2; exit 1 ;; esac
+    [ "$SCRIPT" = track ] || { echo "emulator-lab: LAB_POI_AHEAD is for the track script" >&2; exit 1; }
+    [ "$REGION" = austin ] || { echo "emulator-lab: LAB_POI_AHEAD needs LAB_REGION=austin" >&2; exit 1; }
+    [ -n "${LAB_ROUTING:-}" ] || { echo "emulator-lab: LAB_POI_AHEAD needs LAB_ROUTING" >&2; exit 1; }
+    case ${LAB_POI:-} in *$LAB_POI_AHEAD*) echo "emulator-lab: LAB_POI must not light the LAB_POI_AHEAD button: the press would turn it off" >&2; exit 1 ;; esac
+    POI_AHEAD=$LAB_POI_AHEAD
+    POI_ARGS="$POI_ARGS --poi-ahead $LAB_POI_AHEAD"
+fi
+if [ -z "${LAB_MAP:-}" ] && { [ "$SCRIPT" = track ] || [ "$SCRIPT" = guidance ] || [ "$SCRIPT" = daynight ] \
+    || [ "$SCRIPT" = controls ] || [ "$SCRIPT" = endroute ] || [ "$SCRIPT" = voice ] || [ "$SCRIPT" = traffic ]; }; then
+    LAB_MAP=$CACHE_ROOT/maps/massachusetts.map
+fi
 if [ -n "${LAB_MAP:-}" ]; then
     [ -f "$LAB_MAP" ] || { echo "emulator-lab: no map file at $LAB_MAP" >&2; exit 1; }
-    cp "$LAB_MAP" "$out/region.map"
-elif [ "$SCRIPT" = track ] || [ "$SCRIPT" = guidance ] || [ "$SCRIPT" = daynight ] || [ "$SCRIPT" = controls ] \
-    || [ "$SCRIPT" = endroute ] || [ "$SCRIPT" = voice ] || [ "$SCRIPT" = traffic ]; then
-    echo "emulator-lab: the $SCRIPT script needs LAB_MAP=<region>.map covering 42.42,-71.21" >&2
-    exit 1
+    LAB_DATA_MOUNTS="$LAB_DATA_MOUNTS -v $(realpath "$LAB_MAP"):/lab-data/region.map:ro"
 fi
 DRIVE_ARGS=
 REROUTE_MODE=${LAB_REROUTE:-ok}
@@ -375,7 +490,7 @@ fi
 if [ -n "${LAB_MAP_EXTRA:-}" ]; then
     [ -f "$LAB_MAP_EXTRA" ] || { echo "emulator-lab: no map file at $LAB_MAP_EXTRA" >&2; exit 1; }
     [ -n "${LAB_MAP:-}" ] || { echo "emulator-lab: LAB_MAP_EXTRA needs LAB_MAP" >&2; exit 1; }
-    cp "$LAB_MAP_EXTRA" "$out/extra.map"
+    LAB_DATA_MOUNTS="$LAB_DATA_MOUNTS -v $(realpath "$LAB_MAP_EXTRA"):/lab-data/extra.map:ro"
 fi
 # P7.6: what NIGHT_DATA says. Unset leaves the receiver at its default, night.
 NIGHT_ARGS=
@@ -408,14 +523,15 @@ fi
 if [ -f "$CACHE_ROOT/lab-player/lab-player.apk" ]; then
     cp "$CACHE_ROOT/lab-player/lab-player.apk" "$out/lab-player.apk"
 elif [ "$SCRIPT" = calls ] || [ "$SCRIPT" = endroute ] || [ "$SCRIPT" = speech ] || [ "$SCRIPT" = voice ] \
-    || { [ "$SCRIPT" = weather ] && [ "$WEATHER_MODE" = alert ]; }; then
+    || { [ "$SCRIPT" = weather ] && [ "$WEATHER_MODE" = alert ]; } || [ -n "$POI_AHEAD" ]; then
     echo "emulator-lab: the $SCRIPT script needs the lab player; run tools/lab-player.sh first" >&2
     exit 1
 fi
 # P8.1: the speech script's engine; an operator-supplied one comes from the cache only. P10:
 # the weather alert run speaks too.
 SPEAKS=0
-if [ "$SCRIPT" = speech ] || [ "$SCRIPT" = voice ] || { [ "$SCRIPT" = weather ] && [ "$WEATHER_MODE" = alert ]; }; then SPEAKS=1; fi
+if [ "$SCRIPT" = speech ] || [ "$SCRIPT" = voice ] || { [ "$SCRIPT" = weather ] && [ "$WEATHER_MODE" = alert ]; } \
+    || [ -n "$POI_AHEAD" ]; then SPEAKS=1; fi
 if [ -f "$CACHE_ROOT/tts/espeak-ng.apk" ]; then SPEECH_ENGINE=${LAB_SPEECH_ENGINE:-espeak}; else SPEECH_ENGINE=${LAB_SPEECH_ENGINE:-lab}; fi
 case $SPEECH_ENGINE in espeak|lab|none) ;; *) echo "emulator-lab: LAB_SPEECH_ENGINE is espeak, lab or none" >&2; exit 1 ;; esac
 if [ "$SPEAKS" = 1 ] && [ "$SPEECH_ENGINE" = espeak ]; then
@@ -464,10 +580,12 @@ if [ -n "${LAB_MARKER:-}" ] || [ -n "${LAB_DIAGNOSTICS:-}" ] || [ "$SCRIPT" = ca
 fi
 ROUTE=
 if [ -n "${LAB_ROUTING:-}" ]; then
-    [ -f "$LAB_ROUTING/W75_N40.rd5" ] || { echo "emulator-lab: no W75_N40.rd5 in $LAB_ROUTING" >&2; exit 1; }
-    cp "$LAB_ROUTING/W75_N40.rd5" "$out/W75_N40.rd5"
-    # The lab position to Boston Common: about 14 km of town streets and one motorway.
-    ROUTE=${LAB_ROUTE:-42.4242,-71.2121 42.3551,-71.0656}
+    [ -f "$LAB_ROUTING/$RD5_TILE.rd5" ] || { echo "emulator-lab: no $RD5_TILE.rd5 in $LAB_ROUTING" >&2; exit 1; }
+    LAB_DATA_MOUNTS="$LAB_DATA_MOUNTS -v $(realpath "$LAB_ROUTING/$RD5_TILE.rd5"):/lab-data/$RD5_TILE.rd5:ro"
+    # The lab position to Boston Common: about 14 km of town streets and one motorway. In
+    # Austin, downtown to the university, about 3 km.
+    if [ "$REGION" = austin ]; then ROUTE=${LAB_ROUTE:-30.2660,-97.7360 30.2849,-97.7341}
+    else ROUTE=${LAB_ROUTE:-42.4242,-71.2121 42.3551,-71.0656}; fi
 fi
 DESTINATION=0
 if [ -n "${LAB_DESTINATION:-}" ]; then
@@ -499,7 +617,7 @@ podman run -d --pod "$pod" --name "$pod-receiver" --security-opt label=disable \
         '"$([ "$NAVIGATION" = 1 ] && echo "--navigation --navigation-cluster $NAVIGATION_CLUSTER --navigation-expect $NAVIGATION_EXPECT")"' \
         '"$([ -n "${LAB_SENSORS:-all}" ] && echo "--sensors ${LAB_SENSORS:-all}")"' \
         '"$([ -n "${LAB_TRACK:-}" ] && echo '--track')"' '"$DRIVE_ARGS"' '"$NIGHT_ARGS"' '"$CALL_ARGS"' \
-        '"$TRAFFIC_ARGS"' '"$MARGIN_ARGS"' '"$WEATHER_ARGS"' \
+        '"$TRAFFIC_ARGS"' '"$MARGIN_ARGS"' '"$WEATHER_ARGS"' '"$POSITION_ARGS"' '"$POI_ARGS"' '"$CONGESTION_ARGS"' \
         --trace /out/receiver-trace.jsonl --video-out /out/video.h264 > /out/receiver.txt 2> /out/receiver-err.txt \
         || status=$?
     echo "receiver_exit=$status" >> /out/receiver.txt
@@ -511,8 +629,8 @@ podman run -d --pod "$pod" --name "$pod-receiver" --security-opt label=disable \
         ffmpeg -v error -i /out/video.h264 -vf fps=1 /out/frames/%03d.png >> /out/ffmpeg.txt 2>&1 || true
         # P10: the pictures the weather script named, whole, for the renders. The receiver
         # counts decoded pictures from one, ffmpeg from zero.
-        grep "^receiver_weather=render " /out/receiver.txt | while read -r line; do
-            name=$(echo "$line" | sed "s/^receiver_weather=render \([^ ]*\) .*/\1/")
+        grep -E "^receiver_(weather|poi)=render " /out/receiver.txt | while read -r line; do
+            name=$(echo "$line" | sed "s/^receiver_[a-z]*=render \([^ ]*\) .*/\1/")
             n=$(echo "$line" | sed "s/.* picture=\([0-9]*\).*/\1/")
             mkdir -p /out/renders
             ffmpeg -v error -i /out/video.h264 -vf "select=eq(n\,$((n - 1)))" -vsync 0 -frames:v 1 "/out/renders/$name.png" \
@@ -536,13 +654,17 @@ podman run --rm --pod "$pod" --name "$name" --security-opt label=disable \
   -e NAVIGATION_CLUSTER="$NAVIGATION_CLUSTER" -e REROUTE_MODE="$REROUTE_MODE" \
   -e LAB_SENSORS="${LAB_SENSORS:-all}" -e SCRIPT="$SCRIPT" -e ROUTE="$ROUTE" \
   -e DESTINATION="$DESTINATION" -e NAVIGATION_SCRIPT="$NAVIGATION_SCRIPT" \
-  -e GUIDE_DEST="${LAB_GUIDE_DEST:-$([ "$SCRIPT" = traffic ] && echo 42.35510,-71.06560 || echo 42.44950,-71.23100)}" \
-  -e LAB_FAVORITES="${LAB_FAVORITES:-}" -e LAB_SCREENS="${LAB_SCREENS:-}" \
+  -e GUIDE_DEST="${LAB_GUIDE_DEST:-$(if [ "$REGION" = austin ]; then echo 30.28490,-97.73410; elif [ "$SCRIPT" = traffic ]; then echo 42.35510,-71.06560; else echo 42.44950,-71.23100; fi)}" \
+  -e RD5_TILE="$RD5_TILE" -e POI_AHEAD="$POI_AHEAD" \
+  -e LAB_FAVORITES="${LAB_FAVORITES:-}" -e LAB_RECENT="${LAB_RECENT:-}" -e LAB_SCREENS="${LAB_SCREENS:-}" \
+  -e LAB_REORDER="${LAB_REORDER:-}" \
   -e MAPS_EXPECTED="$([ -n "${LAB_MAP_EXTRA:-}" ] && echo 2 || echo 1)" \
   -e CALL_ROUTE="$CALL_ROUTE" -e MODEM="$MODEM" -e SPEECH_ENGINE="$SPEECH_ENGINE" \
   -e TRAFFIC_MODE="$TRAFFIC_MODE" -e OFFER_LAYOUT="$OFFER_LAYOUT" -e TRAFFIC_KEY="$TRAFFIC_KEY" \
   -e WEATHER_MODE="$WEATHER_MODE" -e WEATHER_VOICE="$WEATHER_VOICE" -e SPEAKS="$SPEAKS" \
-  -v "$out:/out" "$EMULATOR_IMAGE" sh -eu -c '
+  -e CONGESTION_EXPECT="$CONGESTION_EXPECT" -e CONGESTION_RESTART="$CONGESTION_RESTART" \
+  $LAB_APK_MOUNT $LAB_NATIVE_MOUNT \
+  $LAB_DATA_MOUNTS -v "$out:/out" "$EMULATOR_IMAGE" sh -eu -c '
     package=org.openautoandroid.source
     log() { echo "emulator-lab: $*"; }
     fail() {
@@ -555,12 +677,24 @@ podman run --rm --pod "$pod" --name "$name" --security-opt label=disable \
         exit 1
     }
 
-    tools/openssl-build.sh x86_64-linux-android
-    . tools/openssl-env.sh
-    cargo build -p aap-jni --release --target x86_64-linux-android --offline --locked 2>&1 | tail -n 1
+    # LAB_NATIVE_TREE: the native library from another tree, built in that tree.
+    native=/workspace
+    [ -d /native ] && native=/native
+    (
+        cd $native
+        tools/openssl-build.sh x86_64-linux-android
+        . tools/openssl-env.sh
+        cargo build -p aap-jni --release --target x86_64-linux-android --offline --locked 2>&1 | tail -n 1
+    )
+    [ "$native" = /workspace ] || log "native library built from LAB_NATIVE_TREE"
 
     work=$(mktemp -d)
-    cp app/build/outputs/apk/debug/app-debug.apk "$work/unsigned.apk"
+    if [ -f /lab-input/app.apk ]; then
+        cp /lab-input/app.apk "$work/unsigned.apk"
+        log "APK from LAB_APK"
+    else
+        cp app/build/outputs/apk/debug/app-debug.apk "$work/unsigned.apk"
+    fi
     # The APK ships arm64-v8a only, so the emulator copy gets x86_64 builds of both
     # native libraries injected: the one from this project, and the VTM tessellator.
     # Without the second the dashboard still runs and reports that the map did not
@@ -578,7 +712,7 @@ with zipfile.ZipFile(sys.argv[1], \"a\") as apk:
                 natives.read(\"lib/x86_64/libvtm-jni.so\"),
                 compress_type=zipfile.ZIP_STORED,
             )
-" "$work/unsigned.apk" target/x86_64-linux-android/release/libaap_jni.so \
+" "$work/unsigned.apk" $native/target/x86_64-linux-android/release/libaap_jni.so \
         $([ -f "$vtm_natives" ] && echo "$vtm_natives")
     zipalign -f -P 16 4 "$work/unsigned.apk" "$work/aligned.apk"
     apksigner sign --ks /cache/android-user/debug.keystore --ks-pass pass:android \
@@ -683,8 +817,8 @@ with zipfile.ZipFile(sys.argv[1], \"a\") as apk:
     fi
     # The owned map reads operator-supplied data out of app-private storage; there is no
     # download path (APP10), so the lab supplies it the same way an operator would.
-    if [ -f /out/region.map ]; then
-        adb push /out/region.map /data/local/tmp/region.map > /dev/null 2>&1 || fail "map push"
+    if [ -f /lab-data/region.map ]; then
+        adb push /lab-data/region.map /data/local/tmp/region.map > /dev/null 2>&1 || fail "map push"
         uid=$(adb shell stat -c %u /data/data/$package | tr -d "\r")
         adb shell "mkdir -p /data/data/$package/files/maps \
             && cp /data/local/tmp/region.map /data/data/$package/files/maps/region.map \
@@ -693,8 +827,8 @@ with zipfile.ZipFile(sys.argv[1], \"a\") as apk:
             && rm -f /data/local/tmp/region.map" || fail "map install"
         log "map installed: $(adb shell stat -c %s /data/data/$package/files/maps/region.map | tr -d "\r") bytes"
     fi
-    if [ -f /out/extra.map ]; then
-        adb push /out/extra.map /data/local/tmp/extra.map > /dev/null 2>&1 || fail "extra map push"
+    if [ -f /lab-data/extra.map ]; then
+        adb push /lab-data/extra.map /data/local/tmp/extra.map > /dev/null 2>&1 || fail "extra map push"
         uid=$(adb shell stat -c %u /data/data/$package | tr -d "\r")
         adb shell "cp /data/local/tmp/extra.map /data/data/$package/files/maps/extra.map \
             && chown $uid:$uid /data/data/$package/files/maps/extra.map \
@@ -702,18 +836,38 @@ with zipfile.ZipFile(sys.argv[1], \"a\") as apk:
             && rm -f /data/local/tmp/extra.map" || fail "extra map install"
         log "extra map installed: $(adb shell stat -c %s /data/data/$package/files/maps/extra.map | tr -d "\r") bytes"
     fi
-    # P6.3: the routing tile goes where the connection screen import would put it. The
-    # staged copy is deleted as soon as it is on the device; it is 119 MB per run.
-    if [ -f /out/W75_N40.rd5 ]; then
-        adb push /out/W75_N40.rd5 /data/local/tmp/W75_N40.rd5 > /dev/null 2>&1 || fail "routing tile push"
-        rm -f /out/W75_N40.rd5
+    # P6.3: the routing tile goes where the connection screen import would put it.
+    if [ -f /lab-data/$RD5_TILE.rd5 ]; then
+        adb push /lab-data/$RD5_TILE.rd5 /data/local/tmp/$RD5_TILE.rd5 > /dev/null 2>&1 || fail "routing tile push"
         uid=$(adb shell stat -c %u /data/data/$package | tr -d "\r")
         adb shell "mkdir -p /data/data/$package/files/routing/segments \
-            && cp /data/local/tmp/W75_N40.rd5 /data/data/$package/files/routing/segments/W75_N40.rd5 \
+            && cp /data/local/tmp/$RD5_TILE.rd5 /data/data/$package/files/routing/segments/$RD5_TILE.rd5 \
             && chown -R $uid:$uid /data/data/$package/files/routing \
             && restorecon -R /data/data/$package/files \
-            && rm -f /data/local/tmp/W75_N40.rd5" || fail "routing tile install"
-        log "routing tile installed: $(adb shell stat -c %s /data/data/$package/files/routing/segments/W75_N40.rd5 | tr -d "\r") bytes"
+            && rm -f /data/local/tmp/$RD5_TILE.rd5" || fail "routing tile install"
+        log "routing tile installed: $(adb shell stat -c %s /data/data/$package/files/routing/segments/$RD5_TILE.rd5 | tr -d "\r") bytes"
+    fi
+    # P11: OsmAnd maps for a debug build, in files/lab-obf/ (a folder grant cannot be
+    # scripted). Moved, not copied, from the staging push: one copy on the small data partition.
+    for obf in /lab-data/obf/*.obf; do
+        [ -f "$obf" ] || continue
+        name=$(basename "$obf")
+        adb push "$obf" "/data/local/tmp/$name" > /dev/null 2>&1 || fail "OBF push"
+        uid=$(adb shell stat -c %u /data/data/$package | tr -d "\r")
+        adb shell "mkdir -p /data/data/$package/files/lab-obf \
+            && mv /data/local/tmp/$name /data/data/$package/files/lab-obf/$name \
+            && chown -R $uid:$uid /data/data/$package/files/lab-obf \
+            && restorecon -R /data/data/$package/files" || fail "OBF install"
+        log "OBF installed: $(adb shell stat -c %s /data/data/$package/files/lab-obf/$name | tr -d "\r") bytes"
+    done
+    # P11.5: the POI buttons the projection lights at its start (debug builds).
+    if [ -f /out/lab-poi ]; then
+        uid=$(adb shell stat -c %u /data/data/$package | tr -d "\r")
+        adb push /out/lab-poi /data/local/tmp/lab-poi > /dev/null 2>&1 || fail "lab-poi push"
+        adb shell "mkdir -p /data/data/$package/files && mv /data/local/tmp/lab-poi /data/data/$package/files/lab-poi \
+            && chown $uid:$uid /data/data/$package/files /data/data/$package/files/lab-poi \
+            && restorecon -R /data/data/$package/files" || fail "lab-poi install"
+        log "POI buttons to light: $(cat /out/lab-poi)"
     fi
     adb logcat -c
     # P10: every query the stand-in Breezy answers, for the whole attempt, whatever the
@@ -757,11 +911,13 @@ with zipfile.ZipFile(sys.argv[1], \"a\") as apk:
         --ez lab_navigation "$([ "$NAVIGATION" = 1 ] && echo true || echo false)" \
         --ez lab_navigation_force "$([ "$NAVIGATION_FORCE" = 1 ] && echo true || echo false)" \
         --ez lab_navigation_script "$([ "$NAVIGATION_SCRIPT" = 1 ] && echo true || echo false)" \
+        --ez lab_congestion_restart "$CONGESTION_RESTART" \
         --es lab_sensors "${LAB_SENSORS:-all}" \
         $([ "$SPEAKS" = 1 ] && echo "--ez lab_speech_bluetooth true") \
         $([ "$SCRIPT" = weather ] && echo "--ez lab_weather $([ "$WEATHER_MODE" = off ] && echo false || echo true) \
             --ez lab_weather_speak true --es lab_weather_level severe") \
         ${LAB_FAVORITES:+--es lab_favorites "\"$LAB_FAVORITES\""} \
+        ${LAB_RECENT:+--es lab_recent "\"$LAB_RECENT\""} \
         $([ "$SCRIPT" = traffic ] && echo "--ez lab_traffic false \
             --es lab_traffic_url http://10.0.2.2:8765 --es lab_traffic_key $TRAFFIC_KEY --ei lab_traffic_refresh 5 \
             --ei lab_traffic_limit 4500 --ez lab_traffic_reset true --es lab_offer_layout $OFFER_LAYOUT") \
@@ -872,7 +1028,7 @@ https://osmand.net/map?pin=$glat,$glon#16/$glat/$glon"
         if [ "$REROUTE_MODE" = fail ]; then
             # Every request opens the tile afresh, so from here on each re-route fails.
             segments=/data/data/$package/files/routing/segments
-            adb shell "mv $segments/W75_N40.rd5 $segments/W75_N40.rd5.away" || fail "routing tile move"
+            adb shell "mv $segments/$RD5_TILE.rd5 $segments/$RD5_TILE.rd5.away" || fail "routing tile move"
             log "routing tile moved away: every re-route from here fails"
         fi
         if [ "$SCRIPT" = endroute ]; then
@@ -957,6 +1113,45 @@ https://osmand.net/map?pin=42.44950,-71.23100#16/42.44950/-71.23100"
         done
         [ -n "$routed" ] || fail "no route came back for the shared text"
         log "second route computed"
+    elif [ -n "$POI_AHEAD" ]; then
+        # P11.5a: a destination up I-35 (Round Rock), shared while parked downtown, so the
+        # route followed has a destination to re-route to through the stop. The label is a
+        # marker the privacy check looks for.
+        text="Location: geo:30.50860,-97.67880?z=16&q=30.50860,-97.67880(Aheadmarker Rock)
+https://osmand.net/map?pin=30.50860,-97.67880#16/30.50860/-97.67880"
+        adb shell am start -W -a android.intent.action.SEND -t text/plain -n $package/.DestinationActivity \
+            --es android.intent.extra.TEXT "\"$text\"" > /out/lab-destination.txt 2>&1 || fail "SEND intent"
+        routed=
+        for _ in $(seq 240); do
+            if [ "$(computed)" -ge 1 ]; then routed=1; break; fi
+            sleep 1
+        done
+        [ -n "$routed" ] || fail "no route came back for the search-ahead destination"
+        # A few seconds for guidance to place the parked vehicle on it and the turn card to
+        # show, which moves the buttons the receiver presses down under it.
+        sleep 5
+        date +%s%3N > /out/poi-ahead-go
+        log "route up I-35 computed; the receiver presses $POI_AHEAD"
+        announced=
+        for _ in $(seq 360); do
+            if report | grep -q "search ahead for $POI_AHEAD: "; then announced=1; break; fi
+            sleep 1
+        done
+        [ -n "$announced" ] || fail "search ahead for $POI_AHEAD never finished"
+        report | grep -E "search ahead|dashboard poi" | while read -r line; do log "$line"; done
+        added=
+        for _ in $(seq 360); do
+            if report | grep -q "stop added "; then added=1; break; fi
+            sleep 1
+        done
+        [ -n "$added" ] || fail "Add stop was never pressed"
+        routed=
+        for _ in $(seq 360); do
+            if [ "$(computed)" -ge 2 ]; then routed=1; break; fi
+            sleep 1
+        done
+        [ -n "$routed" ] || fail "no route through the stop came back"
+        log "route through the added stop computed"
     elif [ -n "$ROUTE" ]; then
         adb shell am start -n $package/.ConnectionActivity --es lab_route "\"$ROUTE\"" \
             > /out/lab-route.txt 2>&1 || fail "lab route intent"
@@ -1251,6 +1446,38 @@ https://osmand.net/map?pin=42.44950,-71.23100#16/42.44950/-71.23100"
         log "sample during the projection: $(report | grep "voice sample" | sed "s/.*voice sample/voice sample/" | tr "\n" ";")"
     fi
 
+    # The drag handle of a favorite: the first row dragged down one, by its own handle.
+    if [ -n "$LAB_REORDER" ]; then
+        first=${LAB_FAVORITES%%@*}
+        rest=${LAB_FAVORITES#*;}
+        second=${rest%%@*}
+        # The vertical middle of the node whose text is $1, or nothing.
+        middle() {
+            dump | grep "text=\"$1\"" | head -n 1 \
+                | sed -n "s/.*bounds=\"\[[0-9]*,\([0-9]*\)\]\[[0-9]*,\([0-9]*\)\]\".*/\1 \2/p" \
+                | { read -r top bottom && echo $(( (top + bottom) / 2 )); }
+        }
+        tap_text Home last || true
+        scroll_to "$first" || fail "the first favorite is not on the Home tab"
+        y1=$(middle "$first")
+        y2=$(middle "$second")
+        handle=$(dump | grep "content-desc=\"Drag to reorder\"" | head -n 1 \
+            | sed -n "s/.*bounds=\"\[\([0-9]*\),[0-9]*\]\[\([0-9]*\),[0-9]*\]\".*/\1 \2/p")
+        [ -n "$y1" ] && [ -n "$y2" ] && [ -n "$handle" ] || fail "no two favorites with a drag handle on screen"
+        [ "$y1" -lt "$y2" ] || fail "the first favorite is not above the second before the drag"
+        set -- $handle
+        x=$(( ($1 + $2) / 2 ))
+        adb shell input swipe $x $y1 $x $y2 1000
+        sleep 2
+        shot reordered
+        n1=$(middle "$first")
+        n2=$(middle "$second")
+        [ -n "$n1" ] && [ -n "$n2" ] && [ "$n1" -gt "$n2" ] \
+            || fail "the dragged favorite did not change places with the one below (y $y1,$y2 -> ${n1:-?},${n2:-?})"
+        report | grep -q "favorite moved" || fail "the app did not say a favorite moved"
+        log "favorite dragged down one row: y $y1,$y2 -> $n1,$n2"
+    fi
+
     # P7.7: the phone screens, after every route and destination step so the taps and
     # scrolls never delay one; the session may already have ended by now.
     if [ -n "$LAB_SCREENS" ]; then
@@ -1316,6 +1543,72 @@ https://osmand.net/map?pin=42.44950,-71.23100#16/42.44950/-71.23100"
         [ "${moved:-0}" -ge 20 ] || fail "the map camera moved only ${moved:-0} times"
         [ "${drawn:-0}" -ge 20 ] || fail "the map rasterised only ${drawn:-0} frames"
         log "track: vehicle events=$events camera moves=$moved rasterised=$drawn"
+    fi
+    # The congestion script: the app own account of what the receiver saw. The timeline must
+    # show the slow phase as episodes, and the restarts the receiver counted must be the
+    # ones the app made for congestion, not focus changes.
+    if [ "$SCRIPT" = congestion ]; then
+        value() { grep -oE "(^| )$1=[0-9]+" /out/app-report.txt | head -n 1 | sed "s/.*=//"; }
+        timeline=$(grep -oE "video_timeline=[^ ]*" /out/app-report.txt | head -n 1)
+        log "congestion: $timeline"
+        grep -oE "video_(congestion_[a-z_]+|keyframe_requests[a-z_]*|keyframes_sent|frames_sent|dropped_[a-z_]+|window_full_events)=[0-9]+" \
+            /out/app-report.txt | tr "\n" " " | sed "s/^/emulator-lab: congestion: /"; echo
+        grep -E "video restarted|video focus" /out/app-report.txt | while read -r line; do log "congestion: $line"; done
+        if [ "$CONGESTION_EXPECT" != any ]; then
+            [ -n "$timeline" ] && [ "$timeline" != "video_timeline=-" ] || fail "no video timeline in the report"
+            [ "$(value video_congestion_events)" -ge 1 ] 2>/dev/null || fail "the slow phase caused no congestion episode"
+            [ "$(value video_focus_restarts)" = 0 ] || fail "a focus restart during the congestion run"
+            restarts=$(value video_congestion_restarts)
+            if [ "$CONGESTION_EXPECT" = restart ]; then
+                [ "${restarts:-0}" -ge 1 ] || fail "the app never restarted the stream for congestion"
+                grep -q "video restarted: " /out/app-report.txt || fail "no restart note in the events"
+                [ "$(value projection_congestion_restarts)" = "$restarts" ] \
+                    || fail "the pipeline rebuilt $(value projection_congestion_restarts) times for $restarts restarts"
+            else
+                [ "${restarts:-0}" = 0 ] || fail "the app restarted the stream with the restart cleared"
+            fi
+        fi
+    fi
+    # P11.5: the app own account of the markers the receiver counted in the picture: queries
+    # answered, markers handed to the map, and no OBF file or place name in the report.
+    if [ -f /out/lab-poi ]; then
+        value() { sed -n "s/.*$1=\([0-9][0-9]*\).*/\1/p" /out/app-report.txt | head -n 1; }
+        queries=$(value poi_queries)
+        markers=$(value poi_markers_max)
+        drawn=$(value poi_markers_shown_max)
+        [ "${queries:-0}" -ge 1 ] || fail "no POI query was answered"
+        [ "${markers:-0}" -ge 1 ] || fail "no POI marker was found"
+        [ "${drawn:-0}" -ge 1 ] || fail "no POI marker reached the dashboard"
+        grep -q "lab poi buttons on: $(cat /out/lab-poi)" /out/app-report.txt || fail "the lab POI buttons were not lit"
+        # The track script taps a marker and then Close on its card (receiver --poi).
+        if [ "$SCRIPT" = track ]; then
+            grep -q "poi_taps=1 poi_cards=1 " /out/app-report.txt || fail "the marker tap did not open one card"
+            grep -q "poi_close_presses=1 " /out/app-report.txt || fail "Close on the card was not pressed"
+        fi
+        ! grep -qi "\.obf\|lab-obf\|Us_texas" /out/app-report.txt || fail "an OBF file name reached the report"
+        grep -E "^poi_|map_poi_" /out/app-report.txt | while read -r line; do log "$line"; done
+    fi
+    # P11.5a: search ahead by the app own counts: the press, the search, the detours, the
+    # announcement and the card, Add stop and a route through it; and no place in the report.
+    if [ -n "$POI_AHEAD" ]; then
+        value() { grep -oE "(^| )$1=[0-9]+" /out/app-report.txt | head -n 1 | sed "s/.*=//"; }
+        for key in poi_ahead_presses poi_ahead_searches poi_ahead_detours_routed poi_ahead_announced poi_ahead_add_stops; do
+            [ "$(value $key)" -ge 1 ] 2>/dev/null || fail "$key is $(value $key), wanted at least 1"
+        done
+        [ "$(value poi_ahead_found)" -ge 1 ] 2>/dev/null || fail "search ahead found no stop to name"
+        [ "$(value poi_cards)" -ge 1 ] 2>/dev/null || fail "no search-ahead card was shown"
+        [ "$(value voice_prompts_requests)" -ge 1 ] 2>/dev/null || fail "the announcement never reached the speaker"
+        if [ "$SPEECH_ENGINE" = lab ] || [ "$SPEECH_ENGINE" = espeak ]; then
+            [ "$(value voice_prompts_spoken_poi_ahead)" -ge 1 ] 2>/dev/null || fail "the announcement was not spoken: $(grep -o "voice_prompts_[a-z_]*=[0-9]*" /out/app-report.txt | tr "\n" " ")"
+        fi
+        grep -q "stop added as the " /out/app-report.txt || fail "Add stop did not set the via point"
+        grep -q "^receiver_poi_ahead=card " /out/receiver.txt || fail "the receiver never saw the search-ahead card"
+        for marker in Aheadmarker 30.5086 97.6788 "\.obf" lab-obf Us_texas; do
+            ! grep -qi "$marker" /out/app-report.txt || fail "the report carries $marker"
+        done
+        grep -E "^poi_ahead|voice_prompts_requests|routing_via" /out/app-report.txt | while read -r line; do log "$line"; done
+        grep -E "search ahead|stop added|passed the chosen|route computed" /out/app-report.txt | while read -r line; do log "$line"; done
+        grep -E "^receiver_poi" /out/receiver.txt | while read -r line; do log "$line"; done
     fi
     # P7.6: the source own account of the switches, beside the receiver own picture of
     # them. Three flips, three switches (the first theme, applied at start, is not one),
@@ -1416,9 +1709,10 @@ https://osmand.net/map?pin=42.44950,-71.23100#16/42.44950/-71.23100"
                 || fail "no re-route was asked for and computed: $(grep "^guidance_reroutes" /out/app-report.txt)"
         fi
         grep -Eq "guidance_arrivals=1 " /out/app-report.txt || fail "guidance did not arrive exactly once"
-        # Arriving puts the destination on top of the favorites (the lab destination is none).
-        grep -q "arrived; destination added to the top of the favorites" /out/app-report.txt \
-            || fail "arriving did not add the destination to the favorites"
+        # Arriving makes the destination the recent one on top of the favorites tile, never a
+        # saved place (the lab destination is none).
+        grep -q "arrived; destination is the recent one on top of the favorites tile" /out/app-report.txt \
+            || fail "arriving did not make the destination the recent one"
         grep -q "guidance_fix_source=vehicle " /out/app-report.txt || fail "guidance did not follow the vehicle"
         grep -Eq "guidance_joined=[1-9]" /out/app-report.txt || fail "guidance never joined a route"
         grep -q "routing_origin=reroute " /out/app-report.txt || fail "the last route was not a re-route"
@@ -1656,7 +1950,7 @@ https://osmand.net/map?pin=42.44950,-71.23100#16/42.44950/-71.23100"
         grep "^routing_\|map_engine=" /out/app-report.txt | while read -r line; do log "$line"; done
         grep -E "destination|route (computed|failed|requested)" /out/app-report.txt | while read -r line; do log "$line"; done
     elif [ -n "$ROUTE" ] && [ "$SCRIPT" != guidance ] && [ "$SCRIPT" != endroute ] && [ "$SCRIPT" != voice ] \
-        && [ "$SCRIPT" != traffic ]; then
+        && [ "$SCRIPT" != traffic ] && [ -z "$POI_AHEAD" ]; then
         grep -q "routing_origin=lab" /out/app-report.txt || fail "the lab route was never requested"
         grep -q "^routing_result=ok routing_thread=aap-route " /out/app-report.txt \
             || fail "no route came back from the routing thread: $(grep "^routing_" /out/app-report.txt | tr "\n" " ")"
@@ -1872,7 +2166,7 @@ podman rm -f "$pod-receiver" > /dev/null 2>&1 || true
 receiver_status=$(cat "$out/receiver-exit.txt" 2>/dev/null || echo "unknown")
 echo "emulator-lab: receiver exit=$receiver_status app exit=$status"
 echo "emulator-lab: results in $out"
-grep -E "receiver_(video_decoded_frames|checks|check_failed|tap_result|track|guidance|daynight|control|endroute|calls|speech|voice|traffic|weather)" "$out/receiver.txt" 2>/dev/null || true
+grep -E "receiver_(video_decoded_frames|checks|check_failed|tap_result|track|guidance|daynight|control|endroute|calls|speech|voice|traffic|weather|congestion)" "$out/receiver.txt" 2>/dev/null || true
 # P6.4: the route line in the picture the head unit decoded, not only in the app's own
 # counters. Route colour (MapEngine.ROUTE_COLOR, 34,199,240) is in no part of the owned
 # theme or the dashboard chrome, so the first frames, before any route, must have almost

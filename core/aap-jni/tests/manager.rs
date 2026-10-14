@@ -577,6 +577,20 @@ fn projection_config_keys_are_strict() {
     assert_eq!(defaults.session.projection.sensors, SensorSet::None);
     assert!(!defaults.session.projection.sensor_location);
     assert_eq!(defaults.session.video_preference.name(), "largest");
+    assert!(defaults.session.projection.congestion_restart);
+    let off = parse_config(&projection_config(
+        1,
+        "/d",
+        "peer_policy=first-use\ncongestion_restart=false\n",
+    ))
+    .unwrap();
+    assert!(!off.session.projection.congestion_restart);
+    assert!(parse_config(&projection_config(
+        1,
+        "/d",
+        "peer_policy=first-use\ncongestion_restart=no\n",
+    ))
+    .is_err());
 
     // P5.2 sets: named, numeric, and mixed lists, all bounded by the advertisement later.
     for (value, expected) in [

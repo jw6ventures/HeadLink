@@ -31,6 +31,8 @@ data class SavedSettings(
     val keepalive: String = SessionSettings.KEEPALIVE_PROFILES[0],
     val openAllChannels: Boolean = false,
     val resumeInPlace: Boolean = false,
+    /** Cleared, the stream is never restarted for congestion (diagnostic). */
+    val congestionRestart: Boolean = true,
     val waitForFocus: Boolean = false,
     val keyframeSeconds: Int = SessionSettings.KEYFRAME_SECONDS[0],
     val setupField: String = SessionSettings.SETUP_FIELDS[0],
@@ -136,6 +138,7 @@ data class SavedSettings(
             captureVideo = once.captureVideo && projection,
             openAllChannels = openAllChannels && projection,
             rebuildOnRegain = !resumeInPlace,
+            congestionRestart = congestionRestart,
             requestFocus = !(waitForFocus && projection),
             keyframeSeconds = keyframeSeconds,
             setupField = setupField,
@@ -172,6 +175,7 @@ data class SavedSettings(
             KEEPALIVE to s.keepalive,
             OPEN_ALL_CHANNELS to s.openAllChannels,
             RESUME_IN_PLACE to s.resumeInPlace,
+            CONGESTION_RESTART to s.congestionRestart,
             WAIT_FOR_FOCUS to s.waitForFocus,
             KEYFRAME_SECONDS to s.keyframeSeconds,
             SETUP_FIELD to s.setupField,
@@ -250,6 +254,7 @@ data class SavedSettings(
                 keepalive = text(KEEPALIVE, d.keepalive),
                 openAllChannels = flag(OPEN_ALL_CHANNELS, d.openAllChannels),
                 resumeInPlace = flag(RESUME_IN_PLACE, d.resumeInPlace),
+                congestionRestart = flag(CONGESTION_RESTART, d.congestionRestart),
                 waitForFocus = flag(WAIT_FOR_FOCUS, d.waitForFocus),
                 keyframeSeconds = number(KEYFRAME_SECONDS, d.keyframeSeconds),
                 setupField = text(SETUP_FIELD, d.setupField),
@@ -316,6 +321,7 @@ data class SavedSettings(
         private const val KEEPALIVE = "keepalive"
         private const val OPEN_ALL_CHANNELS = "open_all_channels"
         private const val RESUME_IN_PLACE = "resume_in_place"
+        private const val CONGESTION_RESTART = "congestion_restart"
         private const val WAIT_FOR_FOCUS = "wait_for_focus"
         private const val KEYFRAME_SECONDS = "keyframe_seconds"
         private const val SETUP_FIELD = "setup_field"

@@ -45,6 +45,12 @@ data class AttemptSettings(
      * App-side only — it never reaches the native configuration.
      */
     val rebuildOnRegain: Boolean = true,
+    /**
+     * Restart the video stream when the head unit keeps falling behind, as a screen switch
+     * does (spec §8.2). On by default: on 2026-10-11 a screen switch was the only thing
+     * that cleared Ford SYNC 4.0's smeared, frozen picture (report d11eec1e).
+     */
+    val congestionRestart: Boolean = true,
     /** What field 1 of the AV setup request carries: one of [SessionSettings.SETUP_FIELDS]. */
     val setupField: String = SessionSettings.SETUP_FIELD_CODEC,
     /** Ping encryption: one of [SessionSettings.KEEPALIVE_PROFILES]. */

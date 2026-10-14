@@ -57,6 +57,7 @@ use aap_proto::{
 };
 use aap_wire::Message;
 use std::{
+    collections::VecDeque,
     fmt,
     time::{Duration, Instant},
 };
@@ -79,6 +80,40 @@ const AUDIO_FOCUS_SEQUENCE_LIMIT: usize = 16;
 /// send, and when did it stop sending", and a session may lose and regain the screen many
 /// times over a drive.
 const VIDEO_FOCUS_SEQUENCE_LIMIT: usize = 64;
+/// Ten hours of per-minute rows; a longer projection keeps its first ten.
+pub const TIMELINE_LIMIT: usize = 600;
+
+/// One minute of the video stream, counted from the start of projection
+/// ([`ProjectionReport::timeline`]). Reported as
+/// `minute:frames/keyframes/episodes/dropped/requests/restarts`: frames and keyframes sent,
+/// congestion episodes begun, frames dropped for congestion or while waiting for the IDR
+/// that ends one, keyframes asked for after an episode drained, and stream restarts.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MinuteRow {
+    pub minute: u32,
+    pub frames: u32,
+    pub keyframes: u32,
+    pub episodes: u32,
+    pub dropped: u32,
+    pub requests: u32,
+    pub restarts: u32,
+}
+
+impl fmt::Display for MinuteRow {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}:{}/{}/{}/{}/{}/{}",
+            self.minute,
+            self.frames,
+            self.keyframes,
+            self.episodes,
+            self.dropped,
+            self.requests,
+            self.restarts
+        )
+    }
+}
 /// Sensors subscribed by [`SensorSet::Restriction`], in request order.
 const RESTRICTION_SENSORS: [i32; 2] = [
     sensor_type::Enum::DrivingStatus as i32,
@@ -101,6 +136,20 @@ pub struct ProjectionConfig {
     /// With the acknowledgement window full and focus held, how long without an ack
     /// before `FLOW_CONTROL_TIMEOUT`.
     pub ack_timeout: Duration,
+    /// After a congestion episode drains, how long since the last keyframe went out (or
+    /// was asked for) before another is asked for. The encoder's own interval usually
+    /// supplies one first; see the [`crate::media`] congestion policy.
+    pub keyframe_spacing: Duration,
+    /// Restart the video stream — stop and start indications under a new session id, and
+    /// a rebuilt encoder, as a screen switch does — when the head unit keeps falling
+    /// behind: [`Self::congestion_restart_episodes`] episodes within
+    /// [`Self::congestion_restart_window`], at most once per
+    /// [`Self::congestion_restart_cooldown`]. A screen switch was the only thing that
+    /// cleared Ford SYNC 4.0's smeared, frozen picture on 2026-10-11 (report d11eec1e).
+    pub congestion_restart: bool,
+    pub congestion_restart_episodes: usize,
+    pub congestion_restart_window: Duration,
+    pub congestion_restart_cooldown: Duration,
     /// Projection length before this source requests shutdown; `None` runs until Stop.
     pub limit: Option<Duration>,
     /// Which advertised sensor types to subscribe to; [`SensorSet::None`] when the config
@@ -348,6 +397,11 @@ impl Default for ProjectionConfig {
             focus_wait: Duration::from_secs(30),
             first_unit_wait: Duration::from_secs(10),
             ack_timeout: Duration::from_secs(5),
+            keyframe_spacing: Duration::from_secs(1),
+            congestion_restart: true,
+            congestion_restart_episodes: 5,
+            congestion_restart_window: Duration::from_secs(10),
+            congestion_restart_cooldown: Duration::from_secs(60),
             limit: None,
             sensors: SensorSet::None,
             sensor_location: false,
@@ -462,6 +516,12 @@ pub enum AppEvent {
     VideoGeometry(VideoStart),
     /// Produce an IDR as soon as possible.
     KeyframeRequest,
+    /// The source restarted the video stream itself because the head unit kept falling
+    /// behind ([`ProjectionConfig::congestion_restart`]): rebuild the encoder as on a focus
+    /// regain. Focus did not change. A `KeyframeRequest` follows.
+    VideoRestart {
+        reason: String,
+    },
     Touch(Touch),
     Key {
         keycode: u32,
@@ -805,6 +865,15 @@ pub(crate) struct ProjectionState {
     audio_focus_held_ever: bool,
     projecting_since: Option<Instant>,
     first_keyframe_sent: bool,
+    /// When a video keyframe last went out, and when one was last asked for after a
+    /// congestion episode: the spacing of the next request runs from the later.
+    last_keyframe_sent: Option<Instant>,
+    last_keyframe_asked: Option<Instant>,
+    /// The link's congestion totals as last read, so each pump sees only what is new.
+    congestion_seen: (u64, u64),
+    /// When recent congestion episodes were first seen, within the restart window.
+    congestion_recent: VecDeque<Instant>,
+    last_congestion_restart: Option<Instant>,
     input_open: bool,
     sensor_open: bool,
     /// Accumulated vehicle position and motion, kept out of the report: it is position
@@ -1184,6 +1253,17 @@ pub struct ProjectionReport {
     pub outstanding_max: u32,
     pub window_full_events: u64,
     pub keyframe_requests: u64,
+    /// Of those, the ones asked for after a congestion episode drained.
+    pub keyframe_requests_drained: u64,
+    /// Stream restarts this source made itself because the head unit kept falling behind
+    /// ([`ProjectionConfig::congestion_restart`]), counted apart from `focus_restarts`.
+    pub congestion_restarts: u64,
+    /// Restarts that were due but held back by the cooldown.
+    pub congestion_restarts_held: u64,
+    /// One row per minute of projection that had any video traffic, oldest first, at most
+    /// [`TIMELINE_LIMIT`]: totals only can hide a few bad minutes in an hour.
+    pub timeline: Vec<MinuteRow>,
+    pub timeline_truncated: bool,
     pub media: MediaCounters,
     pub input: InputStats,
     pub app_events_dropped: u64,
@@ -1678,7 +1758,8 @@ impl fmt::Display for ProjectionReport {
              video_media_bytes_sent={} video_acks={} video_acked_units={} \
              video_acks_wrong_session={} video_acks_previous_session={} video_acks_invalid={} video_acks_excess={} \
              video_outstanding={} video_outstanding_max={} video_window_full_events={} \
-             video_keyframe_requests={}",
+             video_keyframe_requests={} video_keyframe_requests_drained={} \
+             video_congestion_restarts={} video_congestion_restarts_held={}",
             self.configs_sent,
             self.keyframes_sent,
             self.frames_sent,
@@ -1692,7 +1773,25 @@ impl fmt::Display for ProjectionReport {
             self.outstanding,
             self.outstanding_max,
             self.window_full_events,
-            self.keyframe_requests
+            self.keyframe_requests,
+            self.keyframe_requests_drained,
+            self.congestion_restarts,
+            self.congestion_restarts_held,
+        )?;
+        let timeline: Vec<String> = self.timeline.iter().map(MinuteRow::to_string).collect();
+        writeln!(
+            f,
+            "video_timeline={}{}",
+            if timeline.is_empty() {
+                "-".into()
+            } else {
+                timeline.join(",")
+            },
+            if self.timeline_truncated {
+                " (truncated)"
+            } else {
+                ""
+            }
         )?;
         write!(f, "{}", self.media)?;
         let i = &self.input;
@@ -1930,6 +2029,11 @@ impl Session {
             audio_focus_held_ever: false,
             projecting_since: None,
             first_keyframe_sent: false,
+            last_keyframe_sent: None,
+            last_keyframe_asked: None,
+            congestion_seen: (0, 0),
+            congestion_recent: VecDeque::new(),
+            last_congestion_restart: None,
             input_open: false,
             sensor_open: false,
             vehicle: VehicleState::default(),
@@ -2091,9 +2195,9 @@ impl Session {
     }
 
     /// Projection deadlines other than setup steps.
-    pub(crate) fn projection_deadlines(&self) -> [Option<Instant>; 8] {
+    pub(crate) fn projection_deadlines(&self) -> [Option<Instant>; 9] {
         let Some(p) = &self.projection else {
-            return [None; 8];
+            return [None; 9];
         };
         // One stall deadline per stream, both with the same timeout but with different
         // consequences: video failing the session, audio only stopping itself.
@@ -2141,11 +2245,13 @@ impl Session {
             p.audio_focus_deadline,
             navigation,
             navigation_wait,
+            // The drained congestion episode's keyframe; asked for in `pump_media`.
+            self.drained_keyframe_due(),
         ]
     }
 
     pub(crate) fn projection_timers(&mut self, now: Instant) {
-        let [first_unit, stall, limit, _media, audio_stall, audio_focus, _navigation, nav_wait] =
+        let [first_unit, stall, limit, _media, audio_stall, audio_focus, _navigation, nav_wait, _keyframe] =
             self.projection_deadlines();
         if first_unit.is_some_and(|d| now >= d) {
             let detail = format!(
@@ -4076,7 +4182,7 @@ impl Session {
         match p.step {
             Step::AwaitFocus if projected => self.start_video(now),
             Step::Streaming if was && !projected => {
-                self.stop_video_stream(now);
+                self.stop_video_stream(true, now);
                 self.projection_report().focus_losses += 1;
                 self.push_app_event(AppEvent::Focus {
                     projected: false,
@@ -4089,7 +4195,7 @@ impl Session {
                     projected: true,
                     mode,
                 });
-                self.restart_video_stream(now);
+                self.restart_video_stream(true, now);
             }
             _ => {}
         }
@@ -4104,7 +4210,10 @@ impl Session {
     ///
     /// The channel, its acknowledgement window and the per-connection flow control are all
     /// left alone: this stops a stream, not a channel.
-    fn stop_video_stream(&mut self, now: Instant) {
+    ///
+    /// `focus` is false for a congestion restart ([`Self::restart_congested_stream`]),
+    /// which is counted apart from focus transitions.
+    fn stop_video_stream(&mut self, focus: bool, now: Instant) {
         let p = self.projection_mut();
         let video = p.video_mut();
         if !video.started {
@@ -4130,7 +4239,9 @@ impl Session {
             now,
         );
         let report = self.projection_report();
-        report.focus_stop_indications += u64::from(sent);
+        if focus {
+            report.focus_stop_indications += u64::from(sent);
+        }
     }
 
     /// The head unit handed the screen back: start the stream again under the new session
@@ -4139,7 +4250,7 @@ impl Session {
     /// Deliberately not [`Session::start_video`], which owns the first start: that one moves
     /// the stage out of Setup, completes it, and asks for audio focus. None of those happen
     /// again on a regain — only the AV stream restarts.
-    fn restart_video_stream(&mut self, now: Instant) {
+    fn restart_video_stream(&mut self, focus: bool, now: Instant) {
         let first_unit_wait = self.config.projection.first_unit_wait;
         let at = self.elapsed(now);
         let p = self.projection_mut();
@@ -4165,7 +4276,9 @@ impl Session {
         let report = self.projection_report();
         report.start_session = Some(start.session);
         report.started_at = Some(at);
-        report.focus_restarts += 1;
+        if focus {
+            report.focus_restarts += 1;
+        }
         report.keyframe_requests += 1;
         if !self.send_on(
             channel,
@@ -4526,10 +4639,154 @@ impl Session {
         if let Some(detail) = self.audio.take_failure() {
             self.stop_audio(&format!("audio source failed: {detail}"), now);
         }
-        let Some(p) = &self.projection else { return };
-        for index in 0..p.streams.len() {
+        if self.projection.is_none() {
+            return;
+        }
+        self.watch_congestion(now);
+        let streams = self.projection.as_ref().map_or(0, |p| p.streams.len());
+        for index in 0..streams {
             self.pump_stream(index, now);
         }
+        // Sending may just have drained a congestion episode's queue.
+        self.ask_drained_keyframe(now);
+    }
+
+    /// When the IDR a drained congestion episode waits for may be asked for: spaced from
+    /// the last keyframe sent or asked for, so a head unit that has only just caught up is
+    /// not handed the most expensive frame there is straight away. `None` when nothing is
+    /// waiting.
+    pub(crate) fn drained_keyframe_due(&self) -> Option<Instant> {
+        let p = self.projection.as_ref()?;
+        if !self.media.wants_keyframe() {
+            return None;
+        }
+        let spacing = self.config.projection.keyframe_spacing;
+        // With no keyframe yet there is nothing to space from: due at once.
+        Some(
+            [p.last_keyframe_sent, p.last_keyframe_asked]
+                .into_iter()
+                .flatten()
+                .max()
+                .map_or(p.projecting_since.unwrap_or(self.started), |at| {
+                    at + spacing
+                }),
+        )
+    }
+
+    fn ask_drained_keyframe(&mut self, now: Instant) {
+        if self.drained_keyframe_due().is_none_or(|due| now < due) {
+            return;
+        }
+        self.media.keyframe_asked();
+        self.projection_mut().last_keyframe_asked = Some(now);
+        let report = self.projection_report();
+        report.keyframe_requests += 1;
+        report.keyframe_requests_drained += 1;
+        if let Some(row) = self.timeline_row(now) {
+            row.requests += 1;
+        }
+        self.push_app_event(AppEvent::KeyframeRequest);
+    }
+
+    /// Records new congestion episodes and drops in the timeline, and restarts the stream
+    /// when the head unit keeps falling behind ([`ProjectionConfig::congestion_restart`]).
+    fn watch_congestion(&mut self, now: Instant) {
+        let (episodes, dropped) = self.media.congestion_totals();
+        let (seen_episodes, seen_dropped) = self.projection_mut().congestion_seen;
+        if (episodes, dropped) == (seen_episodes, seen_dropped) {
+            return;
+        }
+        let new_episodes = episodes.saturating_sub(seen_episodes);
+        let new_dropped = dropped.saturating_sub(seen_dropped);
+        if let Some(row) = self.timeline_row(now) {
+            row.episodes += new_episodes as u32;
+            row.dropped += new_dropped as u32;
+        }
+        let config = &self.config.projection;
+        let (restart, limit, window, cooldown) = (
+            config.congestion_restart,
+            config.congestion_restart_episodes,
+            config.congestion_restart_window,
+            config.congestion_restart_cooldown,
+        );
+        let p = self.projection_mut();
+        p.congestion_seen = (episodes, dropped);
+        // Bounded: only the last `limit` matter to the decision.
+        for _ in 0..new_episodes.min(limit as u64) {
+            p.congestion_recent.push_back(now);
+        }
+        while p.congestion_recent.len() > limit.max(1) {
+            p.congestion_recent.pop_front();
+        }
+        while p
+            .congestion_recent
+            .front()
+            .is_some_and(|&at| now.saturating_duration_since(at) > window)
+        {
+            p.congestion_recent.pop_front();
+        }
+        if !restart || limit == 0 || p.congestion_recent.len() < limit {
+            return;
+        }
+        let video = p.video();
+        if !video.started || !video.focused {
+            return;
+        }
+        if p.last_congestion_restart
+            .is_some_and(|at| now.saturating_duration_since(at) < cooldown)
+        {
+            // Counted once per due restart: the window starts over either way.
+            p.congestion_recent.clear();
+            self.projection_report().congestion_restarts_held += 1;
+            return;
+        }
+        let count = p.congestion_recent.len();
+        self.restart_congested_stream(
+            format!(
+                "{count} congestion episodes within {} ms",
+                window.as_millis()
+            ),
+            now,
+        );
+    }
+
+    /// Stops and restarts the video stream as a screen switch does, without the head unit
+    /// having moved focus: stop indication, start indication under a new session id, then
+    /// a rebuilt encoder's configuration and IDR. Spec §8.2.
+    fn restart_congested_stream(&mut self, reason: String, now: Instant) {
+        {
+            let p = self.projection_mut();
+            p.congestion_recent.clear();
+            p.last_congestion_restart = Some(now);
+        }
+        self.stop_video_stream(false, now);
+        self.projection_report().congestion_restarts += 1;
+        if let Some(row) = self.timeline_row(now) {
+            row.restarts += 1;
+        }
+        // Before the restart's own VideoStart and KeyframeRequest, so the app has begun
+        // rebuilding before it is asked for the IDR.
+        self.push_app_event(AppEvent::VideoRestart { reason });
+        self.restart_video_stream(false, now);
+    }
+
+    /// The timeline row for `now`, appending rows as minutes pass; `None` before projection
+    /// starts or once [`TIMELINE_LIMIT`] rows are kept.
+    fn timeline_row(&mut self, now: Instant) -> Option<&mut MinuteRow> {
+        let since = self.projection.as_ref()?.projecting_since?;
+        let minute = (now.saturating_duration_since(since).as_secs() / 60) as u32;
+        let report = self.projection_report();
+        if report.timeline.last().map(|r| r.minute) != Some(minute) {
+            if report.timeline.len() >= TIMELINE_LIMIT {
+                report.timeline_truncated = true;
+                return None;
+            }
+            report.timeline.push(MinuteRow {
+                minute,
+                ..MinuteRow::default()
+            });
+        }
+        report.timeline.last_mut()
     }
 
     fn pump_stream(&mut self, index: usize, now: Instant) {
@@ -4610,6 +4867,20 @@ impl Session {
             }
             if mark_keyframe {
                 self.mark(Marker::FirstKeyframe);
+            }
+            if kind == StreamKind::Video {
+                if let UnitKind::Frame { keyframe } = unit.kind {
+                    if keyframe {
+                        self.projection_mut().last_keyframe_sent = Some(now);
+                    }
+                    if let Some(row) = self.timeline_row(now) {
+                        if keyframe {
+                            row.keyframes += 1;
+                        } else {
+                            row.frames += 1;
+                        }
+                    }
+                }
             }
         }
     }

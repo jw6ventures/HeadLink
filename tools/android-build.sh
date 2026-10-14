@@ -26,6 +26,11 @@ fi
 if [ -n "${ROUTING_SEGMENTS:-}" ]; then
     set -- "$@" -v "$ROUTING_SEGMENTS:/cache/rd5:ro" -e ROUTING_SEGMENTS=/cache/rd5
 fi
+# OBF_DIR=<dir of OsmAnd .obf files> likewise mounts them read-only for ObfTest's real-file
+# checks (P11.2-P11.3); without it they are skipped and say so.
+if [ -n "${OBF_DIR:-}" ]; then
+    set -- "$@" -v "$OBF_DIR:/cache/obf:ro" -e OBF_DIR=/cache/obf
+fi
 podman_run "$@" \
   -v "$CACHE_ROOT/gradle:/cache/gradle" -e GRADLE_USER_HOME=/cache/gradle \
   -v "$CACHE_ROOT/android-user:/cache/android-user" -e ANDROID_USER_HOME=/cache/android-user \

@@ -420,6 +420,25 @@ class MapControl(
         }
     }
 
+    /** The camera the last frame was drawn with, or null before the first (P11.5). */
+    fun lastCamera(): MapCamera? = last
+
+    /** The zoom level of the scale in use, log2 of it (P11.5). */
+    fun zoomLevel(): Double = zoom()
+
+    /**
+     * The ground the pane shows on the camera last drawn, corner to corner, as a box in
+     * degrees (P11.5: what the POI markers are asked for); null before the first frame.
+     * A rotated map shows a tilted rectangle, so the box is the one around its four corners.
+     */
+    fun visibleBox(pane: Box): GeoBox? {
+        if (last == null) return null
+        val corners = listOf(pane.x to pane.y, pane.right to pane.y, pane.x to pane.bottom, pane.right to pane.bottom)
+            .mapNotNull { (x, y) -> groundAt(x, y, pane) }
+        if (corners.size < 4) return null
+        return GeoBox(corners.minOf { it.first }, corners.minOf { it.second }, corners.maxOf { it.first }, corners.maxOf { it.second })
+    }
+
     /** The place the last long press picked, once; null when there is none waiting. */
     fun takePick(): Pair<Double, Double>? = pick.also { pick = null }
 

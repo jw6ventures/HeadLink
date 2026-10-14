@@ -453,8 +453,10 @@ public final class DashboardTripTest {
             d.phone(new PhoneSnapshot(60, false, 3, "wifi", 30.27, -97.74, null, null, null, true));
             d.mapCamera();
             d.nextFrame(NOON);
+            // 30.2715 rather than 30.272: at 726x480 the latter lies under the POI buttons'
+            // row along the pane's top (P11.5), which is drawn over a bubble and wins its press.
             d.alternatives(List.of(
-                new AlternativeMark(7L, 30.272, -97.738, "+6 min"),
+                new AlternativeMark(7L, 30.2715, -97.738, "+6 min"),
                 new AlternativeMark(8L, 31.5, -97.74, "+2 min")));
             MapCamera before = d.mapCamera();
             Dashboard.Snapshot s = d.nextFrame(NOON);
@@ -493,12 +495,14 @@ public final class DashboardTripTest {
         d.touch("move", card.getCenterX() + 200, card.getCenterY() + 200);
         d.touch("up", card.getCenterX() + 200, card.getCenterY() + 200);
         check(d.nextFrame(NOON).getMapFollowing(), "a drag from the card leaves the map following");
-        // Without a card the same place is map, and the same drag pans it.
+        // Without a card the same place is map, and the same drag pans it. Near the card's
+        // bottom edge: its middle is the POI buttons' row once the card is gone (P11.5).
         d.upcomingTurn(null);
         d.mapCamera();
-        d.touch("down", card.getCenterX(), card.getCenterY());
-        d.touch("move", card.getCenterX() + 200, card.getCenterY() + 200);
-        d.touch("up", card.getCenterX() + 200, card.getCenterY() + 200);
+        int y = card.getBottom() - 5;
+        d.touch("down", card.getCenterX(), y);
+        d.touch("move", card.getCenterX() + 200, y + 200);
+        d.touch("up", card.getCenterX() + 200, y + 200);
         check(!d.nextFrame(NOON).getMapFollowing(), "with no card it pans, as before");
     }
 
