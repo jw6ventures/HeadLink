@@ -190,26 +190,25 @@ object Navigation {
 
     /**
      * [Guide] saw the vehicle reach the destination: the trip ends here. It is no longer
-     * saved, and the place goes to the top of the favorites so the next trip there is one
-     * tap, unless it was a favorite already: picked from the tile, or a saved place within
-     * [Favorite.SAME_PLACE_M]. Named by its label, else its coordinates, as the connection
-     * screen names a place added with no name. A full list is left as it is, as adding one
-     * by hand is: nothing the driver saved is dropped to make room. Only the outcome is
-     * noted, never the place.
+     * saved, and the place becomes the recent destination the favorites tile lists on top,
+     * so the next trip there is one tap, without joining the saved places: there is one
+     * recent slot, and every arrival replaces it, a favorite's too. The tile does not list
+     * a recent place that is a favorite twice ([Favorite.tile]), so arriving at one leaves
+     * just the favorites. Named by its label, else its coordinates, as the connection
+     * screen names a place added with no name. Only the outcome is noted, never the place.
      */
     fun arrived(context: Context) {
         val destination = destination ?: return
         if (arrived) return
         arrived = true
         NavigationStore.changed()
-        if (source == DestinationSource.FAVORITE) return
         val place = Favorite.of(describe(destination), destination.latitude, destination.longitude) ?: return
+        Favorites.setRecent(context, place)
         SessionController.note(
-            when {
-                Favorite.saved(Favorites.list(context), place.latitude, place.longitude) ->
-                    "arrived at a place already in the favorites"
-                !Favorites.addFirst(context, place) -> "arrived; favorites full, destination not added"
-                else -> "arrived; destination added to the top of the favorites (${Favorites.list(context).size} saved)"
+            if (source == DestinationSource.FAVORITE || Favorite.saved(Favorites.list(context), place.latitude, place.longitude)) {
+                "arrived at a favorite; it is the recent destination, listed once"
+            } else {
+                "arrived; destination is the recent one on top of the favorites tile"
             },
         )
     }
@@ -218,6 +217,23 @@ object Navigation {
     fun chose(route: Route) {
         via = route.via
         NavigationStore.changed()
+    }
+
+    /**
+     * P11.5a: **Add stop** on a search-ahead card. The place becomes the via point and the
+     * route to the same destination is asked for again from the vehicle, heading as it is.
+     * Returns whether a via point was replaced (a chosen alternative's, or an earlier stop),
+     * or null, and nothing asked, with no destination or once arrived. Released like any via
+     * point once the vehicle reaches or passes it ([ViaRelease]). The note names no place.
+     */
+    fun addStop(context: Context, latitude: Double, longitude: Double): Boolean? {
+        if (destination == null || arrived) return null
+        val replaced = via != null
+        via = doubleArrayOf(latitude, longitude)
+        NavigationStore.changed()
+        SessionController.note(if (replaced) "stop added, replacing the route's via point" else "stop added as the route's via point")
+        route(context, bearing = Guide.fix()?.second)
+        return replaced
     }
 
     /** The vehicle has passed the via point: from here the best route is the chosen one. */

@@ -25,6 +25,7 @@ Incomplete from a previous run: %3$s</string>
     <string name="capture_video_help">Save the encoded video stream for offline decoding (diagnostic; tens of MB)</string>
     <string name="open_all_channels_help">Open every advertised channel, as Android Auto does (diagnostic)</string>
     <string name="resume_in_place_help">Resume the encoder instead of rebuilding it when focus returns (diagnostic)</string>
+    <string name="congestion_restart_help">When the head unit keeps falling behind the video, restart the stream as switching screens does</string>
     <string name="wait_for_focus_help">Wait for unsolicited video focus instead of asking, as Android Auto does</string>
     <string name="keyframe_help">Keyframe interval (Android Auto configures 60 s; this source used 1 s)</string>
     <string name="setup_field_help">AV setup request field 1 (codec-type is the vendored schema; config-index is aasdk\'s reading, for a head unit that decodes the wrong configuration)</string>
@@ -85,7 +86,7 @@ Incomplete from a previous run: %3$s</string>
     <string name="remove_data_delete">Delete</string>
     <string name="data_removed">Removed %1$s</string>
     <string name="data_remove_failed">Could not remove %1$s</string>
-    <string name="route_input_hint">Destination lat,lon, or two points lat,lon lat,lon</string>
+    <string name="route_input_hint">Address or place, lat,lon, or two points lat,lon lat,lon</string>
     <string name="route_input_invalid">Enter a destination as lat,lon, or two points as lat,lon lat,lon</string>
     <string name="compute_route">Compute route</string>
     <string name="clear_route">Clear route</string>
@@ -119,6 +120,7 @@ Incomplete from a previous run: %3$s</string>
     <string name="drop_folder_none">Drop folder: none chosen</string>
     <string name="drop_folder_checking">checking…</string>
     <string name="drop_folder_failed">Could not keep access to that folder: %1$s</string>
+    <string name="drop_folder_is_maps_folder">That is the OsmAnd maps folder. Choose a different folder to drop files in.</string>
     <!-- P7.1: saved settings and auto-start. Short labels; P7.7 moves the long text to help. -->
     <string name="auto_start_help">Start projecting when plugged in (only a head unit already trusted)</string>
     <string name="marker_colour_label">Vehicle marker colour</string>
@@ -142,11 +144,13 @@ Incomplete from a previous run: %3$s</string>
     <string name="favorites_label">Favorites</string>
     <string name="favorites_title">Favorites · %1$d of %2$d</string>
     <string name="favorites_help">The dashboard\'s first tile lists them, and a tap on one routes there. Names and coordinates stay on this phone and out of every report.</string>
-    <string name="favorites_hint">Tap to route there. Touch and hold to rename or remove.</string>
+    <string name="favorites_hint">Tap to route there. Drag ≡ to reorder. Touch and hold to rename, move to the top or remove.</string>
     <string name="save_destination">Save current destination</string>
     <string name="add_favorite_coordinates">Add by coordinates</string>
     <string name="favorite_exists">%1$s is already a favorite</string>
     <string name="rename_favorite">Rename</string>
+    <string name="favorite_to_top">Move to top</string>
+    <string name="favorite_drag_handle">Drag to reorder</string>
     <string name="favorite_renamed">Renamed to %1$s</string>
     <string name="setup_ready">Ready</string>
     <string name="setup_ready_detail">Everything a drive needs is in place.</string>
@@ -297,6 +301,7 @@ Incomplete from a previous run: %3$s</string>
     <string name="capture_video_label">Save the encoded video</string>
     <string name="open_all_channels_label">Open every channel</string>
     <string name="resume_in_place_label">Resume the encoder in place</string>
+    <string name="congestion_restart_label">Restart video when the car falls behind</string>
     <string name="wait_for_focus_label">Wait for video focus</string>
     <string name="keyframe_label">Keyframe interval</string>
     <string name="setup_field_label">AV setup field 1</string>
@@ -325,4 +330,23 @@ Incomplete from a previous run: %3$s</string>
     <string name="weather_speak_note">Heard only while the dashboard\'s voice toggle is on.</string>
     <string name="weather_level_label">Alerts shown from</string>
     <string name="weather_level_help">The lowest severity of alert that takes the dashboard\'s second tile and is spoken. Alerts below it still show in the weather view opened from the header.</string>
+    <!-- P11.1 (docs/p11-plan.md §2, §6a, §12): Settings → OsmAnd maps. -->
+    <string name="osmand_maps_title">OsmAnd maps</string>
+    <string name="osmand_maps_caption">Address search and map places, read from OsmAnd\'s own map files on this phone. Nothing is copied or written, and nothing connects to the network.</string>
+    <string name="osmand_maps_choose">Choose folder</string>
+    <string name="osmand_maps_choose_help">Choose the folder OsmAnd keeps its maps in. This app gets permission to read it, never to change it, and reads only the .obf map files directly inside it. The drop folder is a separate choice and is kept.</string>
+    <string name="osmand_maps_where">In OsmAnd: Settings → OsmAnd settings → Data storage folder → Manually specified. Your maps are in Documents/osmand.</string>
+    <string name="osmand_maps_reading">Reading maps…</string>
+    <string name="osmand_maps_failed">Could not keep access to that folder: %1$s</string>
+    <string name="osmand_maps_is_drop_folder">That is the drop folder. Choose the folder OsmAnd keeps its maps in.</string>
+    <string name="poi_markers_label">Markers per category</string>
+    <string name="poi_markers_help">The most Gas, Food or Shop markers drawn at once on the map, nearest the centre first, so a busy downtown does not bury the map.</string>
+    <string name="poi_ahead_label">Look ahead</string>
+    <string name="poi_ahead_help">While a route is followed, a Gas, Food or Shop button searches this far along the route ahead, or to the destination if that is nearer.</string>
+    <string name="poi_corridor_label">Corridor width</string>
+    <string name="poi_corridor_help">How far either side of the route a place may be and still count as along it.</string>
+    <string name="poi_candidates_label">Candidates to check</string>
+    <string name="poi_candidates_help">How many of the nearest places ahead get their detour worked out. More finds a better stop and takes longer.</string>
+    <!-- P11.4: typed search under the destination box. -->
+    <string name="search_no_maps">No OsmAnd maps to search. Choose their folder in Settings → OsmAnd maps.</string>
 </resources>

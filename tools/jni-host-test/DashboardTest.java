@@ -706,6 +706,23 @@ public final class DashboardTest {
         empty.touch("up", x, row0);
         check(empty.takeFavoritePick() == null, "an empty list picks nothing");
         check(taps(empty)[DashboardLayout.FAVORITES_TILE] == 1, "though the tile itself still counts the tap");
+
+        // The recent destination is listed first, marked as recent, and picks like any row.
+        Dashboard withRecent = following();
+        Favorite store = new Favorite("H-E-B", 30.31, -97.76);
+        withRecent.favorites(two, store);
+        withRecent.mapCamera();
+        Dashboard.Snapshot shown = withRecent.nextFrame(0L);
+        check(shown.getFavorites().size() == 3 && shown.getFavorites().get(0).equals(store), "the recent place is the top row");
+        check(shown.getRecentFavorite(), "and is marked as the recent one");
+        withRecent.touch("down", x, row0);
+        withRecent.touch("up", x, row0);
+        check(store.equals(withRecent.takeFavoritePick()), "a tap on it routes there");
+        withRecent.favorites(two, two.get(1));
+        shown = withRecent.nextFrame(0L);
+        check(shown.getFavorites().equals(two) && !shown.getRecentFavorite(), "a recent place that is a favorite is listed once, unmarked");
+        withRecent.favorites(two);
+        check(!withRecent.nextFrame(0L).getRecentFavorite(), "and no recent place marks no row");
     }
 
     /** The two sizes every layout rule is checked at: the lab's 1080p and Ford's 800x480. */

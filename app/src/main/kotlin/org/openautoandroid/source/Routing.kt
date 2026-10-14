@@ -116,8 +116,12 @@ object Routing {
     }
 
     /** Runs [RoutePlanner.explore] work on the routing thread; see there for how it gives way. */
-    fun explore(context: Context, work: (Router, (btools.router.RoutingEngine) -> Unit, () -> Boolean) -> Unit) {
-        planner(context).explore(work)
+    fun explore(
+        context: Context,
+        done: () -> Unit = {},
+        work: (Router, (btools.router.RoutingEngine) -> Unit, () -> Boolean) -> Unit,
+    ) {
+        planner(context).explore(done, work)
     }
 
     /** The routing thread's planner, made on first use. */
@@ -304,6 +308,8 @@ object Routing {
         )
         appendLine(options?.report() ?: "routing_options=-")
         append(Navigation.report())
+        // P11: OsmAnd's maps and typed search, counts only (docs/p11-plan.md §8).
+        append(ObfLibrary.report())
         append(Guide.report())
         append(LiveAlternatives.report())
         val result = last

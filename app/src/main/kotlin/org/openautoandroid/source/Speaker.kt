@@ -311,6 +311,28 @@ object Speaker {
     }
 
     /**
+     * P11.5a: what search ahead found, said as a turn prompt is, through the same toggle,
+     * call rule and gate, and counted under its own stage. It never cuts a turn prompt off:
+     * while one is being said it waits, up to [ANNOUNCE_WAIT_MS], and is then said anyway,
+     * since the driver asked for it. The note names the stage, never the words.
+     */
+    fun announce(prompt: GuidePrompt) {
+        announceAfter(prompt, 0L)
+    }
+
+    private fun announceAfter(prompt: GuidePrompt, waitedMs: Long) {
+        if (queue.speaking == SpeechKind.GUIDANCE && waitedMs < ANNOUNCE_WAIT_MS) {
+            main.postDelayed({ announceAfter(prompt, waitedMs + ANNOUNCE_RETRY_MS) }, ANNOUNCE_RETRY_MS)
+            return
+        }
+        guide(prompt)
+    }
+
+    /** How long an announcement waits for a turn prompt to finish, and how often it looks. */
+    private const val ANNOUNCE_WAIT_MS = 10_000L
+    private const val ANNOUNCE_RETRY_MS = 250L
+
+    /**
      * P10: a weather alert newly in force, from [WeatherFeed] (docs/p10-plan.md §6):
      * "Weather alert. " and its headline, through the gate and the voice toggle. One that
      * must wait its turn, behind a turn prompt or another alert, is held here and said

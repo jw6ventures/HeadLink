@@ -15,6 +15,8 @@ public final class FavoritesTest {
         theStoredFormReadsBackWhole();
         aBadLineDropsOnlyItself();
         aPlaceArrivedAtIsSavedOnlyOnce();
+        theRecentPlaceTopsTheTileUnlessSaved();
+        aMovedPlaceLeavesTheRestInOrder();
         System.out.println("jni-host-test: ok " + passed + " favorites checks");
     }
 
@@ -71,8 +73,8 @@ public final class FavoritesTest {
     }
 
     /**
-     * Arriving puts the destination on top of the list unless a saved place is already
-     * there (Navigation.arrived): the same address shared again lands a few metres off.
+     * Arriving makes the destination the recent one unless a saved place is already there
+     * (Navigation.arrived): the same address shared again lands a few metres off.
      */
     private static void aPlaceArrivedAtIsSavedOnlyOnce() {
         List<Favorite> places = new ArrayList<>();
@@ -83,6 +85,45 @@ public final class FavoritesTest {
         check(Favorite.Companion.saved(places, 30.2675, -97.7431), "33 m off is the same place");
         check(!Favorite.Companion.saved(places, 30.2678, -97.7431), "67 m off is another");
         check(!Favorite.Companion.saved(places, 30.2711, -97.7437), "and downtown is not home");
+    }
+
+    /**
+     * The tile lists the recent destination above the saved places, not among them, and
+     * drops it once it is one of them (Favorite.tile).
+     */
+    private static void theRecentPlaceTopsTheTileUnlessSaved() {
+        List<Favorite> places = new ArrayList<>();
+        places.add(new Favorite("Home", 30.2672, -97.7431));
+        places.add(new Favorite("Work", 30.2711, -97.7437));
+        check(Favorite.Companion.tile(places, null) == places, "no recent place lists the saved ones alone");
+        Favorite store = new Favorite("H-E-B", 30.3072, -97.7560);
+        List<Favorite> tile = Favorite.Companion.tile(places, store);
+        check("H-E-BHomeWork".equals(names(tile)), "the recent place is on top: " + names(tile));
+        check("HomeWork".equals(names(places)), "and the saved list is left as it was");
+        Favorite nearHome = new Favorite("12 Main St", 30.2675, -97.7431);
+        check(Favorite.Companion.tile(places, nearHome) == places, "a recent place 33 m from home is home, not another row");
+        List<Favorite> full = new ArrayList<>();
+        for (int i = 0; i < Favorite.MAX; i++) full.add(new Favorite("Place " + i, 31.0 + i * 0.01, -97.0));
+        check(Favorite.Companion.tile(full, store).size() == Favorite.MAX + 1, "a full list still has the recent place on top");
+    }
+
+    /** Reordering on the connection screen (Favorites.move): one place moves, the rest keep their order. */
+    private static void aMovedPlaceLeavesTheRestInOrder() {
+        List<Favorite> places = new ArrayList<>();
+        for (String name : new String[] {"A", "B", "C", "D"}) places.add(new Favorite(name, 30.0, -97.0));
+        check("BCAD".equals(names(Favorite.Companion.moved(places, 0, 2))), "the first moved down two lands third");
+        check("DABC".equals(names(Favorite.Companion.moved(places, 3, 0))), "the last moved to the top pushes the rest down");
+        check("ACBD".equals(names(Favorite.Companion.moved(places, 2, 1))), "a move up by one swaps two neighbours");
+        check(Favorite.Companion.moved(places, 1, 1) == places, "a move to its own row changes nothing");
+        check(Favorite.Companion.moved(places, 4, 0) == places, "nor does a move from a row that is not there");
+        check(Favorite.Companion.moved(places, 0, -1) == places, "nor one to a row that is not there");
+        check("ABCD".equals(names(places)), "and the list moved from is left as it was");
+    }
+
+    private static String names(List<Favorite> places) {
+        StringBuilder all = new StringBuilder();
+        for (Favorite place : places) all.append(place.getName());
+        return all.toString();
     }
 
     private static void check(boolean condition, String what) {

@@ -100,6 +100,12 @@ enum class FlexSource(val key: String) {
     /** A call, ringing or in progress (P7.9). */
     CALL("call"),
 
+    /**
+     * P11.5: a POI card, opened by tapping a marker (docs/p11-plan.md §6) or by P11.5a's
+     * search ahead: the driver asked for it just now, so it comes before the weather view.
+     */
+    POI("poi"),
+
     /** P10: the weather view, opened by tapping the header's weather item (docs/p10-plan.md §5.2). */
     WEATHER("weather"),
 
@@ -186,6 +192,8 @@ object FlexRules {
      * weather alert, which Ⓟ does not hide either, since it pauses notifications and not
      * safety information (docs/p10-plan.md §5.3); then notifications while not paused and
      * there are any; else the quiet empty state. Weather never fills an empty tile by itself.
+     * P11.5: an open POI card comes straight after a call, since it is the last thing the
+     * driver tapped; opening it closes the weather view and the other way round.
      */
     @JvmOverloads
     fun source(
@@ -194,8 +202,10 @@ object FlexRules {
         notifications: Int,
         weatherView: Boolean = false,
         weatherAlert: Boolean = false,
+        poiCard: Boolean = false,
     ): FlexSource = when {
         call.phase != CallPhase.NONE -> FlexSource.CALL
+        poiCard -> FlexSource.POI
         weatherView -> FlexSource.WEATHER
         weatherAlert -> FlexSource.WEATHER_ALERT
         !paused && notifications > 0 -> FlexSource.NOTIFICATIONS
@@ -228,6 +238,7 @@ object FlexRules {
             CallPhase.ENDED -> "call ended"
             CallPhase.NONE -> "call"
         }
+        FlexSource.POI -> "place"
         FlexSource.WEATHER -> WeatherText.LABEL_VIEW
         FlexSource.WEATHER_ALERT -> WeatherText.LABEL_ALERT
         FlexSource.NOTIFICATIONS, FlexSource.EMPTY -> "notifications"

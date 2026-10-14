@@ -32,6 +32,25 @@ data class Favorite(val name: String, val latitude: Double, val longitude: Doubl
             favorites.any { RouteFollower.distance(it.latitude, it.longitude, latitude, longitude) <= SAME_PLACE_M }
 
         /**
+         * What the dashboard tile lists: [recent], the last place arrived at, on top of the
+         * saved [favorites], unless there is none or it is one of them by now (saved since,
+         * within [SAME_PLACE_M]): the tile's one-tap way back to the last trip, which never
+         * joins the saved list.
+         */
+        fun tile(favorites: List<Favorite>, recent: Favorite?): List<Favorite> =
+            if (recent == null || saved(favorites, recent.latitude, recent.longitude)) favorites
+            else listOf(recent) + favorites
+
+        /**
+         * [favorites] with the place at [from] taken out and put back at [to], the rest
+         * keeping their order. The same list when either index is not a row or nothing moves.
+         */
+        fun moved(favorites: List<Favorite>, from: Int, to: Int): List<Favorite> {
+            if (from !in favorites.indices || to !in favorites.indices || from == to) return favorites
+            return favorites.toMutableList().apply { add(to, removeAt(from)) }
+        }
+
+        /**
          * The stored form: one place a line, `latitude<TAB>longitude<TAB>name`. The name
          * is last because it is the one field that can hold spaces, and it can hold no
          * tab or line break because [cleanName] removes every control character.

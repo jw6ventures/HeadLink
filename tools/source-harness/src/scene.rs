@@ -485,6 +485,9 @@ pub fn run(
                     break;
                 }
                 Ok(AppEvent::KeyframeRequest) => keyframe = true,
+                // A congestion restart: this encoder has no codec to rebuild, so the restarted
+                // stream opens with an IDR and the configuration the link already holds.
+                Ok(AppEvent::VideoRestart { .. }) => keyframe = true,
                 Ok(AppEvent::Focus { projected, .. }) => {
                     focused = projected;
                     stats.focus_changes += 1;

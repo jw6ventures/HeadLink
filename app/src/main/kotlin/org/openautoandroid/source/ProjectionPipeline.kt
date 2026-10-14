@@ -165,6 +165,16 @@ class ProjectionPipeline(
     private var shownOfferRoute: Route? = null
 
     /**
+     * P11.5: the POI marker loop (docs/p11-plan.md §6), fed by the scene thread every frame;
+     * null runs the dashboard without markers. Installed by the service before [start].
+     */
+    @Volatile
+    var poiFeed: PoiFeed? = null
+
+    /** The markers the map engine was last given. Scene thread; reset with the renderer. */
+    private var shownPois: PoiShown? = null
+
+    /**
      * Told when Take or Keep is pressed on the divided turn card (P9.6): the offer's id, and
      * true for Take. Called on the main thread, from [touch], after the dashboard has let go
      * of its lock, so it may start a route or record the refusal directly. Installed by the
@@ -207,9 +217,16 @@ class ProjectionPipeline(
     @Volatile
     private var relayouts = 0L
 
-    /** Encoder rebuilds performed on a focus regain, and the first one that failed. */
+    /**
+     * Encoder rebuilds performed on a focus regain or a congestion restart, and the first
+     * one that failed.
+     */
     @Volatile
     private var rebuilds = 0L
+
+    /** Congestion restarts the native session asked for ([restartEncoder]). */
+    @Volatile
+    private var congestionRestarts = 0L
 
     @Volatile
     private var rebuildError: String? = null
@@ -330,6 +347,17 @@ class ProjectionPipeline(
                     renderer.setOffer(offerRoute)
                     shownOfferRoute = offerRoute
                 }
+                // P11.5: the POI markers. The feed only decides here; its queries run on its
+                // own thread, and what they found is read back by reference, like the route.
+                poiFeed?.let { feed ->
+                    feed.frame(board.poiView(), SystemClock.elapsedRealtime())
+                    val pois = feed.shown
+                    if (pois !== shownPois) {
+                        renderer.setPois(pois.pois, board.layout.poiMarkerSize, pois.emphasised)
+                        board.pois(pois.pois)
+                        shownPois = pois
+                    }
+                }
                 val snapshot = board.nextFrame(System.currentTimeMillis())
                 renderer.draw(board.layout, snapshot, now - startedNs)
                 rendered++
@@ -401,6 +429,27 @@ class ProjectionPipeline(
                 return
             }
             focused = projected
+        }
+    }
+
+    /**
+     * The native session restarted the stream because the head unit kept falling behind
+     * (spec §8.2): rebuild the encoder exactly as a focus regain does, so the restarted
+     * stream opens with a fresh codec's configuration and IDR. Focus is unchanged, so a
+     * restart while the head unit has the screen does nothing; with [rebuildOnRegain]
+     * cleared only an IDR is asked for.
+     */
+    fun restartEncoder() {
+        synchronized(focusLock) {
+            val handler = handler
+            congestionRestarts++
+            if (!rebuildOnRegain || handler == null || !wantFocus || !focused) {
+                encoder?.requestKeyframe()
+                return
+            }
+            // Drawing stops until the rebuild brings it back, as on a regain.
+            focused = false
+            handler.post(::rebuildIfWanted)
         }
     }
 
@@ -525,6 +574,17 @@ class ProjectionPipeline(
     /** A saved place a tap on the favorites tile chose, once, or null. */
     fun takeFavoritePick(): Favorite? = dashboard?.takeFavoritePick()
 
+    /** P11.5: Go (or Add stop) on the POI card since the last call, once, or null. */
+    fun takePoiAction(): PoiAction? = dashboard?.takePoiAction()
+
+    /** P11.5: the POI buttons pressed since the last call, with the state each left, once. */
+    fun takePoiToggles(): List<Pair<PoiKind, Boolean>> = dashboard?.takePoiToggles() ?: emptyList()
+
+    /** P11.5: lights exactly these POI buttons (the lab's LAB_POI); not a press. */
+    fun poiKinds(kinds: Set<PoiKind>) {
+        dashboard?.poiKinds(kinds)
+    }
+
     /** The live alternatives' bubbles, from the main thread. */
     fun alternatives(marks: List<AlternativeMark>) {
         dashboard?.alternatives(marks)
@@ -596,9 +656,9 @@ class ProjectionPipeline(
         dashboard?.mediaAccess(access)
     }
 
-    /** The saved places the favorites tile lists; replaces the list whole. */
-    fun favorites(list: List<Favorite>) {
-        dashboard?.favorites(list)
+    /** The saved places and the recent one the favorites tile lists; replaces the list whole. */
+    fun favorites(list: List<Favorite>, recent: Favorite?) {
+        dashboard?.favorites(list, recent)
     }
 
     /** What the turn card and trip panel say about the route (P7.4); null for no route. */
@@ -710,6 +770,7 @@ class ProjectionPipeline(
         )
         appendLine(
             "projection_rebuild_on_regain=$rebuildOnRegain projection_rebuilds=$rebuilds " +
+                "projection_congestion_restarts=$congestionRestarts " +
                 "projection_rebuild_error=${rebuildError ?: "-"}",
         )
         appendLine("projection_encoder_error=${failure ?: "-"}")
@@ -717,6 +778,7 @@ class ProjectionPipeline(
         dashboardRenderer?.engine?.let { append(it.report()) }
         scene?.let { append(it.report()) }
         dashboard?.let { append(it.report()) }
+        poiFeed?.let { append(it.report()) }
     }
 
     /**
@@ -762,6 +824,7 @@ class ProjectionPipeline(
         shownRoute = null
         shownAlternatives = null
         shownOfferRoute = null
+        shownPois = null
     }
 
     private fun layoutWidth(): Int = scene?.layout?.width ?: dashboard?.layout?.width ?: params.width

@@ -12,6 +12,10 @@ import org.oscim.core.GeoPoint
 import org.oscim.core.MapPosition
 import org.oscim.core.Tile
 import org.oscim.layers.PathLayer
+import org.oscim.layers.marker.ItemizedLayer
+import org.oscim.layers.marker.MarkerInterface
+import org.oscim.layers.marker.MarkerItem
+import org.oscim.layers.marker.MarkerSymbol
 import org.oscim.layers.tile.MapTile
 import org.oscim.layers.tile.TileSet
 import org.oscim.layers.tile.buildings.BuildingLayer
@@ -110,6 +114,18 @@ class MapEngine(width: Int, height: Int) {
     private var offerLine: PathLayer? = null
     private var offerShown = false
     private var offerChanges = 0L
+
+    /**
+     * P11.5: the Gas, Food and Shop markers (docs/p11-plan.md §6), one VTM [ItemizedLayer]
+     * just under the labels, so above the route, its traffic and the buildings, and street
+     * names still read over a marker. Made on first use; its symbols per kind and size.
+     */
+    private var poiLayer: ItemizedLayer? = null
+    private val poiSymbols = HashMap<String, MarkerSymbol>()
+    private var poiShown: List<ObfPoi> = emptyList()
+    var poiMarkers = 0
+        private set
+    private var poiChanges = 0L
 
     /** Alternatives drawn now, and the most at once this session; counts, never the geometry. */
     var alternativesShown = 0
@@ -625,6 +641,41 @@ class MapEngine(width: Int, height: Int) {
     }
 
     /**
+     * P11.5: [pois] as markers, replacing those before; empty takes them off. [size] is the
+     * drawn diameter in pane pixels ([DashboardLayout.poiMarkerSize]); [emphasised] is drawn
+     * half as large again (P11.5a's best stop). Scene thread.
+     */
+    fun setPois(pois: List<ObfPoi>, size: Int, emphasised: Long? = null) {
+        val paneMap = map ?: return
+        if (pois.isEmpty() && poiLayer == null) return
+        val layer = poiLayer ?: ItemizedLayer(paneMap, ArrayList<MarkerInterface>(), symbol(PoiKind.GAS, size), null).also {
+            val layers = paneMap.layers()
+            // Under the labels, over everything else the map draws.
+            val labels = layers.indexOfFirst { l -> l is LabelLayer }
+            if (labels >= 0) layers.add(labels, it) else layers.add(it)
+            poiLayer = it
+        }
+        layer.removeAllItems(false)
+        val items = pois.map { poi ->
+            MarkerItem(poi.id, "", "", GeoPoint(poi.latitude, poi.longitude)).apply {
+                val big = emphasised != null && poi.id == emphasised
+                setMarker(symbol(poi.kind ?: PoiKind.SHOP, if (big) size * 3 / 2 else size))
+            }
+        }
+        layer.addItems(items)
+        layer.update()
+        poiShown = pois
+        poiMarkers = pois.size
+        poiChanges++
+        dirty = true
+    }
+
+    /** A kind's marker at [size] px: its colour in a disc, a white glyph, ringed white then dark. */
+    private fun symbol(kind: PoiKind, size: Int): MarkerSymbol = poiSymbols.getOrPut("${kind.label}:$size") {
+        MarkerSymbol(org.oscim.android.canvas.AndroidBitmap(PoiMarkerArt.draw(kind, size)), MarkerSymbol.HotspotPlace.CENTER, true)
+    }
+
+    /**
      * Draws the offer's proposed route (P9.6) in the alternatives' style, under the route's
      * casing like them; null takes it off. Scene thread.
      */
@@ -764,6 +815,10 @@ class MapEngine(width: Int, height: Int) {
         trafficLines.clear()
         offerEdge = null
         offerLine = null
+        poiLayer = null
+        poiSymbols.clear()
+        poiShown = emptyList()
+        poiMarkers = 0
         routePoints = 0
         layered = false
         appliedMode = UNTHEMED
@@ -807,7 +862,9 @@ class MapEngine(width: Int, height: Int) {
             "map_traffic_pieces=${traffic.pieces.size} map_traffic_pieces_max=${traffic.piecesMax} " +
             "map_traffic_rebuilds=${traffic.rebuilds} map_traffic_stale=${traffic.stale} " +
             "map_traffic_dropped=${traffic.dropped} map_traffic_layers=${trafficEdges.size + trafficLines.size} " +
-            "map_offer_line=$offerShown map_offer_changes=$offerChanges\n"
+            "map_offer_line=$offerShown map_offer_changes=$offerChanges\n" +
+            // P11.5: how many POI markers are drawn and how often they changed; never where.
+            "map_poi_markers=$poiMarkers map_poi_changes=$poiChanges\n"
 
     private fun fail(detail: String): String {
         if (failure == null) failure = detail

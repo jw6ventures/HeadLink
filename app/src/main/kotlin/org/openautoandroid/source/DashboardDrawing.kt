@@ -481,6 +481,7 @@ object DashboardDrawing {
     ) {
         when (snapshot.flex) {
             FlexSource.CALL -> drawCallCard(canvas, paint, layout, snapshot, palette)
+            FlexSource.POI -> snapshot.poiCard?.let { drawPoiCard(canvas, paint, layout, it, palette) }
             FlexSource.NOTIFICATIONS -> drawNotifications(canvas, paint, layout, snapshot, palette)
             FlexSource.WEATHER -> snapshot.weatherView?.let {
                 WeatherDrawing.drawView(canvas, paint, layout, layout.notificationsList, it, palette)
@@ -983,14 +984,53 @@ object DashboardDrawing {
             canvas, paint, layout, list, rowHeight, favorites.size, snapshot.favoritesScroll,
             snapshot.pressedFavorite, null, palette,
         ) { index, row, textWidth ->
+            var x = (row.x + layout.margin).toFloat()
+            var width = textWidth
+            if (index == 0 && snapshot.recentFavorite) {
+                // The recent destination, not a saved place: a history icon before its name.
+                val radius = rowHeight * 0.17f
+                drawHistory(canvas, paint, x + radius * 1.4f, row.y + rowHeight * 0.5f, radius, palette)
+                val indent = radius * 3.4f
+                x += indent
+                width -= indent
+            }
             paint.color = palette.text
-            canvas.drawText(
-                fit(paint, favorites[index].name, textWidth),
-                (row.x + layout.margin).toFloat(),
-                row.y + rowHeight * 0.64f,
-                paint,
-            )
+            canvas.drawText(fit(paint, favorites[index].name, width), x, row.y + rowHeight * 0.64f, paint)
         }
+    }
+
+    /**
+     * A history icon, a clock face whose rim is an arrow turning back, drawn rather than
+     * set in a font so it cannot fall back to a missing glyph. [radius] is the rim's; the
+     * arrowhead reaches about [radius] * 0.4 past it on the left.
+     */
+    private fun drawHistory(
+        canvas: Canvas,
+        paint: Paint,
+        cx: Float,
+        cy: Float,
+        radius: Float,
+        palette: DashboardPalette,
+    ) {
+        paint.color = palette.dim
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = maxOf(1.5f, radius / 5f)
+        paint.strokeCap = Paint.Cap.ROUND
+        // The rim from nine o'clock, clockwise round to half past seven, open at the lower left.
+        canvas.drawArc(cx - radius, cy - radius, cx + radius, cy + radius, 180f, 315f, false, paint)
+        // The hands, at twelve and towards four.
+        canvas.drawLine(cx, cy, cx, cy - radius * 0.55f, paint)
+        canvas.drawLine(cx, cy, cx + radius * 0.42f, cy + radius * 0.28f, paint)
+        paint.strokeCap = Paint.Cap.BUTT
+        paint.style = Paint.Style.FILL
+        // The arrowhead at nine o'clock, pointing down: the way back round the face.
+        val head = radius * 0.42f
+        val path = Path()
+        path.moveTo(cx - radius - head, cy - head * 0.2f)
+        path.lineTo(cx - radius + head, cy - head * 0.2f)
+        path.lineTo(cx - radius, cy + head * 0.9f)
+        path.close()
+        canvas.drawPath(path, paint)
     }
 
     /**
@@ -1331,6 +1371,7 @@ object DashboardDrawing {
             drawAlternativeBubbles(canvas, paint, map, snapshot, palette)
             drawVehicle(canvas, paint, map, snapshot, palette)
             drawMapControls(canvas, paint, layout, snapshot, palette)
+            snapshot.poiButtons?.let { drawPoiButtons(canvas, paint, layout, it, palette) }
         }
         // P9.3: HERE's credit whenever traffic is drawn, or is in the time, or shaped the
         // route (plan §1, 6.4 a). Outside the `ok` branch, because the arrival time owes it
@@ -1825,6 +1866,125 @@ object DashboardDrawing {
             canvas.drawText(bubble.label, box.centerX - width / 2f, box.centerY + paint.textSize * 0.36f, paint)
         }
         canvas.restore()
+    }
+
+    /**
+     * P11.5: Gas, Food and Shop along the top of the map pane, plates like the bubbles'
+     * with a rounded end, each with its marker's colour as a dot before the word. Lit, the
+     * plate fills with the accent and the word takes [DashboardPalette.onAction], the pair
+     * already held to 4.5:1 for the call buttons' words; pressed, it takes the pressed fill.
+     */
+    private fun drawPoiButtons(canvas: Canvas, paint: Paint, layout: DashboardLayout, buttons: PoiButtons, palette: DashboardPalette) {
+        PoiRules.ORDER.forEachIndexed { index, kind ->
+            val box = layout.poiButton(index, buttons.top)
+            val lit = kind in buttons.lit
+            val radius = box.height / 2f
+            paint.style = Paint.Style.FILL
+            paint.color = when {
+                buttons.pressed == kind -> palette.bubblePressed
+                lit -> palette.accent
+                else -> palette.bubble
+            }
+            canvas.drawCircle(box.centerX.toFloat(), box.centerY.toFloat(), radius, paint)
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = maxOf(1f, radius / 16f)
+            paint.color = palette.bubbleRim
+            canvas.drawCircle(box.centerX.toFloat(), box.centerY.toFloat(), radius, paint)
+            paint.style = Paint.Style.FILL
+            // The map marker's own icon, so a button and the markers it shows look alike;
+            // dimmed while off, full while lit on the accent.
+            val icon = poiButtonIcon(kind, (box.height * 0.74f).toInt())
+            val alpha = paint.alpha
+            paint.alpha = if (lit || buttons.pressed == kind) 255 else 150
+            canvas.drawBitmap(icon, box.centerX - icon.width / 2f, box.centerY - icon.height / 2f, paint)
+            paint.alpha = alpha
+        }
+    }
+
+    /** One icon per kind and size, made once: [PoiMarkerArt] allocates a bitmap each call. */
+    private val poiButtonIcons = HashMap<Pair<PoiKind, Int>, android.graphics.Bitmap>()
+
+    private fun poiButtonIcon(kind: PoiKind, size: Int): android.graphics.Bitmap =
+        poiButtonIcons.getOrPut(kind to size) { PoiMarkerArt.draw(kind, size) }
+
+    /**
+     * P11.5: the POI card in the flex tile (plan §6): one place large — its name, what it is
+     * and how far, and the open-now line when its hours parse — or up to three, one row each
+     * with the chosen one lit (P11.5a's stops). Go (or Add stop) in the accent and Close
+     * along the bottom. The names are drawn here and nowhere else.
+     */
+    private fun drawPoiCard(canvas: Canvas, paint: Paint, layout: DashboardLayout, card: PoiCardView, palette: DashboardPalette) {
+        val list = layout.poiCardList
+        if (list.width <= 0 || list.height <= 0) return
+        val typeface = paint.typeface
+        card.message?.takeIf { card.rows.isEmpty() }?.let { message ->
+            // A notice (P11.5a: nothing ahead): its one line, and Close alone in its usual place.
+            paint.typeface = Typeface.DEFAULT_BOLD
+            paint.color = palette.text
+            paint.textSize = minOf(list.height * 0.2f, list.width / 11f)
+            val margin = maxOf(3f, layout.margin / 2f)
+            canvas.drawText(fit(paint, message, list.width - 2 * margin), list.x + margin, list.y + list.height * 0.4f, paint)
+            paint.typeface = typeface
+            drawCallButton(
+                canvas, paint, layout, layout.poiCardButton(1), "Close", palette.button, palette.text,
+                card.pressed == "close", palette, 0.42f,
+            )
+            return
+        }
+        if (card.rows.isEmpty()) return
+        val count = card.rows.size
+        card.rows.forEachIndexed { index, row ->
+            val box = layout.poiCardRow(index, count)
+            if (count > 1 && (index == card.selected || index == card.pressedRow)) {
+                paint.color = palette.tilePressed
+                canvas.drawRoundRect(rect(box), CORNER / 2, CORNER / 2, paint)
+            }
+            val x = (box.x + layout.margin / 2).toFloat()
+            val textWidth = (box.width - layout.margin).toFloat()
+            // The kind's colour as a bar at the left, tying the row to its marker.
+            row.kind?.let { kind ->
+                paint.color = PoiRules.colour(kind)
+                val bar = maxOf(3f, layout.margin / 2f)
+                canvas.drawRect(box.x.toFloat(), box.y + box.height * 0.15f, box.x + bar, box.bottom - box.height * 0.15f, paint)
+            }
+            val left = x + maxOf(3f, layout.margin / 2f)
+            val width = textWidth - maxOf(3f, layout.margin / 2f)
+            if (count == 1) {
+                val h = box.height.toFloat()
+                paint.typeface = Typeface.DEFAULT_BOLD
+                paint.color = palette.text
+                paint.textSize = minOf(h * 0.26f, list.width / 9f)
+                canvas.drawText(fit(paint, row.name, width), left, box.y + h * 0.3f, paint)
+                paint.typeface = typeface
+                paint.textSize = minOf(h * 0.19f, list.width / 12f)
+                paint.color = palette.dim
+                canvas.drawText(fit(paint, row.detail, width), left, box.y + h * 0.6f, paint)
+                row.open?.let {
+                    paint.color = if (it == PoiRules.CLOSED) palette.warning else palette.text
+                    canvas.drawText(fit(paint, it, width), left, box.y + h * 0.88f, paint)
+                }
+            } else {
+                val h = box.height.toFloat()
+                paint.typeface = Typeface.DEFAULT_BOLD
+                paint.color = palette.text
+                paint.textSize = h * 0.38f
+                canvas.drawText(fit(paint, row.name, width), left, box.y + h * 0.44f, paint)
+                paint.typeface = typeface
+                paint.textSize = h * 0.28f
+                paint.color = palette.dim
+                val detail = if (row.open != null) "${row.detail} · ${row.open}" else row.detail
+                canvas.drawText(fit(paint, detail, width), left, box.y + h * 0.86f, paint)
+            }
+        }
+        paint.typeface = typeface
+        drawCallButton(
+            canvas, paint, layout, layout.poiCardButton(0), card.primary, palette.accent, palette.onAction,
+            card.pressed == "primary", palette, 0.42f,
+        )
+        drawCallButton(
+            canvas, paint, layout, layout.poiCardButton(1), "Close", palette.button, palette.text,
+            card.pressed == "close", palette, 0.42f,
+        )
     }
 
     /** One floating plate with its rim, lit while pressed. */

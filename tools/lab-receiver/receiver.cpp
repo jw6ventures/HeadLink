@@ -22,6 +22,13 @@
 // night again, and measures the map pane frame by frame across each flip: that it changed
 // theme, how long that took, and whether any picture in between was blank or half-drawn.
 // --night sets what NIGHT_DATA says under any other script (night by default, as before).
+// --position moves the fixed fix and the track's start (P11: downtown Austin for the Texas
+// data). With --script track and --poi (P11.5) the parked map must show the lit POI kinds'
+// markers, by colour, in both palettes, and a tap on one must open its card in the flex tile,
+// which Close must close, before the vehicle departs. With --poi-ahead (P11.5a) it waits, parked,
+// for the lab script's /out/poi-ahead-go (a route is being followed), presses that kind's button
+// where it sits under the turn card, waits for the search-ahead card in the flex tile, renders it,
+// and presses Add stop on it, before the vehicle departs.
 // With --script controls (P7.2, P7.3) it presses the dashboard's zoom bubbles and header
 // icons - +, +, -, the notification pause, day/night - and checks that each press changed
 // the picture it should: the map pane for a zoom, the pause icon, and the header's palette.
@@ -588,7 +595,9 @@ private:
     bool haveFrame_ = false;
 };
 
-/// Prodigy's video handler with an ack stall for the source's flow-control test.
+/// Prodigy's video handler with an ack stall for the source's flow-control test, and a
+/// paced mode for the congestion script: a head unit whose decoder is slower than the
+/// stream.
 class LabVideoHandler : public oaa::hu::VideoChannelHandler {
 public:
     LabVideoHandler(uint8_t channelId, QObject* parent)
@@ -598,6 +607,7 @@ public:
     {
         connect(this, &oaa::hu::VideoChannelHandler::streamStarted, this,
                 [this](int32_t session, uint32_t) { session_ = session; });
+        clock_.start();
     }
 
     void onMediaData(const QByteArray& data, uint64_t timestamp) override
@@ -616,10 +626,43 @@ public:
             emit videoFrameData(std::make_shared<const QByteArray>(data), 0);
             return;
         }
+        if (paceKbps_ > 0 || paceFrameMs_ > 0) {
+            // Shown at once, acknowledged when a serial decoder costing paceFrameMs_ a
+            // frame plus a byte rate of paceKbps_ would have finished it: an IDR, the
+            // largest frame, holds back everything behind it, as it would on a head unit
+            // whose decoder cannot keep up.
+            emit videoFrameData(std::make_shared<const QByteArray>(data), 0);
+            const qint64 now = clock_.elapsed();
+            const qint64 cost = paceFrameMs_
+                + (paceKbps_ > 0 ? static_cast<qint64>(data.size()) * 8 / paceKbps_ : 0);
+            busyUntil_ = std::max(busyUntil_, now) + cost;
+            maxLagMs_ = std::max(maxLagMs_, busyUntil_ - now);
+            ++paced_;
+            const int32_t session = session_;
+            QTimer::singleShot(static_cast<int>(busyUntil_ - now), this, [this, session]() {
+                oaa::proto::messages::AVMediaAckIndication ack;
+                ack.set_session_id(session);
+                ack.set_ack_count(1);
+                emit sendRequested(channelId(), oaa::AVMessageId::ACK_INDICATION, serialized(ack));
+            });
+            return;
+        }
         oaa::hu::VideoChannelHandler::onMediaData(data, timestamp);
     }
 
     void setStalling(bool stalling) { stalling_ = stalling; }
+
+    /// Paced acknowledgements (both zero: at once, as Prodigy does). Acks already
+    /// scheduled still go out when they fall due.
+    void setPace(int kbps, int frameMs)
+    {
+        paceKbps_ = kbps;
+        paceFrameMs_ = frameMs;
+    }
+
+    /// Units acknowledged late, and the longest any waited.
+    int paced() const { return paced_; }
+    qint64 maxLagMs() const { return maxLagMs_; }
 
     /// Acknowledges everything withheld in one message, as a head unit that caught up.
     int releaseAcks()
@@ -639,6 +682,12 @@ private:
     bool stalling_ = false;
     int withheld_ = 0;
     int32_t session_ = 0;
+    int paceKbps_ = 0;
+    int paceFrameMs_ = 0;
+    QElapsedTimer clock_;
+    qint64 busyUntil_ = 0;
+    qint64 maxLagMs_ = 0;
+    int paced_ = 0;
 };
 
 /// The sphere the track's arithmetic moves a vehicle over. A drive of a few hundred
@@ -660,6 +709,11 @@ constexpr double EARTH_RADIUS_M = 6371000.0;
 /// agreement: a player reading three independent tables could publish a vehicle heading
 /// north at 13 m/s whose coordinates went east, and nothing downstream would notice,
 /// because nothing downstream has any other source to check it against.
+/// The fixed fix and the block circuit's start (--position); the inland Massachusetts fix
+/// the lab has always reported unless a run moves it (P11: Austin).
+static double g_fixLatitude = 42.4242424;
+static double g_fixLongitude = -71.2121212;
+
 class TrackPlayer {
 public:
     struct Leg {
@@ -1000,8 +1054,8 @@ private:
             fix->set_speed(track_->wireSpeed());
             fix->set_bearing(track_->wireBearing());
         } else {
-            fix->set_latitude(424242424);
-            fix->set_longitude(-712121212);
+            fix->set_latitude(static_cast<int32_t>(std::llround(g_fixLatitude * 1e7)));
+            fix->set_longitude(static_cast<int32_t>(std::llround(g_fixLongitude * 1e7)));
             fix->set_speed(0);
             fix->set_bearing(1790);
         }
@@ -1456,7 +1510,7 @@ int main(int argc, char** argv)
     QCommandLineOption scriptOption("script",
                                     "Projection script: taps, focus, stall, transport, audio, "
                                     "track, navigation, guidance, daynight, controls, endroute, calls, speech, voice, traffic, "
-                                    "weather, or none.", "name", "taps");
+                                    "weather, congestion, or none.", "name", "taps");
     QCommandLineOption trafficModeOption("traffic-mode",
                                          "For --script traffic (P9): offer (wait for the divided turn card, "
                                          "flip the palette and back for the renders, press Keep, wait for a "
@@ -1512,6 +1566,32 @@ int main(int argc, char** argv)
                                    "What NIGHT_DATA says (P7.6): night (the default, as before), "
                                    "day, or flip:<seconds> - day, then night that long after the "
                                    "source subscribes. Needs --sensors all.", "mode", "night");
+    QCommandLineOption positionOption("position",
+                                      "The fixed fix and the track's start, lat,lon (P11: 30.2672,-97.7431 "
+                                      "for the Austin data).", "lat,lon", "42.4242424,-71.2121212");
+    QCommandLineOption poiOption("poi",
+                                 "For --script track (P11.5): the POI buttons the lab lit, gas,food,shop. "
+                                 "The parked map must show each kind's markers, counted by colour, in "
+                                 "both palettes (a render of each) before the vehicle departs.", "kinds", "");
+    QCommandLineOption poiAheadOption("poi-ahead",
+                                      "For --script track (P11.5a): once /out/poi-ahead-go exists, press this "
+                                      "POI button (gas, food or shop) under the turn card, wait for the "
+                                      "search-ahead card in the flex tile and press Add stop on it.", "kind", "");
+    QCommandLineOption congestionKbpsOption("congestion-kbps",
+                                            "For --script congestion: the slow phase's decoder, in kilobits of "
+                                            "video a second; each unit is acknowledged when a serial decoder at "
+                                            "this rate would have finished it.", "kbps", "1500");
+    QCommandLineOption congestionFrameMsOption("congestion-frame-ms",
+                                               "For --script congestion: the slow phase's fixed cost per frame.",
+                                               "ms", "4");
+    QCommandLineOption congestionSlowOption("congestion-slow-ms", "For --script congestion: how long the head "
+                                            "unit is slow.", "ms", "45000");
+    QCommandLineOption congestionNormalOption("congestion-normal-ms", "For --script congestion: how long it "
+                                              "then keeps up before the checks.", "ms", "20000");
+    QCommandLineOption congestionExpectOption("congestion-expect",
+                                              "For --script congestion: whether the source restarts the stream "
+                                              "while the head unit is slow: restart, none, or any.",
+                                              "what", "any");
     QCommandLineOption mapSideOption("map-side",
                                      "Which half of the dashboard the owned map occupies, as the "
                                      "app is configured: left or right.", "side", "left");
@@ -1523,7 +1603,9 @@ int main(int argc, char** argv)
                        trackSpeedOption, mapSideOption, nightOption, callControlsOption,
                        navigationOption, navigationClusterOption, navigationIntervalOption,
                        navigationExpectOption, trafficModeOption, offerLayoutOption, etaOutOption,
-                       weatherModeOption, weatherDirOption});
+                       weatherModeOption, weatherDirOption, positionOption, poiOption, poiAheadOption,
+                       congestionKbpsOption, congestionFrameMsOption, congestionSlowOption,
+                       congestionNormalOption, congestionExpectOption});
     parser.process(app);
 
     // How long a --track run without the track script waits before driving off.
@@ -1546,7 +1628,7 @@ int main(int argc, char** argv)
     const QString script = parser.value(scriptOption);
     if (!QStringList{"taps", "focus", "stall", "transport", "audio", "track", "navigation",
                      "guidance", "daynight", "controls", "endroute", "calls", "speech", "voice", "traffic", "weather",
-                     "none"}
+                     "congestion", "none"}
              .contains(script)) {
         QTextStream(stderr) << "invalid --script\n";
         return 1;
@@ -1611,6 +1693,37 @@ int main(int argc, char** argv)
     }
     if (guidanceDrive && trackPath.empty()) {
         QTextStream(stderr) << "--script " << script << " needs --track-file\n";
+        return 1;
+    }
+    {
+        const QStringList at = parser.value(positionOption).split(',');
+        bool latOk = false, lonOk = false;
+        const double lat = at.size() == 2 ? at[0].toDouble(&latOk) : 0.0;
+        const double lon = at.size() == 2 ? at[1].toDouble(&lonOk) : 0.0;
+        if (!latOk || !lonOk || std::abs(lat) > 85.0 || std::abs(lon) > 180.0) {
+            QTextStream(stderr) << "invalid --position\n";
+            return 1;
+        }
+        g_fixLatitude = lat;
+        g_fixLongitude = lon;
+    }
+    // P11.5: the lit kinds, in the app's button order.
+    QStringList poiKinds;
+    for (const QString& kind : parser.value(poiOption).split(',', Qt::SkipEmptyParts)) {
+        if (!QStringList{"gas", "food", "shop"}.contains(kind.trimmed())) {
+            QTextStream(stderr) << "invalid --poi\n";
+            return 1;
+        }
+        poiKinds << kind.trimmed();
+    }
+    if (!poiKinds.isEmpty() && script != "track") {
+        QTextStream(stderr) << "--poi is for --script track\n";
+        return 1;
+    }
+    // P11.5a: the button to press once a route is followed, or empty.
+    const QString poiAhead = parser.value(poiAheadOption).trimmed();
+    if (!poiAhead.isEmpty() && (!QStringList{"gas", "food", "shop"}.contains(poiAhead) || script != "track")) {
+        QTextStream(stderr) << "--poi-ahead is gas, food or shop, for --script track\n";
         return 1;
     }
     caps.track = parser.isSet(trackOption) || script == "track" || !trackPath.empty();
@@ -1842,7 +1955,7 @@ int main(int argc, char** argv)
     std::unique_ptr<TrackPlayer> trackPlayer;
     if (caps.track) {
         trackPlayer = trackPath.empty()
-                          ? std::make_unique<TrackPlayer>(42.4242424, -71.2121212)
+                          ? std::make_unique<TrackPlayer>(g_fixLatitude, g_fixLongitude)
                           : std::make_unique<TrackPlayer>(trackPath, trackSpeed);
         // The track script releases it when it has a settled picture to measure
         // against, and the guidance script when the source has a route on the cluster;
@@ -1864,6 +1977,10 @@ int main(int argc, char** argv)
     LabAudioHandler* audio = nullptr;
     int status = 0;
     int checks = 0, failures = 0;
+    // Video stream starts the source has sent (0x8001): the first, focus restarts, and
+    // its own congestion restarts.
+    int videoStarts = 0;
+    int congestionStarts = 0, congestionFrames = 0, congestionErrors = 0;
     int taps = 0, keys = 0;
     // What the source published on the now-playing channel, as the receiver decoded it.
     int statusMessages = 0, metadataMessages = 0, albumArtBytes = 0;
@@ -2107,6 +2224,7 @@ int main(int argc, char** argv)
                              });
             QObject::connect(video, &oaa::hu::VideoChannelHandler::streamStarted, &app,
                              [&](int32_t session_id, uint32_t configIndex) {
+                                 ++videoStarts;
                                  out << "receiver_video_started=session=" << session_id
                                      << " config=" << configIndex << "\n";
                                  out.flush();
@@ -2157,6 +2275,16 @@ int main(int argc, char** argv)
     QString stepTitle;
     QTimer scriptTimer;
     const int holdMs = parser.value(holdOption).toInt();
+    // The congestion script: normal, slow for a while, then normal again.
+    const int congestionKbps = parser.value(congestionKbpsOption).toInt();
+    const int congestionFrameMs = parser.value(congestionFrameMsOption).toInt();
+    const int congestionSlowMs = parser.value(congestionSlowOption).toInt();
+    const int congestionNormalMs = parser.value(congestionNormalOption).toInt();
+    const QString congestionExpect = parser.value(congestionExpectOption);
+    if (!QStringList{"restart", "none", "any"}.contains(congestionExpect)) {
+        QTextStream(stderr) << "invalid --congestion-expect\n";
+        return 1;
+    }
     // How long a tapped button has to appear in a decoded picture.
     const qint64 TAP_DEADLINE_MS = 4000;
     // Audio buffers to collect before measuring the tone, and the magnitude a real tone
@@ -2207,6 +2335,70 @@ int main(int argc, char** argv)
     const double TRACK_STEP_METRES = 120.0;
     auto paneLuma = [&](const DashboardPane::Rect& r) {
         return decoder.luma(r.x, r.y, r.width, r.height);
+    };
+    // P11.5 (--poi): the markers' colours in the decoded picture, counted in the map pane
+    // under the button row. PoiRules.colour: violet #D500F9 (U 206, V 204), orange #FF6D00
+    // (U 59, V 200) and green #00B050 (U 112, V 58) in BT.601, a few units off in BT.709 -
+    // none near the map themes' own colours, the route's cyan or the chrome's accent.
+    const QString POI_NAMES[3] = {"gas", "food", "shop"};
+    const int POI_U[3] = {206, 59, 112}, POI_V[3] = {204, 200, 58};
+    const int POI_TOLERANCE = 26;
+    // A third of one marker's disc at 800x480; a whole marker is about 500 pixels there.
+    const int POI_MIN = 150;
+    const qint64 POI_SAMPLE_MS = 500, POI_WAIT_MS = 120000, POI_PALETTE_MS = 10000, POI_SETTLE_MS = 10000;
+    qint64 poiStart = 0;
+    struct PoiCounts {
+        int kind[3] = {-1, -1, -1};
+    };
+    QByteArray poiTileBefore;
+    // P11.5a (--poi-ahead): the lab script's go-ahead file, the press, and whether it is done.
+    const QString POI_AHEAD_GO = "/out/poi-ahead-go";
+    const qint64 POI_AHEAD_GO_MS = 300000, POI_AHEAD_CARD_MS = 360000, POI_AHEAD_SAMPLE_MS = 500;
+    qint64 poiAheadAt = 0;
+    bool poiAheadDone = poiAhead.isEmpty();
+    // The centre of the first 3x3 window wholly in kind [i]'s colour, under the button row: at
+    // 726x480 a marker's coloured ring between its white glyph and its rim is 3-4 px wide.
+    auto poiFind = [&](int i, QPoint& at) {
+        const DashboardPane::Rect& full = pane.mapFull;
+        const int margin = std::max(2, caps.layout().width / 96);
+        const int bubble = std::max(24, std::min(full.width, full.height) / 8);
+        const int top = full.y + margin + bubble + margin;
+        const int cu = POI_U[i], cv = POI_V[i];
+        auto test = [&](int, int u, int v) { return std::abs(u - cu) <= POI_TOLERANCE && std::abs(v - cv) <= POI_TOLERANCE; };
+        for (int y = top; y + 3 <= full.y + full.height - margin; y += 1) {
+            for (int x = full.x + margin; x + 3 <= full.x + full.width - margin; x += 1) {
+                if (decoder.count(x, y, 3, 3, test) == 9) {
+                    at = QPoint(x + 1, y + 1);
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+    auto poiPress = [&](QPoint at, const QString& what) {
+        const QPoint touchPoint = caps.toTouch(at);
+        const oaa::hu::InputChannelHandler::Pointer pointer{touchPoint.x(), touchPoint.y(), 0};
+        input->sendTouchIndication(1, &pointer, 0, 0, uptime.elapsed() * 1000);
+        input->sendTouchIndication(1, &pointer, 0, 1, uptime.elapsed() * 1000 + 100);
+        ++taps;
+        out << "receiver_poi=press " << what << " frame=" << at.x() << "," << at.y() << " touch=" << touchPoint.x() << ","
+            << touchPoint.y() << " picture=" << decoder.frames << "\n";
+        out.flush();
+    };
+    auto poiCounts = [&]() {
+        PoiCounts counts;
+        const DashboardPane::Rect& full = pane.mapFull;
+        const int margin = std::max(2, caps.layout().width / 96);
+        const int bubble = std::max(24, std::min(full.width, full.height) / 8);
+        const int top = full.y + margin + bubble + margin;
+        const DashboardPane::Rect below = {full.x, top, full.width, std::max(0, full.y + full.height - top)};
+        for (int i = 0; i < 3; ++i) {
+            const int cu = POI_U[i], cv = POI_V[i];
+            counts.kind[i] = decoder.count(below.x, below.y, below.width, below.height, [&](int, int u, int v) {
+                return std::abs(u - cu) <= POI_TOLERANCE && std::abs(v - cv) <= POI_TOLERANCE;
+            });
+        }
+        return counts;
     };
     if (projection && caps.track) {
         out << "receiver_track_panes=map=" << pane.map.x << "," << pane.map.y << "+"
@@ -2711,6 +2903,8 @@ int main(int argc, char** argv)
                 base = 1400;
             else if (script == "weather")
                 base = 1500;
+            else if (script == "congestion")
+                base = 1600;
             switch (step + base) {
             case 0:
             case 2:
@@ -3034,6 +3228,18 @@ int main(int argc, char** argv)
                       QString("a parked map was still changing %1 of the pane after %2 s")
                           .arg(change)
                           .arg(trackSettleTries));
+                if (!poiKinds.isEmpty()) {
+                    // P11.5: the markers first, parked, in both palettes; then the drive.
+                    poiStart = uptime.elapsed();
+                    step = 10;
+                    break;
+                }
+                if (!poiAheadDone) {
+                    // P11.5a: search ahead, parked on a followed route; then the drive.
+                    poiAheadAt = uptime.elapsed();
+                    step = 20;
+                    break;
+                }
                 tilesBefore = paneLuma(pane.tiles);
                 trackPlayer->depart();
                 trackMark = trackPlayer->travelled();
@@ -3076,6 +3282,191 @@ int main(int argc, char** argv)
                 tilesBefore = tiles;
                 trackMark = trackPlayer->travelled();
                 ++step;
+                break;
+            }
+            // P11.5. The POI buttons were lit by the lab before the projection started, so by
+            // now the parked map should carry their markers: discs in each kind's own colour
+            // (PoiRules.colour), counted in the pane below the button row, whose colour dots
+            // are not markers. Then the other palette, since the markers must read on both
+            // grounds, a render of each, and back, before the vehicle departs as ever.
+            case 510:
+            case 511: {
+                if (!labSensors || uptime.elapsed() < stepDeadline)
+                    return;
+                stepDeadline = uptime.elapsed() + POI_SAMPLE_MS;
+                // The first palette's tiles may still be loading over a parked map that has
+                // stopped changing (a 575 MB Texas map at night drew bare ground for seconds).
+                if (step == 10 && uptime.elapsed() - poiStart < POI_SETTLE_MS)
+                    return;
+                const PoiCounts counts = poiCounts();
+                bool all = true;
+                for (int i = 0; i < 3; ++i) {
+                    if (poiKinds.contains(POI_NAMES[i]) && counts.kind[i] < POI_MIN)
+                        all = false;
+                }
+                const bool timedOut = uptime.elapsed() - poiStart > POI_WAIT_MS;
+                if (!all && !timedOut)
+                    return;
+                const QString palette = labSensors->night() ? "night" : "day";
+                out << "receiver_poi=markers " << palette << " picture=" << decoder.frames << " gas=" << counts.kind[0]
+                    << " food=" << counts.kind[1] << " shop=" << counts.kind[2] << " lit=" << poiKinds.join(',')
+                    << " every_lit_kind=" << (all ? "true" : "false") << " waited_ms=" << (uptime.elapsed() - poiStart) << "\n";
+                int total = 0;
+                for (int i = 0; i < 3; ++i) {
+                    if (poiKinds.contains(POI_NAMES[i]))
+                        total += counts.kind[i];
+                }
+                check(total >= POI_MIN, QString("no POI markers in the %1 map pane: gas %2 food %3 shop %4")
+                                            .arg(palette).arg(counts.kind[0]).arg(counts.kind[1]).arg(counts.kind[2]));
+                out << "receiver_poi=render poi-" << palette << " picture=" << decoder.frames << "\n";
+                out.flush();
+                check(labSensors->sendNight(!labSensors->night()), "NIGHT_DATA could not be sent for the other palette");
+                // A theme switch holds the old picture until the new tiles are in.
+                stepDeadline = uptime.elapsed() + POI_PALETTE_MS;
+                poiStart = stepDeadline;
+                ++step;
+                break;
+            }
+            case 512: {
+                // A tap on a marker opens its card in the flex tile (P11.5): the first window of
+                // a lit kind's colour clear of everything drawn over the map is a marker's disc.
+                if (uptime.elapsed() < stepDeadline)
+                    return;
+                QPoint at;
+                QString kind;
+                for (int i = 0; i < 3 && kind.isEmpty(); ++i) {
+                    if (poiKinds.contains(POI_NAMES[i]) && poiFind(i, at))
+                        kind = POI_NAMES[i];
+                }
+                check(!kind.isEmpty(), "no marker found to tap");
+                if (kind.isEmpty()) {
+                    step = 15;
+                    break;
+                }
+                poiTileBefore = paneLuma(pane.flexTile);
+                poiPress(at, QString("marker-") + kind);
+                stepDeadline = uptime.elapsed() + 2500;
+                ++step;
+                break;
+            }
+            case 513: {
+                if (uptime.elapsed() < stepDeadline)
+                    return;
+                const double opened = changedFraction(poiTileBefore, paneLuma(pane.flexTile), TRACK_LUMA_THRESHOLD);
+                out << "receiver_poi=card changed=" << opened << " picture=" << decoder.frames << "\n";
+                check(opened >= 0.10, QString("the flex tile changed only %1 after a tap on a marker").arg(opened));
+                out << "receiver_poi=render poi-card-" << (labSensors && labSensors->night() ? "night" : "day")
+                    << " picture=" << decoder.frames << "\n";
+                out.flush();
+                // DashboardLayout.poiCardButton(1), Close, at the tile's bottom right.
+                const DashboardPane::Rect& tile = pane.flexTile;
+                const int margin = std::max(2, caps.layout().width / 96);
+                const int bubble = std::max(24, std::min(pane.mapFull.width, pane.mapFull.height) / 8);
+                const int h = std::min(bubble, tile.height / 4);
+                const int w = std::max(0, (tile.width - 3 * margin) / 2);
+                poiPress(QPoint(tile.x + margin + w + margin + w / 2, tile.y + tile.height - margin - h / 2), "close");
+                stepDeadline = uptime.elapsed() + 2000;
+                ++step;
+                break;
+            }
+            case 514: {
+                if (uptime.elapsed() < stepDeadline)
+                    return;
+                const double back = changedFraction(poiTileBefore, paneLuma(pane.flexTile), TRACK_LUMA_THRESHOLD);
+                out << "receiver_poi=closed changed_from_before=" << back << " picture=" << decoder.frames << "\n";
+                out.flush();
+                check(back >= 0.0 && back < 0.05, QString("the flex tile is %1 away from before the card after Close").arg(back));
+                ++step;
+                break;
+            }
+            case 515: {
+                if (!poiAheadDone) {
+                    poiAheadAt = uptime.elapsed();
+                    step = 20;
+                    break;
+                }
+                mapBefore = paneLuma(pane.map);
+                tilesBefore = paneLuma(pane.tiles);
+                trackPlayer->depart();
+                trackMark = trackPlayer->travelled();
+                out << "receiver_track=departed\n";
+                out.flush();
+                step = 1;
+                break;
+            }
+            // P11.5a. Search ahead. The lab script says when the route up I-35 is being
+            // followed; then this kind's button is pressed where it sits during a route, a
+            // margin under the turn card (DashboardLayout.poiButtonsTop and poiButton): round
+            // map bubbles down the pane's left edge, a margin in and apart, gas, food, shop.
+            case 520: {
+                if (uptime.elapsed() < stepDeadline)
+                    return;
+                stepDeadline = uptime.elapsed() + POI_AHEAD_SAMPLE_MS;
+                if (!QFile::exists(POI_AHEAD_GO)) {
+                    if (uptime.elapsed() - poiAheadAt < POI_AHEAD_GO_MS)
+                        return;
+                    check(false, "the lab script never said a route was being followed");
+                    poiAheadDone = true;
+                    step = 15;
+                    break;
+                }
+                const DashboardPane::Rect& full = pane.mapFull;
+                const int margin = std::max(2, caps.layout().width / 96);
+                const int bubble = std::max(24, std::min(full.width, full.height) / 8);
+                const int top = pane.turnCard.y + pane.turnCard.height + margin;
+                const int index = poiAhead == "gas" ? 0 : poiAhead == "food" ? 1 : 2;
+                poiTileBefore = paneLuma(pane.flexTile);
+                poiPress(QPoint(full.x + margin + bubble / 2, top + index * (bubble + margin) + bubble / 2), QString("button-") + poiAhead);
+                poiAheadAt = uptime.elapsed();
+                ++step;
+                break;
+            }
+            case 521: {
+                // The card replaces whatever the flex tile showed: a tenth of it changed, as for a
+                // marker's card. The search reads the corridor and routes ten short routes in a
+                // debug build first, so this waits minutes rather than seconds.
+                if (uptime.elapsed() < stepDeadline)
+                    return;
+                stepDeadline = uptime.elapsed() + POI_AHEAD_SAMPLE_MS;
+                const double changed = changedFraction(poiTileBefore, paneLuma(pane.flexTile), TRACK_LUMA_THRESHOLD);
+                const qint64 waited = uptime.elapsed() - poiAheadAt;
+                if (changed < 0.10 && waited < POI_AHEAD_CARD_MS)
+                    return;
+                out << "receiver_poi_ahead=card changed=" << changed << " waited_ms=" << waited << " picture=" << decoder.frames << "\n";
+                check(changed >= 0.10, QString("the flex tile changed only %1 in %2 s after the %3 press").arg(changed).arg(waited / 1000).arg(poiAhead));
+                if (changed < 0.10) {
+                    poiAheadDone = true;
+                    step = 15;
+                    break;
+                }
+                // A second for the rows to be drawn whole before the render.
+                stepDeadline = uptime.elapsed() + 1000;
+                ++step;
+                break;
+            }
+            case 522: {
+                if (uptime.elapsed() < stepDeadline)
+                    return;
+                out << "receiver_poi=render poi-ahead-" << (labSensors && labSensors->night() ? "night" : "day")
+                    << " picture=" << decoder.frames << "\n";
+                // DashboardLayout.poiCardButton(0), Add stop, at the tile's bottom left.
+                const DashboardPane::Rect& tile = pane.flexTile;
+                const int margin = std::max(2, caps.layout().width / 96);
+                const int bubble = std::max(24, std::min(pane.mapFull.width, pane.mapFull.height) / 8);
+                const int h = std::min(bubble, tile.height / 4);
+                const int w = std::max(0, (tile.width - 3 * margin) / 2);
+                poiPress(QPoint(tile.x + margin + w / 2, tile.y + tile.height - margin - h / 2), "add-stop");
+                stepDeadline = uptime.elapsed() + 3000;
+                ++step;
+                break;
+            }
+            case 523: {
+                if (uptime.elapsed() < stepDeadline)
+                    return;
+                out << "receiver_poi_ahead=added picture=" << decoder.frames << "\n";
+                out.flush();
+                poiAheadDone = true;
+                step = 15;
                 break;
             }
             // P6.2. Two steps, both of them waits: the sequence has to start at all, and
@@ -4305,6 +4696,65 @@ int main(int argc, char** argv)
                     return;
                 weatherRender("notifier");
                 weatherHeaderLine("after-notifier");
+                step = 99;
+                break;
+            }
+            // A head unit that falls behind the stream for a while and then catches up
+            // (2026-10-11, report d11eec1e). The picture must decode without an error
+            // throughout, keep coming while slow, and flow again once caught up.
+            case 1600: {
+                stepDeadline = uptime.elapsed() + 5000;
+                ++step;
+                break;
+            }
+            case 1601: {
+                if (uptime.elapsed() < stepDeadline)
+                    return;
+                video->setPace(congestionKbps, congestionFrameMs);
+                congestionStarts = videoStarts;
+                congestionFrames = decoder.frames;
+                congestionErrors = decoder.errors;
+                out << "receiver_congestion=slow kbps=" << congestionKbps << " frame_ms=" << congestionFrameMs
+                    << " for_ms=" << congestionSlowMs << " decoded=" << decoder.frames << "\n";
+                out.flush();
+                stepDeadline = uptime.elapsed() + congestionSlowMs;
+                ++step;
+                break;
+            }
+            case 1602: {
+                if (uptime.elapsed() < stepDeadline)
+                    return;
+                video->setPace(0, 0);
+                const int restarts = videoStarts - congestionStarts;
+                const int slowFrames = decoder.frames - congestionFrames;
+                out << "receiver_congestion=caught-up decoded_while_slow=" << slowFrames
+                    << " restarts_while_slow=" << restarts << " paced=" << video->paced()
+                    << " max_ack_lag_ms=" << video->maxLagMs() << "\n";
+                out.flush();
+                check(slowFrames > 0, "no picture decoded while the head unit was slow");
+                if (congestionExpect == "restart")
+                    check(restarts >= 1, "the source never restarted the stream while the head unit was slow");
+                else if (congestionExpect == "none")
+                    check(restarts == 0, QString("the source restarted the stream %1 times").arg(restarts));
+                congestionStarts = videoStarts;
+                congestionFrames = decoder.frames;
+                stepDeadline = uptime.elapsed() + congestionNormalMs;
+                ++step;
+                break;
+            }
+            case 1603: {
+                if (uptime.elapsed() < stepDeadline)
+                    return;
+                const int frames = decoder.frames - congestionFrames;
+                const double fps = frames * 1000.0 / std::max(1, congestionNormalMs);
+                out << "receiver_congestion=done decoded_after=" << frames << " fps_after="
+                    << QString::number(fps, 'f', 1) << " restarts_after=" << (videoStarts - congestionStarts)
+                    << " decode_errors=" << decoder.errors << " (" << (decoder.errors - congestionErrors)
+                    << " since the slow phase began)\n";
+                out.flush();
+                check(decoder.errors == 0, "decode errors through the congestion");
+                check(fps >= 5.0, QString("the stream did not flow again once the head unit caught up: %1 fps")
+                                      .arg(fps, 0, 'f', 1));
                 step = 99;
                 break;
             }

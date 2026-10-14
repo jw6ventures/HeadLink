@@ -6,8 +6,17 @@
 //! Congestion policy: at most [`MediaLink::frame_limit`] access units wait for the
 //! head unit's acknowledgement window. A frame that finds the queue full is dropped, and
 //! so is every later frame until the next IDR, which is preceded by the latest codec
-//! configuration; a keyframe request is raised once for the episode. Queued frames are
-//! never discarded individually, so the stream the head unit decodes has no holes.
+//! configuration. Queued frames are never discarded individually, so the stream the head
+//! unit decodes has no holes.
+//!
+//! The IDR that ends an episode is only taken once the queue has drained: one arriving
+//! while frames from before the drop still wait is dropped too ([`MediaCounters::
+//! dropped_draining`]). Nor is the keyframe asked for at the drop. The link only says it
+//! [wants one](MediaLink::wants_keyframe) once drained, and the session decides when to
+//! ask, spacing requests from the last keyframe sent. A keyframe is the most expensive
+//! frame there is, and asking for one the instant the head unit fell behind was what kept
+//! it behind: on 2026-10-11 (report d11eec1e) the truck fell behind 5,200 times in an hour,
+//! a third of all frames were dropped, and two keyframes a second went out.
 //!
 //! P5.3 generalises the link over a [`Codec`]. A [`Codec::Pcm`] link carries linear audio
 //! and bypasses the NAL parser entirely: every buffer is independently playable, so there
@@ -446,6 +455,9 @@ pub struct MediaCounters {
     pub largest_unit: usize,
     pub dropped_congested: u64,
     pub dropped_awaiting_keyframe: u64,
+    /// IDRs dropped because the queue had not drained since the episode began. Also
+    /// counted in `dropped_awaiting_keyframe`, which stays the total of frames lost waiting.
+    pub dropped_draining: u64,
     pub dropped_not_streaming: u64,
     pub invalid: u64,
     pub closed: u64,
@@ -479,7 +491,7 @@ impl fmt::Display for MediaCounters {
                 f,
                 "{p}_submitted={} {p}_accepted_configs={} {p}_accepted_keyframes={} \
                  {p}_accepted_frames={} {p}_accepted_bytes={} {p}_largest_unit={} \
-                 {p}_dropped_congested={} {p}_dropped_awaiting_keyframe={} \
+                 {p}_dropped_congested={} {p}_dropped_awaiting_keyframe={} {p}_dropped_draining={} \
                  {p}_dropped_not_streaming={} {p}_invalid={} {p}_closed={} \
                  {p}_congestion_events={} {p}_configs_repeated={} {p}_inline_parameter_sets={} \
                  {p}_length_prefixed_inputs={} {p}_key_flag_mismatches={} \
@@ -492,6 +504,7 @@ impl fmt::Display for MediaCounters {
                 self.largest_unit,
                 self.dropped_congested,
                 self.dropped_awaiting_keyframe,
+                self.dropped_draining,
                 self.dropped_not_streaming,
                 self.invalid,
                 self.closed,
@@ -541,7 +554,14 @@ struct LinkState {
     closed: bool,
     need_keyframe: bool,
     need_config: bool,
+    /// Ask for a keyframe now: an invalid unit, which may be referenced by what follows.
     keyframe_request: bool,
+    /// A congestion episode is waiting for its IDR and nobody has asked for one yet; the
+    /// session asks once the queue has drained and the spacing allows.
+    keyframe_wanted: bool,
+    /// No frame from before the current episode's drop is still queued. True whenever no
+    /// episode is running.
+    drained: bool,
     failure: Option<String>,
     queue: VecDeque<MediaUnit>,
     queued_frames: usize,
@@ -595,6 +615,8 @@ impl MediaLink {
                 need_keyframe: codec == Codec::H264,
                 need_config: codec == Codec::H264,
                 keyframe_request: false,
+                keyframe_wanted: false,
+                drained: true,
                 failure: None,
                 queue: VecDeque::new(),
                 queued_frames: 0,
@@ -715,14 +737,24 @@ impl MediaLink {
             s.counters.dropped_awaiting_keyframe += 1;
             return Submit::DroppedAwaitingKeyframe;
         }
+        if s.need_keyframe && !s.drained {
+            // An IDR, but frames from before the drop still wait: the head unit has not
+            // caught up, and this is the frame that would put it furthest behind. Asked
+            // for again once the queue drains.
+            s.counters.dropped_awaiting_keyframe += 1;
+            s.counters.dropped_draining += 1;
+            s.keyframe_wanted = true;
+            return Submit::DroppedAwaitingKeyframe;
+        }
         if s.queued_frames >= self.frame_limit {
             s.counters.dropped_congested += 1;
             if !s.need_keyframe {
                 s.counters.congestion_events += 1;
-                s.keyframe_request = true;
+                s.keyframe_wanted = true;
             }
             s.need_keyframe = true;
             s.need_config = true;
+            s.drained = false;
             return Submit::DroppedCongested;
         }
         if keyframe {
@@ -738,6 +770,7 @@ impl MediaLink {
             }
             s.need_keyframe = false;
             s.need_config = false;
+            s.keyframe_wanted = false;
         }
         let timestamp = presentation_us as u64;
         if s.last_timestamp.is_some_and(|last| timestamp < last) {
@@ -840,6 +873,9 @@ impl MediaLink {
         let h264 = self.codec == Codec::H264;
         s.need_keyframe = h264;
         s.need_config = h264;
+        // The restart asks for its own IDR; nothing from an earlier episode is pending.
+        s.keyframe_wanted = false;
+        s.drained = true;
     }
 
     /// Session thread: focus lost. Queued units are discarded — stale audio played late
@@ -852,6 +888,8 @@ impl MediaLink {
         let h264 = self.codec == Codec::H264;
         s.need_keyframe = h264;
         s.need_config = h264;
+        s.keyframe_wanted = false;
+        s.drained = true;
     }
 
     /// Session thread: the session ended; later submissions return `Closed`.
@@ -868,12 +906,38 @@ impl MediaLink {
         let unit = s.queue.pop_front()?;
         if matches!(unit.kind, UnitKind::Frame { .. }) {
             s.queued_frames -= 1;
+            if s.queued_frames == 0 {
+                s.drained = true;
+            }
         }
         Some(unit)
     }
 
+    /// An invalid unit's immediate keyframe request, once.
     pub(crate) fn take_keyframe_request(&self) -> bool {
         std::mem::take(&mut self.lock().keyframe_request)
+    }
+
+    /// A congestion episode has drained and is still waiting for an IDR nobody has asked
+    /// for. The session decides when to ask, and says so with [`Self::keyframe_asked`].
+    pub(crate) fn wants_keyframe(&self) -> bool {
+        let s = self.lock();
+        s.accepting && s.need_keyframe && s.keyframe_wanted && s.drained
+    }
+
+    /// The session asked the encoder for the IDR [`Self::wants_keyframe`] was waiting on.
+    pub(crate) fn keyframe_asked(&self) {
+        self.lock().keyframe_wanted = false;
+    }
+
+    /// Congestion episodes so far, and every frame dropped for congestion or while waiting
+    /// for the IDR that ends one: the session's per-minute timeline reads these as deltas.
+    pub(crate) fn congestion_totals(&self) -> (u64, u64) {
+        let s = self.lock();
+        (
+            s.counters.congestion_events,
+            s.counters.dropped_congested + s.counters.dropped_awaiting_keyframe,
+        )
     }
 
     pub(crate) fn take_failure(&self) -> Option<String> {

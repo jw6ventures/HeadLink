@@ -12,8 +12,10 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
+import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.roundToInt
+import kotlin.math.sin
 
 /**
  * Two points to route between, in degrees.
@@ -24,10 +26,11 @@ import kotlin.math.roundToInt
  *
  * [startBearing] (P6.5) is the way the vehicle is already travelling, degrees clockwise
  * from north. A re-route sets it, because BRouter otherwise has no idea which way the
- * vehicle faces. It is a weak hint with `car-vario`: the profile's turncost of 90 prices a
- * U-turn at about 180 m, so it only tips routes whose way ahead is nearly as short as
- * turning round. In the P6.5 lab drive it did not: the first re-route after the missed
- * turn still began by going back, and a second re-route followed six seconds later.
+ * vehicle faces. On its own it is a weak hint with `car-vario`: turning round at the start
+ * costs a flat 40 s, so in the P6.5 lab drive the first re-route after the missed turn
+ * still began by going back, and a second re-route followed six seconds later. So
+ * [Router] also prices the road just behind the vehicle ([Router.behind]), which makes
+ * turning back cost about three and a half minutes in all.
  *
  * [options] are the Routing settings in force when the request was made, so a re-route
  * takes whatever the screen says now.
@@ -397,14 +400,19 @@ class Router(
         // The vehicle's direction of travel, applied to the first step as if the route
         // began 1 km behind it on that heading: turning back then costs what a U-turn
         // costs in the profile, rather than nothing. BRouter only honours it when forced.
+        // That is a flat 40 s, too little to stop a re-route turning round on the spot,
+        // so the road just behind the vehicle is priced as well ([behind]).
         request.startBearing?.let { bearing ->
             context.startDirection = (((bearing % 360.0) + 360.0) % 360.0).roundToInt() % 360
             context.forceUseStartDirection = true
         }
         // Weighted first and hard last, so that on a piece of way inside both kinds the
-        // closure is the circle BRouter keeps (class notes). Fresh nodes every time:
-        // BRouter adds to the list it is given, and nothing may carry to the next search.
-        if (nogos.isNotEmpty()) context.nogopoints = ArrayList(nogos.sortedBy { it.hard }.map { brouterNogo(it) })
+        // closure is the circle BRouter keeps (class notes); the point behind the vehicle
+        // after traffic's weighted ones, so a jam on the same link does not wipe it out.
+        // Fresh nodes every time: BRouter adds to the list it is given, and nothing may
+        // carry to the next search.
+        val placed = nogos.filter { !it.hard } + listOfNotNull(behind(request, options)) + nogos.filter { it.hard }
+        if (placed.isNotEmpty()) context.nogopoints = ArrayList(placed.map { brouterNogo(it) })
         val via = request.viaLat != null && request.viaLon != null
         val waypoints = RoutingParamCollector().readPositions(
             if (via) doubleArrayOf(request.fromLon, request.viaLon!!, request.toLon) else doubleArrayOf(request.fromLon, request.toLon),
@@ -460,6 +468,41 @@ class Router(
          * closure on the same link.
          */
         const val CLOSURE_GUARD_M = 2_000.0
+
+        /**
+         * Where the turn-back point sits, metres behind the start on the reverse of its
+         * heading, and its radius: the circle covers the road from 2 m to 22 m behind,
+         * clear of the start itself, which BRouter would otherwise drop the point for.
+         */
+        const val BEHIND_CENTRE_M = 12.0
+        const val BEHIND_RADIUS_M = 10.0
+
+        /**
+         * Seconds of delay that turning back the way the vehicle came is priced at, on
+         * top of BRouter's own 40 s, for a road straight through the circle. A way ahead up
+         * to about three and a half minutes longer is taken instead; a dead end or a
+         * country road with no way round still turns back.
+         */
+        const val TURN_BACK_SECONDS = 180.0
+
+        /**
+         * A weighted no-go point just behind the start of a request with a heading, or
+         * null without one. BRouter tests a start segment against no-go points only from
+         * the point the start was snapped to onward, "in order not to cut our escape-way
+         * if we placed a nogo just in front of where we are" (`RoutingContext.calcDistance`),
+         * so setting off forward never pays it and setting off backward does. Weighted
+         * rather than hard: a hard one fails the route in a dead end. It is BRouter cost at
+         * [options]' top speed, so a search timed slower prices it at that speed.
+         */
+        fun behind(request: RouteRequest, options: RouteOptions): Nogo? {
+            val bearing = request.startBearing ?: return null
+            val back = Math.toRadians(bearing + 180.0)
+            val metresPerDegree = 6_371_000.0 * Math.PI / 180.0
+            val lat = request.fromLat + BEHIND_CENTRE_M * cos(back) / metresPerDegree
+            val lon = request.fromLon + BEHIND_CENTRE_M * sin(back) / (metresPerDegree * cos(Math.toRadians(request.fromLat)))
+            val weight = TURN_BACK_SECONDS * TrafficCost.secondPrice(options.topSpeedKmh) / (2.0 * BEHIND_RADIUS_M)
+            return Nogo(lat, lon, BEHIND_RADIUS_M, weight)
+        }
 
         /** In BRouter's message when a search ran out of time rather than failed. */
         private const val TIMED_OUT = "timeout after"
@@ -598,25 +641,38 @@ class RoutePlanner @JvmOverloads constructor(
      * picked up, and any request made while it runs stops its current search and tells it,
      * through `cancelled`, to stop starting new ones. A re-route therefore waits for at most
      * the end of one terminated search, never for the alternatives.
+     *
+     * [done] runs on the routing thread once [work] is over, and also when it was skipped,
+     * failed or never queued (a closed planner), so a caller waiting on it always hears.
      */
-    fun explore(work: (router: Router, started: (RoutingEngine) -> Unit, cancelled: () -> Boolean) -> Unit) {
+    fun explore(
+        done: () -> Unit = {},
+        work: (router: Router, started: (RoutingEngine) -> Unit, cancelled: () -> Boolean) -> Unit,
+    ) {
         val at = latest.get()
-        executor.execute {
-            if (latest.get() != at) return@execute
-            try {
-                work(
-                    router(),
-                    { engine ->
-                        running = engine
-                        if (latest.get() != at) engine.terminate()
-                    },
-                    { latest.get() != at },
-                )
-            } catch (e: RuntimeException) {
-                // The alternatives are extras; a failure here costs them and nothing else.
-            } finally {
-                running = null
+        try {
+            executor.execute {
+                try {
+                    if (latest.get() != at) return@execute
+                    work(
+                        router(),
+                        { engine ->
+                            running = engine
+                            if (latest.get() != at) engine.terminate()
+                        },
+                        { latest.get() != at },
+                    )
+                } catch (e: Exception) {
+                    // The alternatives are extras; a failure here costs them and nothing else.
+                    // Exception, not RuntimeException: router() throws RoutingException for a
+                    // profile it cannot install, and nothing may escape onto this thread.
+                } finally {
+                    running = null
+                    done()
+                }
             }
+        } catch (e: java.util.concurrent.RejectedExecutionException) {
+            done()
         }
     }
 

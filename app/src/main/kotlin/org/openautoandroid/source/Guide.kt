@@ -58,9 +58,6 @@ object Guide {
      */
     const val ARRIVAL_HOLD_MS = 30_000L
 
-    /** How far past the via point counts as having passed it, so jitter at it does not. */
-    private const val VIA_PASSED_M = 50.0
-
     /**
      * Told what the dashboard's turn card and trip panel should say about the route each
      * time guidance publishes (P7.4): installed by [ProjectionService] while a dashboard
@@ -161,6 +158,22 @@ object Guide {
         val result = last ?: return null
         if (rerouting || result.state != FollowState.ON_ROUTE) return null
         return follower to result
+    }
+
+    /**
+     * Where search ahead (P11.5a) starts from: the followed route and the metres along it the
+     * vehicle has got to, on the route or still joining it (0 then), while no re-route is in
+     * flight. Null with no route, off it, or arrived. Main thread.
+     */
+    fun aheadPosition(): Pair<RouteFollower, Double>? {
+        val follower = follower ?: return null
+        val result = last ?: return null
+        if (rerouting) return null
+        return when (result.state) {
+            FollowState.ON_ROUTE -> follower to result.alongM
+            FollowState.JOINING -> follower to 0.0
+            FollowState.OFF_ROUTE, FollowState.ARRIVED -> null
+        }
     }
 
     /** The newest fix and the travel bearing, for a route that starts where the vehicle is. */
@@ -374,10 +387,13 @@ object Guide {
         // delay must not count the same jam twice (P9.4, plan §6).
         pace.onFix(generation, result.step?.destinationSeconds?.takeIf { result.state == FollowState.ON_ROUTE }, now)
         Traffic.onPosition(follower.route, result)
-        // Past the chosen alternative's via point, the best route is the chosen one again:
-        // a re-route from here must not be sent back to it.
-        viaAlongM?.let { at ->
-            if (result.state == FollowState.ON_ROUTE && result.alongM > at + VIA_PASSED_M) {
+        // Past the chosen alternative's via point, or at a stop added from search ahead
+        // (P11.5a), the best route is the chosen one again: a re-route from here must not be
+        // sent back to it. Reaching it counts as passing it, since a vehicle leaving a gas
+        // station by another road is off the route before it is ever past the point on it.
+        Navigation.via?.let { via ->
+            val metres = RouteFollower.distance(latitude, longitude, via[0], via[1])
+            if (ViaRelease.passed(viaAlongM, result.state == FollowState.ON_ROUTE, result.alongM, metres)) {
                 viaAlongM = null
                 Navigation.viaPassed()
             }

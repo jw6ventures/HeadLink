@@ -15,8 +15,10 @@ import org.openautoandroid.source.FollowResult;
 import org.openautoandroid.source.FollowState;
 import org.openautoandroid.source.Maneuver;
 import org.openautoandroid.source.Maneuvers;
+import org.openautoandroid.source.Nogo;
 import org.openautoandroid.source.Route;
 import org.openautoandroid.source.RouteFollower;
+import org.openautoandroid.source.RouteOptions;
 import org.openautoandroid.source.RouteRequest;
 import org.openautoandroid.source.Router;
 import org.openautoandroid.source.RoutingData;
@@ -282,11 +284,10 @@ public final class GuidanceTest {
     }
 
     /**
-     * The lab drive's missed turn, where a re-route with no heading was measured to start
-     * by going back the way the vehicle came. The heading is passed, and this records what
-     * BRouter made of it rather than asserting: car-vario's turncost of 90 makes a U-turn
-     * cost about 180 m, so the heading only tips routes whose way ahead is nearly as short
-     * as turning round - and here it is not (measured: still 180 degrees).
+     * The lab drive's missed turn, where a re-route was measured to start by going back
+     * the way the vehicle came: with the heading alone BRouter prices turning round at a
+     * flat 40 s and still set off 180 degrees off. Router's point behind the vehicle must
+     * make it set off forward, and a request without a heading must have no such point.
      */
     private static void aReRouteStartsTheWayTheVehicleIsGoing(File segments) throws Exception {
         File drive = new File("tools/lab-receiver/drives/lexington.csv");
@@ -331,6 +332,16 @@ public final class GuidanceTest {
             check(ahead.getPoints() >= 2, "a re-route with a heading is still a route");
             System.out.println(String.format("guidance-test: re-route with heading %.0f sets off at %.0f (%.0f degrees off)",
                 heading, first, turn));
+            check(turn < 90, "a re-route sets off the way the vehicle is going, not back");
+            RouteOptions options = new RouteOptions();
+            Nogo back = Router.Companion.behind(new RouteRequest(here[0], here[1], 42.44950, -71.23100, heading), options);
+            check(back != null && !back.getHard(), "a heading puts a weighted point behind the start");
+            double off = RouteFollower.Companion.distance(here[0], here[1], back.getLatitude(), back.getLongitude());
+            double towards = RouteFollower.Companion.bearing(here[0], here[1], back.getLatitude(), back.getLongitude());
+            check(near(off, Router.BEHIND_CENTRE_M, 0.1) && off > back.getRadiusM(), "the point is clear of the start");
+            check(Math.abs(((towards - heading) % 360 + 540) % 360 - 180) > 179, "the point is straight behind");
+            check(Router.Companion.behind(new RouteRequest(here[0], here[1], 42.44950, -71.23100), options) == null,
+                "no heading, no point behind");
         } finally {
             delete(work);
         }
