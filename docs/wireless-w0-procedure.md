@@ -31,7 +31,8 @@ truck and nothing is sent to it beyond that question.
    connected to the truck over Bluetooth as usual (calls and audio working).
 2. On SYNC: Phone → Phone List → this phone. Note whether it shows an Android Auto option
    or setting, and what it says. Don't change it yet.
-3. Open Diagnostics → Wireless probe and tap the truck (car-audio devices sort first).
+3. Open Diagnostics → Wireless probe and tap the truck (car-audio and hands-free devices sort first;
+   SYNC 4 is hands-free).
    Wait for the verdict, up to 15 s.
 4. If SYNC offered "Connect to Android Auto" (or similar) for this phone in step 2 and it was
    off: turn it on, then probe again. Note any message SYNC shows.

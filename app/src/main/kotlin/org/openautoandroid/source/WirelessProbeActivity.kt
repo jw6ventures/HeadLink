@@ -150,9 +150,11 @@ class WirelessProbeActivity : Activity() {
             status.text = getString(R.string.wireless_probe_failed, e.toString())
             return
         }
-        // Car audio first: that is the truck on every head unit seen so far.
+        // Vehicles first: car audio, or hands-free, which is what Ford SYNC 4 calls itself
+        // (0x0408, docs/wireless-w0-results.md).
+        val vehicle = setOf(BluetoothClass.Device.AUDIO_VIDEO_CAR_AUDIO, BluetoothClass.Device.AUDIO_VIDEO_HANDSFREE)
         val sorted = bonded.sortedWith(
-            compareBy<BluetoothDevice>({ it.bluetoothClass?.deviceClass != BluetoothClass.Device.AUDIO_VIDEO_CAR_AUDIO }, { it.name.orEmpty() }),
+            compareBy<BluetoothDevice>({ it.bluetoothClass?.deviceClass !in vehicle }, { it.name.orEmpty() }),
         )
         devices.removeAllViews()
         if (sorted.isEmpty()) {
