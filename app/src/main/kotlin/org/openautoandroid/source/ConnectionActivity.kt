@@ -2606,6 +2606,11 @@ class ConnectionActivity : Activity() {
                 .show()
         }
         val noticesButton = button(R.string.notices) { showNotices() }
+        // W0 (docs/wireless-investigation.md): its own screen, which asks for Nearby devices
+        // when it opens and not before.
+        val wirelessProbeButton = button(R.string.wireless_probe_open) {
+            startActivity(Intent(this, WirelessProbeActivity::class.java))
+        }
         connectButton = button(R.string.connect) { connect() }
         stopButton = button(R.string.stop) { stop() }
         useListedButton = button(R.string.use_listed) { useListed() }
@@ -2826,6 +2831,11 @@ class ConnectionActivity : Activity() {
             ),
             ui.card(ui.title(R.string.route_title), routeDetailText),
             ui.card(ui.title(R.string.diagnostics_reports), savedText, ui.row(exportButton, exportSavedButton), projectionText),
+            ui.card(
+                ui.title(R.string.wireless_probe_title),
+                ui.caption().apply { setText(R.string.wireless_probe_card) },
+                wirelessProbeButton,
+            ),
             ui.card(
                 ui.title(R.string.diagnostics_identity),
                 trustText,

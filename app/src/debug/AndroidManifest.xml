@@ -2,25 +2,7 @@
 <!-- Debug builds only (P9, docs/p9-plan.md §4, §8): lets live traffic reach the emulator
      lab's stand-in HERE server over plain HTTP on the lab host. The release manifest has
      no network security config, so a release build keeps Android's default of no
-     cleartext at all (tools/verify-apk.sh checks both).
-
-     Debug builds only (W0, docs/wireless-investigation.md): the wireless probe, a second
-     launcher entry that runs one Bluetooth SDP query on a paired device the operator
-     picks and saves what it advertises. BLUETOOTH_CONNECT is for that alone. It is a
-     runtime grant, asked for when the probe opens, and the release build declares no
-     Bluetooth permission at all (tools/verify-apk.sh checks both). -->
+     cleartext at all (tools/verify-apk.sh checks both). -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
-
-    <application android:networkSecurityConfig="@xml/network_security_config">
-        <activity
-            android:name=".WirelessProbeActivity"
-            android:exported="true"
-            android:label="@string/wireless_probe_label">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
-    </application>
+    <application android:networkSecurityConfig="@xml/network_security_config" />
 </manifest>

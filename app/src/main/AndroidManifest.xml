@@ -77,6 +77,14 @@
          could declare this permission name if Breezy were not installed. -->
     <uses-permission android:name="org.breezyweather.READ_PROVIDER" />
 
+    <!-- W0: the wireless probe (docs/wireless-investigation.md, spec.md 5.2 as amended
+         14 October 2026). A runtime grant (Nearby devices), asked for only when the
+         operator opens Diagnostics, Wireless probe; nothing else in the app touches
+         Bluetooth. With it the probe lists paired devices and asks the one picked which
+         services it offers (one SDP query). It opens no connection and sends the head unit
+         nothing else, and its report carries no device name or address. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
     <!-- P7.5: the idle media pane lists player apps that can be resumed with no session
          left, through Android's media resumption (docs/p7-plan.md §5.5). This makes apps
          exporting a MediaBrowserService visible to this one. It is a package-visibility
@@ -154,6 +162,11 @@
             android:exported="false"
             android:label="@string/preview_title"
             android:process=":preview" />
+        <!-- W0's probe screen, opened from Diagnostics only: no launcher entry, not exported. -->
+        <activity
+            android:name=".WirelessProbeActivity"
+            android:exported="false"
+            android:label="@string/wireless_probe_label" />
         <service
             android:name=".ProjectionService"
             android:exported="false"

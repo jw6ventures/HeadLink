@@ -7,26 +7,23 @@ truck and nothing is sent to it beyond that question.
 
 ## What it is
 
-- **OAA wireless probe**, a second launcher icon. It exists in the **debug build only**
-  (`app/src/debug`). The release build stays without the probe and without any Bluetooth
-  permission; `tools/verify-apk.sh` checks both.
-- It needs **Nearby devices** (`BLUETOOTH_CONNECT`), asked for when the probe opens.
-- Each run is saved as an ordinary report. **Export saved reports** on the main screen takes
+- **Diagnostics → Wireless probe**, in the release build you drive with as well as the
+  debug build. Since 14 October 2026 there's no separate install and no second launcher
+  icon. If the Diagnostics tab is hidden, turn on Settings → Diagnostics.
+- It needs **Nearby devices** (`BLUETOOTH_CONNECT`, spec §5.2 as amended 14 October 2026).
+  It asks when the probe opens and not before; nothing else in the app uses it.
+- Each run is saved as an ordinary report. **Export saved reports** under Diagnostics takes
   it off the phone with the others. Device names appear only on the probe's own screen,
   where you pick the truck. The report has no names or addresses (spec §10).
-- The logic is `WirelessProbe.kt`, host-tested by `tools/wireless-probe-test.sh`.
+- The logic is `WirelessProbe.kt`, host-tested by `WirelessProbeTest` in
+  `tools/jni-host-test.sh`.
 
 ## Before the truck
 
-1. `tools/android-build.sh`, then
-   `adb install -r app/build/outputs/apk/debug/app-debug.apk`. The debug build is
-   signed with the same key as `app-release-debugsigned.apk`, so it installs over it and
-   keeps the app's data (pins, settings, maps).
-2. Open **OAA wireless probe** once at home and allow Nearby devices. Probing any paired
-   headphones is a fine dry run. Expect `verdict=absent` or `no_answer`.
-3. Afterwards, reinstall the release build for driving
-   (`adb install -r app/build/outputs/apk/release/app-release-debugsigned.apk`).
-   Routing runs about 30× slower in the debug build.
+1. `tools/android-build.sh`, then install the release build as usual:
+   `adb install -r app/build/outputs/apk/release/app-release-debugsigned.apk`.
+2. Open Diagnostics → Wireless probe once at home and allow Nearby devices. Probing any
+   paired headphones is a fine dry run. Expect `verdict=absent` or `no_answer`.
 
 ## In the truck
 
@@ -34,11 +31,11 @@ truck and nothing is sent to it beyond that question.
    connected to the truck over Bluetooth as usual (calls and audio working).
 2. On SYNC: Phone → Phone List → this phone. Note whether it shows an Android Auto option
    or setting, and what it says. Don't change it yet.
-3. Open **OAA wireless probe** and tap the truck (car-audio devices sort first). Wait for
-   the verdict, up to 15 s.
+3. Open Diagnostics → Wireless probe and tap the truck (car-audio devices sort first).
+   Wait for the verdict, up to 15 s.
 4. If SYNC offered "Connect to Android Auto" (or similar) for this phone in step 2 and it was
    off: turn it on, then probe again. Note any message SYNC shows.
-5. Export saved reports on the main screen as usual.
+5. Export saved reports under Diagnostics as usual.
 
 ## Reading the result
 

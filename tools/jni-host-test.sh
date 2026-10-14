@@ -154,6 +154,9 @@
 #   miles and km with and without a name or a stop, the via point's release, and a report of
 #   counts only. ROUTING_SEGMENTS with W100_N30.rd5 and OBF_DIR with the Austin file add a real
 #   search north on I-35 toward Round Rock: gas in the corridor, BRouter's detours, timings.
+# * WirelessProbeTest: W0's wireless probe - the verdict for each way an SDP query can end,
+#   the UUID labels, and a report with no name or address that ends complete. The query,
+#   its broadcast and the Nearby devices prompt need a phone.
 # LabDrive.java and LabTraffic.java are compiled here but not run: they are generators run
 # by hand, the second writing the P9 lab's stand-in HERE scenarios and traffic drive
 # (tools/here-standin/, docs/p9-lab-results.md).
@@ -208,6 +211,7 @@ java -cp "$out:$classes:$stdlib" WeatherTest tools/breezy-standin/scenarios
 java -cp "$out:$classes:$stdlib" ObfTest "${OBF_DIR:-}"
 java -cp "$out:$classes:$stdlib" AddressSearchTest "${OBF_DIR:-}"
 java -cp "$out:$classes:$stdlib:$brouter" SearchAheadTest "${ROUTING_SEGMENTS:-}" "${OBF_DIR:-}"
+java -cp "$out:$classes:$stdlib" WirelessProbeTest
 status=0
 java -Xcheck:jni --add-opens java.base/sun.nio.ch=ALL-UNNAMED -Djava.library.path=target/release \
     -cp "$out:$classes:$stdlib" JniContractTest > "$out/output.txt" 2>&1 || status=$?

@@ -14,9 +14,9 @@ line "minSdkVersion:'33'"
 line "targetSdkVersion:'36'"
 line "native-code: 'arm64-v8a'"
 # The spec §5.2 baseline plus P5.5's four optional dashboard grants. Still notably no
-# Bluetooth and no microphone. Each addition here is a deliberate, separately optional
-# integration that degrades without its grant (APP09); this list is the guard that makes
-# adding another a visible act.
+# microphone, and Bluetooth only for W0 below. Each addition here is a deliberate,
+# separately optional integration that degrades without its grant (APP09); this list is
+# the guard that makes adding another a visible act.
 # P7.9 adds MANAGE_ONGOING_CALLS (signature|appop; docs/p7-backends-results.md §4.2 amends
 # docs/p7-plan.md §9 item 3). Declaring it grants nothing: it takes effect only after
 # `adb shell appops set org.openautoandroid.source MANAGE_ONGOING_CALLS allow`, and even
@@ -28,19 +28,16 @@ line "native-code: 'arm64-v8a'"
 # P9 adds INTERNET for live traffic alone (APP10 as amended 28 September 2026,
 # docs/p9-plan.md §2): off by default, and no socket opens unless the operator turns it on
 # with their own HERE key (host-tested in TrafficClientTest; this script cannot see that).
-# W0 (docs/wireless-investigation.md): a debuggable build alone adds BLUETOOTH_CONNECT,
-# for the wireless probe's SDP query and nothing else. A release build stays without any
-# Bluetooth permission, and without the probe's launcher entry.
+# W0 adds BLUETOOTH_CONNECT (spec §5.2 as amended 14 October 2026,
+# docs/wireless-investigation.md): the wireless probe's SDP query and nothing else, asked
+# for only when the operator opens the probe from Diagnostics.
 permissions=$(printf '%s\n' "$badging" | sed -n "s/^uses-permission: name='\([^']*\)'.*/\1/p" | LC_ALL=C sort | tr '\n' ' ')
-bluetooth=
-if printf '%s\n' "$badging" | grep -q '^application-debuggable'; then
-    bluetooth="android.permission.BLUETOOTH_CONNECT "
-fi
-[ "$permissions" = "android.permission.ACCESS_COARSE_LOCATION android.permission.ACCESS_FINE_LOCATION android.permission.ACCESS_NETWORK_STATE ${bluetooth}android.permission.FOREGROUND_SERVICE android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE android.permission.INTERNET android.permission.MANAGE_ONGOING_CALLS android.permission.POST_NOTIFICATIONS android.permission.READ_PHONE_STATE org.breezyweather.READ_PROVIDER " ] \
+[ "$permissions" = "android.permission.ACCESS_COARSE_LOCATION android.permission.ACCESS_FINE_LOCATION android.permission.ACCESS_NETWORK_STATE android.permission.BLUETOOTH_CONNECT android.permission.FOREGROUND_SERVICE android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE android.permission.INTERNET android.permission.MANAGE_ONGOING_CALLS android.permission.POST_NOTIFICATIONS android.permission.READ_PHONE_STATE org.breezyweather.READ_PROVIDER " ] \
     || fail "unexpected permission set: $permissions"
-if [ -z "$bluetooth" ] && printf '%s\n' "$badging" | grep -q 'WirelessProbeActivity'; then
-    fail "a release build must not carry the wireless probe"
-fi
+# One launcher entry, the main screen. The probe is reached from Diagnostics alone.
+[ "$(printf '%s\n' "$badging" | grep -c '^launchable-activity:')" = 1 ] || fail "launcher entry count"
+printf '%s\n' "$badging" | grep -q "^launchable-activity: name='org.openautoandroid.source.ConnectionActivity'" \
+    || fail "ConnectionActivity must be the launcher entry"
 
 printf '%s\n' "$badging" | grep -qx "  uses-feature: name='android.hardware.usb.accessory'" \
     || fail "required uses-feature android.hardware.usb.accessory"
@@ -51,6 +48,14 @@ manifest=$(aapt2 dump xmltree --file AndroidManifest.xml "$apk")
 # domain for Android 12's device transfer, which ignores allowBackup.
 printf '%s\n' "$manifest" | grep -q ':allowBackup([^)]*)=false\( \|$\)' || fail "allowBackup must be false"
 printf '%s\n' "$manifest" | grep -q ':dataExtractionRules(' || fail "dataExtractionRules missing"
+# W0's probe screen: declared, and not exported, so only this app opens it.
+probe=$(printf '%s\n' "$manifest" | awk '
+    /E: / && collecting { print line; collecting = 0; line = "" }
+    /E: activity / { collecting = 1 }
+    collecting { sub(/^ +/, ""); line = line " " $0 }
+    END { if (collecting) print line }
+' | grep '"org.openautoandroid.source.WirelessProbeActivity"') || fail "WirelessProbeActivity not declared"
+printf '%s\n' "$probe" | grep -q ':exported([^)]*)=false\( \|$\)' || fail "WirelessProbeActivity must not be exported"
 # Cleartext never in a release build. A debuggable build may carry the network security
 # config that lets live traffic reach the lab's stand-in server on the lab host (P9 §8).
 if printf '%s\n' "$manifest" | grep -q ':usesCleartextTraffic([^)]*)=true'; then

@@ -1,8 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- W0 wireless probe, debug builds only (docs/wireless-investigation.md). -->
+<!-- W0 wireless probe (docs/wireless-investigation.md), opened from Diagnostics. -->
 <resources>
-    <string name="wireless_probe_label">OAA wireless probe</string>
-    <string name="wireless_probe_intro">Checks whether a paired device advertises the wireless Android Auto service over Bluetooth. Read-only: it asks the device which services it offers and connects to nothing.\n\nHave the truck on and connected to this phone over Bluetooth as usual, with the USB cable unplugged. Then tap the truck below. Each run is saved as a report; use Export saved reports on the main screen to take it off the phone.</string>
+    <string name="wireless_probe_label">Wireless probe</string>
+    <string name="wireless_probe_title">Wireless probe</string>
+    <string name="wireless_probe_card">Checks whether the truck offers wireless Android Auto to this phone. Read-only; asks for Nearby devices when opened.</string>
+    <string name="wireless_probe_open">Open wireless probe</string>
+    <string name="wireless_probe_intro">Checks whether a paired device advertises the wireless Android Auto service over Bluetooth. Read-only: it asks the device which services it offers and connects to nothing.\n\nHave the truck on and connected to this phone over Bluetooth as usual, with the USB cable unplugged. Then tap the truck below. Each run is saved as a report; use Export saved reports under Diagnostics to take it off the phone.</string>
     <string name="wireless_probe_pick">Tap the device to probe:</string>
     <string name="wireless_probe_device">Probe %1$s</string>
     <string name="wireless_probe_unnamed">(no name)</string>

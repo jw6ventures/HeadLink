@@ -28,10 +28,11 @@ import java.time.Instant
 import java.util.UUID
 
 /**
- * W0 of docs/wireless-investigation.md, debug builds only: pick a paired device, run a
- * fresh SDP query on it, and save whether it advertises the wireless Android Auto
- * bootstrap service. The verdict and report are [WirelessProbe]'s. The report goes into
- * the ordinary report store, so Export saved reports on the main screen carries it.
+ * W0 of docs/wireless-investigation.md, opened from Diagnostics: pick a paired device,
+ * run a fresh SDP query on it, and save whether it advertises the wireless Android Auto
+ * bootstrap service. The only code that uses BLUETOOTH_CONNECT, asked for when this
+ * screen opens. The verdict and report are [WirelessProbe]'s. The report goes into
+ * the ordinary report store, so Export saved reports under Diagnostics carries it.
  *
  * Read-only: nothing is connected to or sent to the head unit beyond the SDP query
  * Android makes on our behalf. Device names appear on this screen only, to pick the

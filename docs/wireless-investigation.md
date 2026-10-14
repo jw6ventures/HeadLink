@@ -1,12 +1,13 @@
 # Wireless projection investigation, 11 October 2026
 
-**Status: research, plus the W0 probe (debug build only) on branch `wireless`, 13 October
-2026. Procedure: [wireless-w0-procedure.md](wireless-w0-procedure.md). No spec or plan
-change; the release build gains no permission and no screen.** Spec §2 (line 101) says
-"Wireless requires a separate Bluetooth/Wi-Fi bootstrap investigation"; this is that
-investigation. Building anything needs James's go-ahead and a spec amendment (new
-permissions, and §6's "Bluetooth … and wifi stay closed" wording would need to say these
-are bootstrap transports, not opened AA services).
+**Status: research, plus the W0 probe on branch `wireless`.** The probe was built
+13 October 2026 in the debug build only, and moved into release builds on 14 October at
+James's request; spec §5.2 is amended for its `BLUETOOTH_CONNECT`. The procedure is
+[wireless-w0-procedure.md](wireless-w0-procedure.md). There is no plan change. Spec §2.2
+says "Wireless requires a separate Bluetooth/Wi-Fi bootstrap investigation"; this is that
+investigation. Going past W0 needs James's go-ahead and further spec amendments: more
+permissions, and §8.1's "Bluetooth … and wifi stay closed" would need to say these are
+bootstrap transports, not opened AA services.
 
 ## Short answer
 
@@ -111,9 +112,10 @@ From `WifiNetworkFactory.java`:
 
 ## Proposed order of work (needs James's go-ahead)
 
-- **W0 — SDP probe, read-only.** A debug-screen button runs `fetchUuidsWithSdp()` on the
-  paired truck and records whether `4de17a00-…` is advertised. It needs no spec change
-  beyond the `BLUETOOTH_CONNECT` grant. If the UUID is absent, stop here.
+- **W0 — SDP probe, read-only. Built.** Diagnostics → Wireless probe runs
+  `fetchUuidsWithSdp()` on the paired truck and records whether `4de17a00-…` is
+  advertised. The only spec change is the `BLUETOOTH_CONNECT` grant (§5.2, amended
+  14 October 2026). If the UUID is absent, stop here.
 - **W1 — bootstrap probe.** Connect RFCOMM, record WifiVersion/Start/Info messages, and
   send WifiInfoRequest. Log SSID, BSSID, security and AP type with the **key redacted**
   (spec §10). Do not join Wi-Fi yet. Repeat across two drives to see whether the SSID or

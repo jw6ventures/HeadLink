@@ -9,8 +9,8 @@ import java.util.Locale
  * sends anything to the head unit.
  *
  * The verdict and the report are pure JVM, so tools/jni-host-test exercises them. The
- * screen that gathers the inputs is debug-only (src/debug, WirelessProbeActivity): it is
- * the only code that needs BLUETOOTH_CONNECT, and the release build does not declare it.
+ * screen that gathers the inputs, [WirelessProbeActivity], is the only code that uses
+ * BLUETOOTH_CONNECT (spec §5.2 as amended 14 October 2026).
  *
  * The report never takes a device name or address (spec §10). It records the Bluetooth
  * class, the profile states, and the service UUIDs, which name services rather than the

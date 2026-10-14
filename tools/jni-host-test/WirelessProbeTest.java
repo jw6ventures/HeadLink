@@ -1,7 +1,7 @@
 // W0's wireless probe on a desktop JVM (docs/wireless-investigation.md): the verdict for
 // each way an SDP query can end, the UUID labels, and what the saved report may contain.
 // WirelessProbe is pure Kotlin; the SDP query itself, the broadcast it answers with and
-// the permission prompt need a phone (WirelessProbeActivity, debug builds only).
+// the permission prompt need a phone (WirelessProbeActivity, opened from Diagnostics).
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
