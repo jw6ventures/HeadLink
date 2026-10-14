@@ -12,7 +12,9 @@ When you tap **Read wireless setup from … (W1)**:
 
 1. It opens one RFCOMM connection to the truck's wireless Android Auto service.
 2. It answers what SYNC sends:
-   - a version request with a version response (SYNC's own version echoed, status 0);
+   - a version request with a version response in Android Auto 17.6's shape: SYNC's
+     version echoed, serial `unknown`, status 0, and a random per-install device id
+     ([W1 results](wireless-w1-results.md));
    - a ping with the same ping;
    - a start request (where to connect) with a request for the Wi-Fi details.
 3. If SYNC says nothing for 5 s, it asks for the Wi-Fi details once anyway, to learn
@@ -23,7 +25,7 @@ When you tap **Read wireless setup from … (W1)**:
 **The report (`[wireless_bootstrap]`)** records every message in both directions:
 - **SYNC's messages:** listed by field number. Any string shaped like a serial number,
   VIN, UUID or MAC address is hashed.
-- **Our messages:** the exact bytes sent.
+- **Our messages:** field by field, with the device id hashed.
 - **Wi-Fi details:**
   - the network name (SSID) and access-point hardware address (BSSID) as `h:` hashes;
   - the SSID length, and whether it looks like Wi-Fi Direct (`DIRECT-…`);

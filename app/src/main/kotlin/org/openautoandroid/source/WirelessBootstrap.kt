@@ -164,16 +164,47 @@ object WirelessBootstrap {
         writeVarint(out, value)
     }
 
+    private fun stringField(out: ByteArrayOutputStream, number: Int, value: String) {
+        val bytes = value.toByteArray(Charsets.UTF_8)
+        writeVarint(out, (number.toLong() shl 3) or 2)
+        writeVarint(out, bytes.size.toLong())
+        out.write(bytes)
+    }
+
+    /** What Android Auto 17.6 sends as the serial when it may not read the real one. */
+    const val SERIAL_UNKNOWN = "unknown"
+
+    /** Android Auto 17.6's `connectivity_lifetime_id` before any is stored. */
+    const val LIFETIME_UNKNOWN = "UNKNOWN"
+
     /**
-     * Our WifiVersionResponse: the head unit's own major and minor echoed (fields 1 and 2)
-     * and status 0 (field 4). No serial, no device id: aa-proxy-rs reads fields 3 and 6
-     * as those, and this source sends neither.
+     * Our WifiVersionResponse, shaped as Android Auto 17.6 builds it for a head unit below
+     * 4.0 (docs/wireless-w1-results.md, dexdump of `phn`/`xrb`/`xht`):
+     * - 1 and 2: the head unit's own major and minor, echoed;
+     * - 3: serial, `unknown`, which is 17.6's own value without the privileged phone-state grant;
+     * - 4: status 0, the value 17.6 computes for a major-1 head unit;
+     * - 6: device info, which 17.6 adds above version 1.0, as {1 device id, 2 lifetime id}.
+     *   The device id is a random UUID kept per install, as 17.6 keeps `DEVICE_ID`. The
+     *   lifetime id is `UNKNOWN`, 17.6's value before any is stored.
+     * 17.6 adds the Bluetooth name and address only from version 4.0, and field 5 only when
+     * the request's field 3 is 3; this sends neither.
      */
-    fun versionResponse(major: Long?, minor: Long?): ByteArray {
+    fun versionResponse(major: Long?, minor: Long?, deviceId: String): ByteArray {
         val out = ByteArrayOutputStream()
         if (major != null) varintField(out, 1, major)
         if (minor != null) varintField(out, 2, minor)
+        stringField(out, 3, SERIAL_UNKNOWN)
         varintField(out, 4, 0)
+        val ma = major ?: 0L
+        val mi = minor ?: 0L
+        if (ma > 1 || ma == 1L && mi > 0) {
+            val info = ByteArrayOutputStream()
+            stringField(info, 1, deviceId)
+            stringField(info, 2, LIFETIME_UNKNOWN)
+            writeVarint(out, (6L shl 3) or 2)
+            writeVarint(out, info.size().toLong())
+            info.writeTo(out)
+        }
         return out.toByteArray()
     }
 
@@ -323,7 +354,7 @@ object WirelessBootstrap {
      * One bootstrap conversation, without the socket. [received] and [tick] return frames
      * to send. Times are milliseconds since the RFCOMM connection completed.
      */
-    class Session(private val redactor: Redactor) {
+    class Session(private val redactor: Redactor, private val deviceId: String) {
         val events = mutableListOf<String>()
         var huVersion: String? = null
             private set
@@ -360,7 +391,7 @@ object WirelessBootstrap {
                     val minor = fields?.firstOrNull { it.number == 2 }?.varint
                     huVersion = if (major != null) "$major.${minor ?: "-"}" else "-"
                     versionEndpoint(frame.payload)?.let { versionEndpointSeen = it }
-                    out += Frame(VERSION_RESPONSE, versionResponse(major, minor))
+                    out += Frame(VERSION_RESPONSE, versionResponse(major, minor, deviceId))
                     versionAnsweredAt = at
                 }
                 PING_REQUEST -> out += Frame(PING_RESPONSE, frame.payload)
@@ -424,9 +455,9 @@ object WirelessBootstrap {
         private fun sent(frames: List<Frame>, at: Long): List<Frame> {
             for (frame in frames) {
                 counts.merge("out_${name(frame.id)}", 1, Int::plus)
-                // Our own bytes: nothing of the head unit's except an echoed ping or version.
-                val hex = frame.payload.joinToString("") { "%02x".format(Locale.ROOT, it) }.ifEmpty { "-" }
-                events += "+${at}ms out ${frame.id} ${name(frame.id)} len=${frame.payload.size} hex=$hex"
+                // Our own messages, dumped with the same redaction: the device id is UUID-shaped,
+                // so it appears as a hash.
+                events += "+${at}ms out ${frame.id} ${name(frame.id)} len=${frame.payload.size} fields=${dump(frame.payload, redactor)}"
             }
             return frames
         }

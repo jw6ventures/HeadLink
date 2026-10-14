@@ -291,7 +291,7 @@ class WirelessProbeActivity : Activity() {
      */
     @SuppressLint("MissingPermission")
     private fun converse(device: BluetoothDevice, utc: Instant, deviceClass: Int?): Pair<String, String> {
-        val session = WirelessBootstrap.Session(WirelessBootstrap.Redactor(salt()))
+        val session = WirelessBootstrap.Session(WirelessBootstrap.Redactor(salt()), deviceId())
         val connectStart = SystemClock.elapsedRealtime()
         var connectError: String? = null
         var socket: BluetoothSocket? = null
@@ -407,6 +407,28 @@ class WirelessProbeActivity : Activity() {
         return salt
     }
 
+    /**
+     * The device id W1 sends in WifiVersionResponse: a random UUID made once per install and
+     * kept, as Android Auto 17.6 keeps its `DEVICE_ID`. It names this app on this phone and
+     * nothing else.
+     */
+    private fun deviceId(): String {
+        val file = File(filesDir, DEVICE_ID_FILE)
+        try {
+            val existing = file.readText(Charsets.UTF_8).trim()
+            if (existing.isNotEmpty()) return existing
+        } catch (e: IOException) {
+            // First run.
+        }
+        val id = UUID.randomUUID().toString()
+        try {
+            file.writeText(id, Charsets.UTF_8)
+        } catch (e: IOException) {
+            // Still usable for this run.
+        }
+        return id
+    }
+
     private fun setButtons(enabled: Boolean) {
         for (i in 0 until devices.childCount) devices.getChildAt(i).isEnabled = enabled
         bootstrapButton.isEnabled = enabled
@@ -423,5 +445,6 @@ class WirelessProbeActivity : Activity() {
         const val REQUEST_CONNECT = 1
         const val SALT_FILE = "wireless-salt"
         const val SALT_BYTES = 16
+        const val DEVICE_ID_FILE = "wireless-device-id"
     }
 }

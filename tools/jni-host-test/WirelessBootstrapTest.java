@@ -23,6 +23,7 @@ public final class WirelessBootstrapTest {
     private static final String SSID = "SYNC-1A2B";
     private static final String BSSID = "a6:5e:60:12:34:56";
     private static final String VIN = "1FTFW1E50PFA12345";
+    private static final String DEVICE_ID = "0f8e2c1a-3b4d-4e5f-8a9b-0c1d2e3f4a5b";
 
     public static void main(String[] args) {
         framing();
@@ -30,6 +31,7 @@ public final class WirelessBootstrapTest {
         redaction();
         startFirst();
         versionFirst();
+        versionOneZero();
         versionEndpointOnly();
         repeatedStart();
         ping();
@@ -82,7 +84,7 @@ public final class WirelessBootstrapTest {
     }
 
     private static WirelessBootstrap.Session session() {
-        return new WirelessBootstrap.Session(new WirelessBootstrap.Redactor(SALT));
+        return new WirelessBootstrap.Session(new WirelessBootstrap.Redactor(SALT), DEVICE_ID);
     }
 
     private static Proto infoResponse() {
@@ -184,8 +186,10 @@ public final class WirelessBootstrapTest {
         Proto hu = new Proto().str(1, "Ford").str(2, "F-150").str(3, "2023").str(4, VIN).str(6, "SYNC 4").str(8, "SYNC4_22198");
         List<WirelessBootstrap.Frame> out = s.received(frame(4, new Proto().num(1, 1).num(2, 2).num(3, 149).msg(5, hu)), 40);
         check(out.size() == 1 && out.get(0).getId() == WirelessBootstrap.VERSION_RESPONSE, "WifiVersionRequest answered");
-        check(java.util.Arrays.equals(out.get(0).getPayload(), new byte[] {0x08, 0x01, 0x10, 0x02, 0x20, 0x00}),
-                "WifiVersionResponse echoes 1.2 with status 0");
+        byte[] expected = new Proto().num(1, 1).num(2, 2).str(3, "unknown").num(4, 0)
+                .msg(6, new Proto().str(1, DEVICE_ID).str(2, "UNKNOWN")).build();
+        check(java.util.Arrays.equals(out.get(0).getPayload(), expected),
+                "WifiVersionResponse in Android Auto 17.6's shape: 1.2 echoed, serial unknown, status 0, device info");
         out = s.received(frame(1, new Proto().str(1, "192.168.4.1").num(2, 5288)), 500);
         check(out.size() == 1 && out.get(0).getId() == WirelessBootstrap.INFO_REQUEST, "then WifiStartRequest answered");
         s.received(frame(3, infoResponse()), 700);
@@ -194,9 +198,27 @@ public final class WirelessBootstrapTest {
         line(text, "hu_version=1.2");
         line(text, "version_endpoint=none");
         check(text.contains("\"Ford\"") && text.contains("\"SYNC4_22198\"") && text.contains("\"F-150\""), "head unit details readable");
-        check(text.contains("hex=080110022000"), "our version response recorded in hex");
+        check(text.contains("out 5 WifiVersionResponse len=" + expected.length + " fields=1=1 2=2 3=\"unknown\" 4=0 6={1=h:"),
+                "our version response recorded, device id hashed");
+        check(!text.contains(DEVICE_ID), "device id not in the report");
         check(!text.contains(VIN), "VIN not in the report");
         secretsAbsent(text);
+    }
+
+    /** Android Auto 17.6 adds device info only above version 1.0. */
+    private static void versionOneZero() {
+        WirelessBootstrap.Session s = session();
+        List<WirelessBootstrap.Frame> out = s.received(frame(4, new Proto().num(1, 1).num(2, 0)), 10);
+        byte[] expected = new Proto().num(1, 1).num(2, 0).str(3, "unknown").num(4, 0).build();
+        check(java.util.Arrays.equals(out.get(0).getPayload(), expected), "1.0: no device info");
+        // SYNC 4.0's own request, as W1 recorded it on 14 October 2026: 1.6, with frequencies.
+        WirelessBootstrap.Session sync = session();
+        out = sync.received(frame(4, new Proto().num(1, 1).num(2, 6).num(3, 0).num(4, 5180).num(4, 5745)
+                .msg(5, new Proto().str(1, "Ford").str(6, "SYNC 4.0"))), 292);
+        List<WirelessBootstrap.Field> fields = WB.fields(out.get(0).getPayload());
+        check(fields.size() == 5 && fields.get(0).getVarint() == 1 && fields.get(1).getVarint() == 6
+                && fields.get(4).getNumber() == 6, "SYNC 1.6 answered 1.6 with device info");
+        line(report(sync), "hu_version=1.6");
     }
 
     /** No WifiStartRequest: the endpoint only inside WifiVersionRequest, so we ask anyway after the wait. */
