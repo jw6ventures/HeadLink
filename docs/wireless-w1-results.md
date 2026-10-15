@@ -1,4 +1,7 @@
-# W1 results: SYNC 4.0 answers, then waits, 14 October 2026
+# W1 results: SYNC 4.0 hands over its Wi-Fi details, 14–15 October 2026
+
+**Run 2 (15 October): `outcome=wifi_details`.** With a reply in Android Auto 17.6's shape,
+SYNC 4.0 sent where to connect and its Wi-Fi details. The bootstrap works with this app.
 
 ## Run 1 (report `3964af1f`, build `1dcdf07`)
 
@@ -67,7 +70,58 @@ paragraph is revised to match. `WirelessBootstrapTest` checks the exact bytes (8
   the W1 run (21:35 UTC on 14 October) and projected for 27 minutes. It ended in the
   ordinary `IO_ERROR` of an unplug.
 
-## Run 2
+## Run 2 (report `2d89e925`, build `02a1930`): the Wi-Fi details
 
-Not yet recorded. The 15 October export (written about a minute after a fresh W0, `9f516c9a`,
-`advertised`) has no new `[wireless_bootstrap]` report.
+W0 (`a3d7d5e1`) gave `advertised` ten seconds before. James: SYNC "prompted and said
+connecting".
+
+| Time | Direction | Message |
+| --- | --- | --- |
+| +0 | | RFCOMM connected (269 ms) |
+| +189 ms | in | `WifiVersionRequest`, identical to run 1 |
+| +189 ms | out | `WifiVersionResponse`, 64 bytes: `1=1 2=6 3="unknown" 4=0 6={1=h:… 2="UNKNOWN"}` |
+| +3,204 ms | out | `WifiInfoRequest` (W1's own ask after 3 s; no answer) |
+| **+4,962 ms** | in | **`WifiStartRequest`: `1="192.168.100.1" 2=30515 3=1`** |
+| +4,962 ms | out | `WifiInfoRequest` |
+| **+5,020 ms** | in | **`WifiInfoResponse`**, 58 ms later |
+| +7,033 ms | | W1 disconnects after lingering 2 s |
+
+**What SYNC sends.** The fields marked † are AP labels reported by SYNC itself, not the
+phone's interpretation.
+
+| | |
+| --- | --- |
+| Where to connect | `192.168.100.1`, TCP port **30515** (not the dongle projects' 5288) |
+| `WifiStartRequest` field 3 | 1. Android Auto logs "Received WifiStartRequest, reason=%s", so probably a reason code |
+| SSID | 10 characters, not `DIRECT-…`. This is an ordinary access point, not a Wi-Fi Direct group |
+| BSSID | Locally administered (a virtual or randomised address) |
+| Security | WPA2-Personal, key 12 characters |
+| AP type† | `static` |
+
+**Reading it:**
+- **The ~4.8 s wait before `WifiStartRequest` matches SYNC's on-screen prompt.** SYNC asked,
+  and its start request followed. Whether the prompt needed an answer, or only announced
+  itself, isn't recorded. Run 1, without the device info, got no prompt at all, so SYNC
+  didn't treat that phone as wireless-capable. The device info was the missing piece.
+- **`static` points to the same network every drive.** Android's Wi-Fi approval would then
+  appear once and be remembered for this SSID and security type. The locally administered
+  BSSID needs a second drive to check: it could be fixed per truck or new per start. The
+  remembered approval also matches on SSID and security type alone, so a changing BSSID
+  alone wouldn't bring the prompt back.
+- **SYNC's network is not Wi-Fi Direct.** Joining it is an ordinary station connection,
+  which `WifiNetworkSpecifier` covers.
+
+## Other reports in the same export
+
+- **`e0bbc954` (13:59, wired):** ended after 131 s with `FLOW_CONTROL_TIMEOUT` (4 media units
+  unacknowledged for 5 s). The retry at 14:01 (`51685c95`) timed out waiting for the version
+  request. The one after (`7742c1b6`) projected for 19 minutes and ended with the unplug.
+  The same timeout happened on 7 October (`f42a215e`), before any wireless code, so it isn't
+  attributed to the probe. It's noted here because it came 28 s after a W0.
+
+## Next
+
+1. **One more W1 run on another drive**, to compare `wifi_ssid` and `wifi_bssid` with
+   `h:d087e137b0b0` and `h:6b1b2ce98f52`.
+2. **W2, joining SYNC's network and opening TCP to `start_endpoint`.** This needs James's
+   go-ahead and a spec amendment.

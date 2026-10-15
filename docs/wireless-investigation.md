@@ -1,9 +1,9 @@
 # Wireless projection investigation, 11 October 2026
 
 **Status: W0 passed on the truck, 14 October 2026: SYNC 4 advertises the bootstrap service
-([results](wireless-w0-results.md)). W1 run 1: SYNC sent its version request, then went
-quiet on our reply; the reply now matches Android Auto 17.6's
-([W1 results](wireless-w1-results.md)).** Research, plus the W0 probe on branch `wireless`.
+([results](wireless-w0-results.md)). W1 passed 15 October: with a reply in Android Auto 17.6's
+shape, SYNC sends where to connect (192.168.100.1:30515) and its Wi-Fi details (WPA2,
+static AP, not Wi-Fi Direct) ([W1 results](wireless-w1-results.md)).** Research, plus the W0 probe on branch `wireless`.
 The probe was built 13 October 2026 in the debug build only, and moved into release builds
 on 14 October at James's request; spec §5.2 is amended for its `BLUETOOTH_CONNECT`. The
 procedure is [wireless-w0-procedure.md](wireless-w0-procedure.md). There is no plan
