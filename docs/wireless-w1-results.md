@@ -59,8 +59,15 @@ address stay out, as 17.6 leaves them out below 4.0. Outgoing messages are now l
 redacted field dumps rather than hex, so the device id appears only as a hash. Spec §5.2's W1
 paragraph is revised to match. `WirelessBootstrapTest` checks the exact bytes (89 checks).
 
-## Still unknown
+## Answered since
 
-- Whether SYNC showed anything on screen during run 1.
-- Whether wired projection started normally afterwards. The export has no wired session after
-  the W1 run.
+- **SYNC's screen** showed nothing during run 1: no "Connecting", no prompt (James,
+  15 October).
+- **Wired projection still works afterwards.** Report `9db40b0e` started three minutes after
+  the W1 run (21:35 UTC on 14 October) and projected for 27 minutes. It ended in the
+  ordinary `IO_ERROR` of an unplug.
+
+## Run 2
+
+Not yet recorded. The 15 October export (written about a minute after a fresh W0, `9f516c9a`,
+`advertised`) has no new `[wireless_bootstrap]` report.
