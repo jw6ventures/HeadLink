@@ -2,8 +2,8 @@
 
 **Run 1 (report `17549b53`, build `293cd27`): `outcome=tcp_failed`.** The Bluetooth bootstrap
 and the Wi-Fi join both worked. The TCP socket was refused permission to use the joined
-network, by Android rather than by SYNC, so no packet reached the truck. The cause is almost
-certainly a VPN on the phone (below).
+network, by Android rather than by SYNC, so no packet reached the truck. The cause was a VPN
+on the phone (below; James confirmed one was on).
 
 ## What happened
 
@@ -27,11 +27,10 @@ W0 (`87bc9051`) gave `advertised` 11 s before, with HFP and A2DP connected.
   the phone once it has been allowed.
 - **The Wi-Fi details didn't change.** `wifi_ssid=h:d087e137b0b0` and
   `wifi_bssid=h:6b1b2ce98f52` match W1 run 2's, 7 h 23 min earlier on the same install.
-  Assuming the truck was off in between, the BSSID is fixed per truck, not new per start,
-  which fits `ap_type=static`. This settles W1's "second drive" comparison, subject to that
-  assumption.
-- **The join took 4.9 s.** Whether Android's network prompt appeared is not recorded; James
-  would know.
+  The truck was off in between (James), so the BSSID is fixed per truck, not new per start,
+  which fits `ap_type=static`. This settles W1's "second drive" comparison.
+- **The join took 4.9 s, including Android's network prompt**, which James answered. The
+  next run will show whether Android remembers that approval.
 - **The failure came 10 ms after the network appeared, before any connect.** `createSocket`
   failed while binding the new socket to the network, so SYNC never saw a SYN. Whether SYNC
   accepts our TCP session is still unknown.
@@ -59,20 +58,19 @@ an unprivileged UID "can bypass the VPN that applies to it only if it can protec
 sockets, i.e., if it is the owner". There is no exception for local-only networks. Android
 still delivered `onAvailable`, which is why the request looked like it worked.
 
-So a VPN app that doesn't allow bypassing covers OpenAutoAndroid on this phone. That
+So a VPN app that doesn't allow bypassing covers OpenAutoAndroid on this phone. James
+confirmed a VPN was on. That
 describes most VPN apps' defaults. The app can't work around this itself: only the VPN
 owner, or a system app, may use another network while the VPN applies. The lab didn't catch
 it because the emulator has no VPN, and the lab path connects over the default network
 without binding.
 
-**To confirm** (any one is enough):
-- Is a VPN on? Settings → Network & internet → VPN.
-- Logcat around the attempt should show netd's line `uid <app uid> can't select networks
-  other than <VPN netId>`.
+If it recurs, logcat around the attempt should show netd's line `uid <app uid> can't select
+networks other than <VPN netId>`.
 
 ## Run 2: what to change
 
-No new build is needed if this is the cause.
+No new build is needed.
 
 1. In the VPN app, **exclude OpenAutoAndroid** (split tunnelling or "excluded apps"; Mullvad,
    Proton and WireGuard all have it). Then `getVirtualNetworkForUser` no longer returns the
