@@ -42,7 +42,8 @@ change for the truck while wireless is up.
 ## In the truck
 
 1. **Phone Wi-Fi on** (no need to be connected to anything). Bluetooth connected to the truck
-   as usual. **USB cable unplugged.**
+   as usual. **USB cable unplugged.** If a VPN is on, OpenAutoAndroid must be excluded from
+   it, or Android refuses the socket on SYNC's network (run 1, [results](wireless-w2-results.md)).
 2. Diagnostics → Wireless probe → tap the truck. Wait for `Verdict: advertised`.
 3. Tap **Connect wirelessly to … (W2)**. Answer the prompts:
    - **SYNC:** "allow Android Auto?" Tap **Allow**, if it asks.
