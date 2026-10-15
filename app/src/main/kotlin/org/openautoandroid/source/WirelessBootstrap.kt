@@ -208,6 +208,32 @@ object WirelessBootstrap {
         return out.toByteArray()
     }
 
+    /**
+     * WifiStartResponse, as Android Auto 17.6 sends it the moment WifiStartRequest arrives:
+     * only field 3, status, 0 (`phn.ag` with 12, less 12; schema from `xqz`).
+     */
+    fun startResponse(): ByteArray {
+        val out = ByteArrayOutputStream()
+        varintField(out, 3, 0)
+        return out.toByteArray()
+    }
+
+    /** WifiConnectStatus: field 1 status, field 2 an optional message (17.6's `xqo`, sent by `phn.ap`). */
+    fun connectStatus(status: Long, message: String?): ByteArray {
+        val out = ByteArrayOutputStream()
+        varintField(out, 1, status)
+        if (message != null) stringField(out, 2, message)
+        return out.toByteArray()
+    }
+
+    /**
+     * What W2 needs to join the head unit's network. Held in memory for the one request and
+     * never written anywhere: the report keeps [WifiDetails] instead.
+     */
+    class Credentials(val ssid: String, val key: String, val bssid: String?, val securityMode: Long?) {
+        override fun toString(): String = "Credentials(redacted)"
+    }
+
     /** Salted hashing for anything identifying. */
     class Redactor(private val salt: ByteArray) {
         fun hash(value: ByteArray): String {
@@ -354,7 +380,11 @@ object WirelessBootstrap {
      * One bootstrap conversation, without the socket. [received] and [tick] return frames
      * to send. Times are milliseconds since the RFCOMM connection completed.
      */
-    class Session(private val redactor: Redactor, private val deviceId: String) {
+    class Session @JvmOverloads constructor(
+        private val redactor: Redactor,
+        private val deviceId: String,
+        private val connect: Boolean = false,
+    ) {
         val events = mutableListOf<String>()
         var huVersion: String? = null
             private set
@@ -364,6 +394,10 @@ object WirelessBootstrap {
             private set
         var wifi: WifiDetails? = null
             private set
+        /** W2 only: what the network request needs. Never in the report. */
+        var credentials: Credentials? = null
+            private set
+        private var startAnswered = false
         var done = false
             private set
         var lastAt = 0L
@@ -399,12 +433,21 @@ object WirelessBootstrap {
                     endpoint(frame.payload)?.let { start = it }
                     // A repeated WifiStartRequest is answered too, but never past the cap.
                     if (wifi == null && infoAttempts < INFO_ATTEMPTS) out += askInfo(at)
+                    // W2 answers as 17.6 does, once: WifiInfoRequest, then WifiStartResponse.
+                    if (connect && !startAnswered) {
+                        startAnswered = true
+                        out += Frame(START_RESPONSE, startResponse())
+                    }
                 }
                 INFO_RESPONSE -> {
                     val details = wifiDetails(frame.payload, redactor)
                     if (details == null) events += "+${at}ms WifiInfoResponse is not well-formed protobuf"
                     wifi = details ?: wifi
-                    if (lingerUntil < 0) lingerUntil = at + LINGER_MS
+                    if (connect) {
+                        if (credentials == null) credentials = credentials(frame.payload)
+                    } else if (lingerUntil < 0) {
+                        lingerUntil = at + LINGER_MS
+                    }
                 }
             }
             return sent(out, at)
@@ -415,6 +458,8 @@ object WirelessBootstrap {
             lastAt = at
             val out = mutableListOf<Frame>()
             when {
+                // W2 holds the link open once it has what it needs; only [closed] ends it.
+                connect && credentials != null -> {}
                 at >= DEADLINE_MS -> finish(at, "deadline")
                 lingerUntil in 0..at -> finish(at, "linger ended")
                 wifi != null -> {}
@@ -430,6 +475,18 @@ object WirelessBootstrap {
                 }
             }
             return sent(out, at)
+        }
+
+        /** A frame W2 sends on its own account (WifiConnectStatus), recorded like any other. */
+        fun send(frame: Frame, at: Long): List<Frame> {
+            if (done) return emptyList()
+            lastAt = at
+            return sent(listOf(frame), at)
+        }
+
+        /** A link-level event (network, TCP) in the same timeline as the frames. */
+        fun note(at: Long, text: String) {
+            events += "+${at}ms $text"
         }
 
         /** The socket closed or failed under us. */
@@ -462,6 +519,14 @@ object WirelessBootstrap {
             return frames
         }
 
+        private fun credentials(payload: ByteArray): Credentials? {
+            val fields = fields(payload) ?: return null
+            fun text(n: Int) = fields.firstOrNull { it.number == n && it.bytes != null }?.let { String(it.bytes!!, Charsets.UTF_8) }
+            val ssid = text(1) ?: return null
+            val key = text(2) ?: return null
+            return Credentials(ssid, key, text(3)?.trim(), fields.firstOrNull { it.number == 4 }?.varint)
+        }
+
         fun outcome(): Outcome =
             when {
                 wifi != null -> Outcome.WIFI_DETAILS
@@ -474,6 +539,7 @@ object WirelessBootstrap {
     }
 
     /** The saved report: key=value lines under one section, ending with attempt_complete=true. */
+    @JvmOverloads
     fun report(
         probeUtc: Instant,
         appVersion: String,
@@ -482,10 +548,11 @@ object WirelessBootstrap {
         connectMs: Long,
         connectError: String?,
         session: Session,
+        w2: W2Summary? = null,
     ): String = buildString {
         val outcome = if (connectError != null) Outcome.CONNECT_FAILED else session.outcome()
-        appendLine("[wireless_bootstrap]")
-        appendLine("probe=w1_rfcomm")
+        appendLine(if (w2 != null) "[wireless_connect]" else "[wireless_bootstrap]")
+        appendLine(if (w2 != null) "probe=w2_connect" else "probe=w1_rfcomm")
         appendLine("probe_utc=$probeUtc")
         appendLine("app_version=$appVersion")
         appendLine("android_sdk=$sdkInt")
@@ -508,9 +575,33 @@ object WirelessBootstrap {
         appendLine("wifi_security=${wifi?.securityMode ?: "none"}")
         appendLine("wifi_ap_type=${wifi?.apType ?: "none"}")
         appendLine("wifi_other_fields=${wifi?.otherFields ?: "none"}")
+        if (w2 != null) {
+            appendLine("network_request=${w2.network}")
+            appendLine("network_ms=${w2.networkMs ?: "none"}")
+            appendLine("tcp_connect=${w2.tcp}")
+            appendLine("tcp_connect_ms=${w2.tcpMs ?: "none"}")
+            appendLine("session_generation=${w2.generation ?: "none"}")
+            appendLine("ended=${w2.ended ?: "running"}")
+        }
         session.events.forEachIndexed { index, event -> appendLine("event_${index + 1}=$event") }
-        appendLine("outcome=${outcome.key}")
-        appendLine("outcome_note=${outcome.note}")
-        appendLine("attempt_complete=true")
+        if (w2 != null) {
+            appendLine("outcome=${w2.outcome ?: outcome.key}")
+        } else {
+            appendLine("outcome=${outcome.key}")
+            appendLine("outcome_note=${outcome.note}")
+        }
+        // W2's report is rewritten as it goes; it is complete once the link has ended.
+        appendLine("attempt_complete=${w2 == null || w2.ended != null}")
     }
+
+    /** W2's link milestones for [report]. Values are words or numbers, never addresses or names. */
+    class W2Summary(
+        val network: String,
+        val networkMs: Long?,
+        val tcp: String,
+        val tcpMs: Long?,
+        val generation: Long?,
+        val ended: String?,
+        val outcome: String?,
+    )
 }

@@ -3,7 +3,8 @@
 **Status: W0 passed on the truck, 14 October 2026: SYNC 4 advertises the bootstrap service
 ([results](wireless-w0-results.md)). W1 passed 15 October: with a reply in Android Auto 17.6's
 shape, SYNC sends where to connect (192.168.100.1:30515) and its Wi-Fi details (WPA2,
-static AP, not Wi-Fi Direct) ([W1 results](wireless-w1-results.md)).** Research, plus the W0 probe on branch `wireless`.
+static AP, not Wi-Fi Direct) ([W1 results](wireless-w1-results.md)). W2 (join and project)
+is built and lab-checked over TCP, and awaits the truck ([procedure](wireless-w2-procedure.md)).** Research, plus the W0 probe on branch `wireless`.
 The probe was built 13 October 2026 in the debug build only, and moved into release builds
 on 14 October at James's request; spec §5.2 is amended for its `BLUETOOTH_CONNECT`. The
 procedure is [wireless-w0-procedure.md](wireless-w0-procedure.md). There is no plan
@@ -125,7 +126,7 @@ From `WifiNetworkFactory.java`:
   send WifiInfoRequest. Log SSID, BSSID, security and AP type with the **key redacted**
   (spec §10). Do not join Wi-Fi yet. Repeat across two drives to see whether the SSID or
   BSSID changes.
-- **W2 — join and TCP.** Make the local-only specifier request, open TCP, and run the
+- **W2 — join and TCP. Built 15 October 2026 ([procedure](wireless-w2-procedure.md)).** Make the local-only specifier request, open TCP, and run the
   existing session over the socket. This is the first wireless G2/G3 equivalent. Watch
   A2DP the whole time.
 - **W3 — auto-start.** CDM association plus the presence service. No activity tap needed.

@@ -32,8 +32,10 @@ line "native-code: 'arm64-v8a'"
 # docs/wireless-investigation.md): the wireless probe's SDP query and, on a second tap
 # after an advertised verdict, W1's one RFCOMM bootstrap read; nothing else. Asked for only
 # when the operator opens the probe from Diagnostics.
+# W2 adds CHANGE_NETWORK_STATE (normal; spec §5.2, the W2 amendment): the local-only
+# request for the head unit's own Wi-Fi, made only by the probe's Connect wirelessly button.
 permissions=$(printf '%s\n' "$badging" | sed -n "s/^uses-permission: name='\([^']*\)'.*/\1/p" | LC_ALL=C sort | tr '\n' ' ')
-[ "$permissions" = "android.permission.ACCESS_COARSE_LOCATION android.permission.ACCESS_FINE_LOCATION android.permission.ACCESS_NETWORK_STATE android.permission.BLUETOOTH_CONNECT android.permission.FOREGROUND_SERVICE android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE android.permission.INTERNET android.permission.MANAGE_ONGOING_CALLS android.permission.POST_NOTIFICATIONS android.permission.READ_PHONE_STATE org.breezyweather.READ_PROVIDER " ] \
+[ "$permissions" = "android.permission.ACCESS_COARSE_LOCATION android.permission.ACCESS_FINE_LOCATION android.permission.ACCESS_NETWORK_STATE android.permission.BLUETOOTH_CONNECT android.permission.CHANGE_NETWORK_STATE android.permission.FOREGROUND_SERVICE android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE android.permission.INTERNET android.permission.MANAGE_ONGOING_CALLS android.permission.POST_NOTIFICATIONS android.permission.READ_PHONE_STATE org.breezyweather.READ_PROVIDER " ] \
     || fail "unexpected permission set: $permissions"
 # One launcher entry, the main screen. The probe is reached from Diagnostics alone.
 [ "$(printf '%s\n' "$badging" | grep -c '^launchable-activity:')" = 1 ] || fail "launcher entry count"

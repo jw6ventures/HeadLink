@@ -26,9 +26,7 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
-import java.io.File
 import java.io.IOException
-import java.security.SecureRandom
 import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.LinkedBlockingQueue
@@ -56,6 +54,7 @@ class WirelessProbeActivity : Activity() {
     private lateinit var devices: LinearLayout
     private lateinit var result: TextView
     private lateinit var bootstrapButton: Button
+    private lateinit var connectButton: Button
     private var adapter: BluetoothAdapter? = null
     private var hfp: BluetoothProfile? = null
     private var a2dp: BluetoothProfile? = null
@@ -101,8 +100,13 @@ class WirelessProbeActivity : Activity() {
             isAllCaps = false
             visibility = View.GONE
         }
+        connectButton = Button(this).apply {
+            isAllCaps = false
+            visibility = View.GONE
+        }
         column.addView(status)
         column.addView(bootstrapButton)
+        column.addView(connectButton)
         column.addView(devices)
         column.addView(result)
         setContentView(ScrollView(this).apply {
@@ -115,6 +119,10 @@ class WirelessProbeActivity : Activity() {
             }
         })
         adapter = getSystemService(BluetoothManager::class.java)?.adapter
+        WirelessLink.listener = { text ->
+            status.text = text
+            if (!WirelessLink.active) setButtons(true)
+        }
         if (granted()) ready() else requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_CONNECT), REQUEST_CONNECT)
     }
 
@@ -126,6 +134,7 @@ class WirelessProbeActivity : Activity() {
     }
 
     override fun onDestroy() {
+        WirelessLink.listener = null
         probe?.let { stop(it) }
         probe = null
         adapter?.let { a ->
@@ -192,8 +201,9 @@ class WirelessProbeActivity : Activity() {
 
     @SuppressLint("MissingPermission")
     private fun start(device: BluetoothDevice) {
-        if (probe != null || bootstrap != null || !granted()) return
+        if (probe != null || bootstrap != null || WirelessLink.active || !granted()) return
         bootstrapButton.visibility = View.GONE
+        connectButton.visibility = View.GONE
         val before = WirelessProbe.Device(
             deviceClass = device.bluetoothClass?.deviceClass,
             type = device.type,
@@ -252,11 +262,25 @@ class WirelessProbeActivity : Activity() {
         bootstrapButton.text = getString(R.string.wireless_bootstrap_button, label)
         bootstrapButton.setOnClickListener { runBootstrap(device, label) }
         bootstrapButton.visibility = View.VISIBLE
+        connectButton.text = getString(R.string.wireless_connect_button, label)
+        connectButton.setOnClickListener { runConnect(device) }
+        connectButton.visibility = View.VISIBLE
+    }
+
+    /**
+     * W2: the whole wireless connection, handed to [WirelessLink], which outlives this
+     * screen. Progress arrives through its listener while the screen is open.
+     */
+    private fun runConnect(device: BluetoothDevice) {
+        if (probe != null || bootstrap != null || WirelessLink.active || !granted()) return
+        result.text = null
+        if (!WirelessLink.connect(this, device)) return
+        setButtons(false)
     }
 
     @SuppressLint("MissingPermission")
     private fun runBootstrap(device: BluetoothDevice, label: String) {
-        if (probe != null || bootstrap != null || !granted()) return
+        if (probe != null || bootstrap != null || WirelessLink.active || !granted()) return
         setButtons(false)
         result.text = null
         status.text = getString(R.string.wireless_bootstrap_running, label)
@@ -291,7 +315,7 @@ class WirelessProbeActivity : Activity() {
      */
     @SuppressLint("MissingPermission")
     private fun converse(device: BluetoothDevice, utc: Instant, deviceClass: Int?): Pair<String, String> {
-        val session = WirelessBootstrap.Session(WirelessBootstrap.Redactor(salt()), deviceId())
+        val session = WirelessBootstrap.Session(WirelessBootstrap.Redactor(WirelessLink.salt(this)), WirelessLink.deviceId(this))
         val connectStart = SystemClock.elapsedRealtime()
         var connectError: String? = null
         var socket: BluetoothSocket? = null
@@ -389,49 +413,10 @@ class WirelessProbeActivity : Activity() {
         }
     }
 
-    /** The app-private salt for W1's hashes: random once per install, so hashes compare between runs here and nowhere else. */
-    private fun salt(): ByteArray {
-        val file = File(filesDir, SALT_FILE)
-        try {
-            val existing = file.readBytes()
-            if (existing.size == SALT_BYTES) return existing
-        } catch (e: IOException) {
-            // First run.
-        }
-        val salt = ByteArray(SALT_BYTES).also { SecureRandom().nextBytes(it) }
-        try {
-            file.writeBytes(salt)
-        } catch (e: IOException) {
-            // Hashes still work for this run; they just will not match the next one.
-        }
-        return salt
-    }
-
-    /**
-     * The device id W1 sends in WifiVersionResponse: a random UUID made once per install and
-     * kept, as Android Auto 17.6 keeps its `DEVICE_ID`. It names this app on this phone and
-     * nothing else.
-     */
-    private fun deviceId(): String {
-        val file = File(filesDir, DEVICE_ID_FILE)
-        try {
-            val existing = file.readText(Charsets.UTF_8).trim()
-            if (existing.isNotEmpty()) return existing
-        } catch (e: IOException) {
-            // First run.
-        }
-        val id = UUID.randomUUID().toString()
-        try {
-            file.writeText(id, Charsets.UTF_8)
-        } catch (e: IOException) {
-            // Still usable for this run.
-        }
-        return id
-    }
-
     private fun setButtons(enabled: Boolean) {
         for (i in 0 until devices.childCount) devices.getChildAt(i).isEnabled = enabled
         bootstrapButton.isEnabled = enabled
+        connectButton.isEnabled = enabled
     }
 
     private fun versionName(): String =
@@ -443,8 +428,5 @@ class WirelessProbeActivity : Activity() {
 
     private companion object {
         const val REQUEST_CONNECT = 1
-        const val SALT_FILE = "wireless-salt"
-        const val SALT_BYTES = 16
-        const val DEVICE_ID_FILE = "wireless-device-id"
     }
 }

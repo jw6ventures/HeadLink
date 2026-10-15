@@ -87,6 +87,12 @@
          name or address, and W1's keeps no Wi-Fi key (spec.md 5.2, the W1 amendment). -->
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
+    <!-- W2: wireless projection (docs/wireless-investigation.md, spec.md 5.2, the W2
+         amendment). A normal, install-time permission for one thing: the local-only
+         network request for the head unit's own Wi-Fi, which Android confirms with the
+         operator once. Nothing else in the app requests a network. -->
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+
     <!-- P7.5: the idle media pane lists player apps that can be resumed with no session
          left, through Android's media resumption (docs/p7-plan.md §5.5). This makes apps
          exporting a MediaBrowserService visible to this one. It is a package-visibility

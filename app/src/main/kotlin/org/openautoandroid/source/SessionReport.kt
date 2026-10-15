@@ -67,7 +67,7 @@ object SessionReport {
             appendLine("session_uuid=${attempt?.sessionUuid ?: "-"}")
             appendLine("profile=${attempt?.profile ?: "-"}")
             appendLine("stop_after=${attempt?.settings?.stopAfter ?: "-"}")
-            appendLine("transport=${attempt?.settings?.labSocket?.let { "lab-socket:$it" } ?: "accessory"}")
+            appendLine("transport=${attempt?.settings?.transport ?: "accessory"}")
             appendLine("sensors=${attempt?.settings?.sensors ?: "-"}")
             // Says which case the run was, so evidence from a drive is unambiguous about
             // whether coordinates could be in this file at all (spec §10).

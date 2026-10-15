@@ -452,6 +452,15 @@ class ConnectionActivity : Activity() {
             sceneArea = intent.getStringExtra(EXTRA_LAB_SCENE_AREA) ?: SessionSettings.SCENE_AREA_CONTENT,
             labSocket = socket,
         )
+        // W2 lab: the same settings over a TCP socket through WirelessLink's wireless path.
+        intent.getStringExtra(EXTRA_LAB_WIRELESS_TCP)?.let { target ->
+            val host = target.substringBeforeLast(':')
+            val port = target.substringAfterLast(':').toIntOrNull()
+            if (port == null || !WirelessLink.labConnect(this, host, port, settings)) {
+                SessionController.note("lab wireless TCP $target not started")
+            }
+            return true
+        }
         val attempt = SessionController.begin(settings) ?: return true
         SessionController.note("lab socket attempt on abstract socket $socket (debug build)")
         SessionController.completed(attempt, "accessory")
@@ -3087,6 +3096,7 @@ class ConnectionActivity : Activity() {
 
         /** Lab transport extras; honored only in a debug build (see [handleLabIntent]). */
         const val EXTRA_LAB_SOCKET = "lab_socket"
+        const val EXTRA_LAB_WIRELESS_TCP = "lab_wireless_tcp"
         const val EXTRA_LAB_ROUTE = "lab_route"
         const val EXTRA_LAB_FAVORITES = "lab_favorites"
         const val EXTRA_LAB_RECENT = "lab_recent"

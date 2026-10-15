@@ -34,6 +34,7 @@ public final class WirelessBootstrapTest {
         versionOneZero();
         versionEndpointOnly();
         repeatedStart();
+        connectMode();
         ping();
         silent();
         failures();
@@ -244,6 +245,55 @@ public final class WirelessBootstrapTest {
             for (WirelessBootstrap.Frame f : out) if (f.getId() == WirelessBootstrap.INFO_REQUEST) asked++;
         }
         check(asked == WirelessBootstrap.INFO_ATTEMPTS, "capped WifiInfoRequests: " + asked);
+    }
+
+    /** W2's connect mode: 17.6's WifiStartResponse, credentials held, the link kept open. */
+    private static void connectMode() {
+        check(java.util.Arrays.equals(WB.startResponse(), new byte[] {0x18, 0x00}), "WifiStartResponse is status 0 in field 3");
+        check(java.util.Arrays.equals(WB.connectStatus(0, null), new byte[] {0x08, 0x00}), "WifiConnectStatus success");
+        check(java.util.Arrays.equals(WB.connectStatus(-3, "no"), new Proto().num(1, -3).str(2, "no").build()),
+                "WifiConnectStatus with a negative status and a message");
+        WirelessBootstrap.Session s = new WirelessBootstrap.Session(new WirelessBootstrap.Redactor(SALT), DEVICE_ID, true);
+        s.received(frame(4, new Proto().num(1, 1).num(2, 6)), 189);
+        List<WirelessBootstrap.Frame> out = s.received(frame(1, new Proto().str(1, "192.168.100.1").num(2, 30515).num(3, 1)), 4962);
+        check(out.size() == 2 && out.get(0).getId() == WirelessBootstrap.INFO_REQUEST
+                && out.get(1).getId() == WirelessBootstrap.START_RESPONSE, "start request answered with info request, then start response");
+        out = s.received(frame(1, new Proto().str(1, "192.168.100.1").num(2, 30515).num(3, 1)), 5000);
+        check(out.stream().noneMatch(f -> f.getId() == WirelessBootstrap.START_RESPONSE), "start response sent once");
+        s.received(frame(3, infoResponse()), 5020);
+        WirelessBootstrap.Credentials c = s.getCredentials();
+        check(c != null && c.getSsid().equals(SSID) && c.getKey().equals(KEY) && c.getBssid().equals(BSSID)
+                && c.getSecurityMode() == 8L, "credentials held for the network request");
+        check(!c.toString().contains(KEY) && !c.toString().contains(SSID), "credentials never print");
+        check(s.tick(WirelessBootstrap.DEADLINE_MS * 10).isEmpty() && !s.getDone(), "link kept open past the W1 deadline");
+        check(s.received(new WirelessBootstrap.Frame(WirelessBootstrap.PING_REQUEST, new byte[] {0x08, 0x01}), 60_000).size() == 1,
+                "pings still answered during the session");
+        s.send(new WirelessBootstrap.Frame(WirelessBootstrap.CONNECT_STATUS, WB.connectStatus(0, null)), 61_000);
+        s.note(61_000, "tcp connected after 120ms");
+        s.closed(900_000, "end of stream");
+        check(s.getDone(), "closed ends it");
+        WirelessBootstrap.W2Summary w2 = new WirelessBootstrap.W2Summary("available", 3400L, "connected", 120L, 7L, "session ended: IO_ERROR", "session_started");
+        String text = WB.report(AT, "0.4.5-lab", 37, 0x0408, 269L, null, s, w2);
+        line(text, "[wireless_connect]");
+        line(text, "probe=w2_connect");
+        line(text, "start_endpoint=192.168.100.1:30515");
+        line(text, "network_request=available");
+        line(text, "tcp_connect_ms=120");
+        line(text, "session_generation=7");
+        line(text, "outcome=session_started");
+        line(text, "attempt_complete=true");
+        check(text.contains("out 7 WifiStartResponse len=2 fields=3=0"), "start response recorded");
+        check(text.contains("out 6 WifiConnectStatus len=2 fields=1=0"), "connect status recorded");
+        check(text.contains("tcp connected after 120ms"), "link note recorded");
+        secretsAbsent(text);
+        check(!text.contains(DEVICE_ID), "device id not in the W2 report");
+        // While running, the W2 report is not yet complete.
+        WirelessBootstrap.W2Summary running = new WirelessBootstrap.W2Summary("requested", null, "not_attempted", null, null, null, null);
+        line(WB.report(AT, "0.4.5-lab", 37, 0x0408, 269L, null, s, running), "attempt_complete=false");
+        // W1 (read mode) never sends a WifiStartResponse.
+        WirelessBootstrap.Session r = session();
+        check(r.received(frame(1, new Proto().str(1, "192.168.100.1").num(2, 30515)), 10).stream()
+                .noneMatch(f -> f.getId() == WirelessBootstrap.START_RESPONSE), "W1 sends no start response");
     }
 
     private static void ping() {
