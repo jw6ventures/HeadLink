@@ -91,9 +91,58 @@ The report could say whether a VPN covers the app: `ConnectivityManager` can rep
 status line could tell the operator to exclude the app. This is diagnostic only and doesn't
 help the connection.
 
-## Run 2 (15 October): it projects
+## Run 2 (15 October, evening): it projects
 
-With OpenAutoAndroid excluded from the VPN, James: "Other than a hiccup right when it first
-started, it worked beautifully." **Wireless projection works on SYNC 4.0.** This is on
-James's word. The reports aren't exported yet, so the hiccup, whether Android prompted again,
-and A2DP during the session are still to be read from them.
+With OpenAutoAndroid excluded from the VPN, wireless projection works on SYNC 4.0. James:
+"damn near perfect. Smooth scrolling", apart from what "looks like it crashed/disconnected,
+but only once right after connection". Two attempts, each preceded by a W0:
+
+| | Session 1 | Session 2 |
+| --- | --- | --- |
+| Reports | link `a7053619`, session `2ea3281e` | link `acc04557`, session `b5cbfdd2` |
+| SYNC's start request after our reply | 50 ms | 146 ms |
+| Wi-Fi available | 4,789 ms | 3,266 ms |
+| TCP connect | 18 ms | 98 ms |
+| Version → projecting | 0.9 s | 1.4 s |
+| Projected | 74 s | 85 s, 1,949 touches, 516 map moves, 11 zoom presses |
+| Ended | SYNC asked to shut down, reason 1 (`USER_SELECTION`); Bluetooth stayed up | Same, then the RFCOMM link, HFP and A2DP dropped: the truck was turned off |
+| `video restarted: 5 congestion episodes within 10000 ms` | +5.8 s | +5.9 s |
+| `video_timeline` | `0:3001/64/11/469/3/1, 1:639/14/4/161/3/0` | `0:1869/69/33/1470/23/1, 1:1323/24/1/36/1/0` |
+| Restarts held by the 1-minute cooldown | 1 | 5 |
+| Largest video unit | 205 KB | 508 KB |
+
+Timeline fields: minute:frames/keyframes/episodes/dropped/keyframe requests/restarts.
+
+**The "crash" is the congestion restart.** Both sessions hit five congestion episodes within
+about 4 s of the first keyframe, so the congestion restart (spec §8.2, added 11 October) stopped
+and restarted the video. That's the blink James saw. It also answers the question left open
+by the congestion work: **SYNC accepts a stop and start sent by the phone while it holds
+focus, and comes back to the projection.**
+
+**The restart didn't help here.** In both sessions the episodes carried on after it, enough
+to reach the five-in-ten-seconds trigger again 1 and 5 times within the cooldown. Then they
+faded on their own: the second minute was nearly clean. James noticed none of that, so on
+wireless the episodes are cheap to ride out and the restart is the expensive part.
+
+**Wired doesn't do this.** The wired session on the same build (`4eceef89`, 21:45, 31 minutes)
+had 1 episode in its first minute, 9 in total, and no restart. Wireless congestion is
+concentrated in the first minute, probably while the new Wi-Fi link and TCP connection settle;
+the reports can't say more, because they have no per-second detail or ack timings.
+
+**Audio:** HFP and A2DP stayed connected through both sessions; the only drops came when the
+truck was turned off at the end of session 2. Whether music actually played through the truck
+during projection isn't recorded in the reports.
+
+**Wired after W2:** `4eceef89` started on its own and projected for 31 minutes on this build.
+
+**The Wi-Fi details again matched** `h:d087e137b0b0` / `h:6b1b2ce98f52`.
+
+## Next
+
+1. **Decide what the congestion restart does on wireless.** The obvious change is to leave it
+   off for wireless sessions and keep the per-episode keyframe recovery. That needs a spec §8.2
+   amendment. A quick test needs no build: clear the Diagnostics congestion-restart box (it
+   applies to wired too) and connect wirelessly. The blink should go, leaving at most a few
+   brief smears in the first minute.
+2. Optionally, add per-second episode counts and ack latency for the first minute, to see
+   whether the Wi-Fi link or SYNC is slow to acknowledge.
