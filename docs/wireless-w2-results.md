@@ -146,7 +146,9 @@ cleanly than a wired one.
 
 ## Next
 
-1. **Decide what the congestion restart does on wireless.** The obvious change is to leave it
+1. **Congestion restart on wireless: kept as is (James, 15 October).** It recovers, and he'd
+   rather have it than not. Revisit if the startup blink becomes a nuisance. The option
+   considered was: The obvious change is to leave it
    off for wireless sessions and keep the per-episode keyframe recovery. That needs a spec §8.2
    amendment. A quick test needs no build: clear the Diagnostics congestion-restart box (it
    applies to wired too) and connect wirelessly. The blink should go, leaving at most a few
