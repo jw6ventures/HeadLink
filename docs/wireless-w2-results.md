@@ -90,3 +90,10 @@ The report could say whether a VPN covers the app: `ConnectivityManager` can rep
 `TRANSPORT_VPN` on the active network with the permission the app already has. On `EPERM`, the
 status line could tell the operator to exclude the app. This is diagnostic only and doesn't
 help the connection.
+
+## Run 2 (15 October): it projects
+
+With OpenAutoAndroid excluded from the VPN, James: "Other than a hiccup right when it first
+started, it worked beautifully." **Wireless projection works on SYNC 4.0.** This is on
+James's word. The reports aren't exported yet, so the hiccup, whether Android prompted again,
+and A2DP during the session are still to be read from them.
