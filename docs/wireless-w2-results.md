@@ -105,7 +105,7 @@ but only once right after connection". Two attempts, each preceded by a W0:
 | TCP connect | 18 ms | 98 ms |
 | Version → projecting | 0.9 s | 1.4 s |
 | Projected | 74 s | 85 s, 1,949 touches, 516 map moves, 11 zoom presses |
-| Ended | SYNC asked to shut down, reason 1 (`USER_SELECTION`); Bluetooth stayed up | Same, then the RFCOMM link, HFP and A2DP dropped: the truck was turned off |
+| Ended | Orderly power-down: SYNC asked to shut down, reason 1 (`USER_SELECTION`) | Engine off, then door opened: same request, then the RFCOMM link, HFP and A2DP dropped |
 | `video restarted: 5 congestion episodes within 10000 ms` | +5.8 s | +5.9 s |
 | `video_timeline` | `0:3001/64/11/469/3/1, 1:639/14/4/161/3/0` | `0:1869/69/33/1470/23/1, 1:1323/24/1/36/1/0` |
 | Restarts held by the 1-minute cooldown | 1 | 5 |
@@ -129,9 +129,16 @@ had 1 episode in its first minute, 9 in total, and no restart. Wireless congesti
 concentrated in the first minute, probably while the new Wi-Fi link and TCP connection settle;
 the reports can't say more, because they have no per-second detail or ack timings.
 
-**Audio:** HFP and A2DP stayed connected through both sessions; the only drops came when the
-truck was turned off at the end of session 2. Whether music actually played through the truck
-during projection isn't recorded in the reports.
+**Audio: music plays through the truck over A2DP while projecting wirelessly.** James: "It
+worked perfectly." HFP and A2DP stayed connected through both sessions, and the only drops came
+when the truck was turned off at the end of session 2. This was the big unknown of the
+wireless investigation, and A2DP stays the audio route (spec's accepted route, 22 September).
+
+**How the sessions ended.** Session 1: James powered the truck down the orderly way. Session 2:
+engine off with the phone connected, then the head unit shut off when a door opened. **Both
+times SYNC sent a clean shutdown request (reason 1, `USER_SELECTION`) before going.** Over USB
+the same power-off shows up as `I/O error (os error 5)`, so a wireless session ends more
+cleanly than a wired one.
 
 **Wired after W2:** `4eceef89` started on its own and projected for 31 minutes on this build.
 
