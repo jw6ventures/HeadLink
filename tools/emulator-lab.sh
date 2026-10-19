@@ -318,6 +318,10 @@ cd "$(dirname "$0")/.."
 . tools/podman-env.sh
 EMULATOR_IMAGE=localhost/openauto-emulator:smoke
 RECEIVER_IMAGE=localhost/openauto-lab-receiver:p4
+# LAB_WIRELESS_TCP=10.0.2.2:5288 runs the attempt through W2's wireless transport instead of
+# the adb-reversed local socket: WirelessLink opens TCP to the receiver on the pod loopback
+# (the emulator's 10.0.2.2) and the service runs the session over it. There is no Bluetooth
+# bootstrap and no Wi-Fi join in the emulator; this checks the transport and its cleanup.
 SCRIPT=${1:-$(if [ -n "${LAB_TRAFFIC:-}" ]; then echo traffic; elif [ -n "${LAB_WEATHER:-}" ]; then echo weather; else echo taps; fi)}
 # P9: which traffic run, and how the offer divides the turn card.
 TRAFFIC_MODE=${LAB_TRAFFIC:-offer}
@@ -657,7 +661,7 @@ podman run --rm --pod "$pod" --name "$name" --security-opt label=disable \
   -e GUIDE_DEST="${LAB_GUIDE_DEST:-$(if [ "$REGION" = austin ]; then echo 30.28490,-97.73410; elif [ "$SCRIPT" = traffic ]; then echo 42.35510,-71.06560; else echo 42.44950,-71.23100; fi)}" \
   -e RD5_TILE="$RD5_TILE" -e POI_AHEAD="$POI_AHEAD" \
   -e LAB_FAVORITES="${LAB_FAVORITES:-}" -e LAB_RECENT="${LAB_RECENT:-}" -e LAB_SCREENS="${LAB_SCREENS:-}" \
-  -e LAB_REORDER="${LAB_REORDER:-}" \
+  -e LAB_REORDER="${LAB_REORDER:-}" -e LAB_WIRELESS_TCP="${LAB_WIRELESS_TCP:-}" \
   -e MAPS_EXPECTED="$([ -n "${LAB_MAP_EXTRA:-}" ] && echo 2 || echo 1)" \
   -e CALL_ROUTE="$CALL_ROUTE" -e MODEM="$MODEM" -e SPEECH_ENGINE="$SPEECH_ENGINE" \
   -e TRAFFIC_MODE="$TRAFFIC_MODE" -e OFFER_LAYOUT="$OFFER_LAYOUT" -e TRAFFIC_KEY="$TRAFFIC_KEY" \
@@ -667,12 +671,17 @@ podman run --rm --pod "$pod" --name "$name" --security-opt label=disable \
   $LAB_DATA_MOUNTS -v "$out:/out" "$EMULATOR_IMAGE" sh -eu -c '
     package=org.openautoandroid.source
     log() { echo "emulator-lab: $*"; }
+    # The newest *session* report. Wireless probe and link reports share the folder and
+    # can start in the same second as a session, when the name alone no longer orders them.
+    session_report() {
+        adb shell run-as $package grep -rl "^report_format=" files/reports 2>/dev/null | tr -d "\r" | sed "s|.*/||" | sort | tail -n 1
+    }
     fail() {
         echo "emulator-lab: FAIL $*" >&2
         timeout 20 adb logcat -d > /out/logcat.txt 2>&1 || true
         # The saved report says why the app gave up, which logcat does not: this source
         # records its reasons in the report rather than in the system log.
-        last=$(adb shell run-as $package ls files/reports 2>/dev/null | tr -d "\r" | sort | tail -n 1)
+        last=$(session_report)
         [ -n "$last" ] && adb exec-out run-as $package cat "files/reports/$last" > /out/app-report.txt 2>/dev/null
         exit 1
     }
@@ -906,6 +915,7 @@ with zipfile.ZipFile(sys.argv[1], \"a\") as apk:
     # The lab transport is a debug-build intent extra; a vehicle attempt never uses it.
     adb shell am start -n $package/.ConnectionActivity \
         --es lab_socket openauto-lab --es lab_stop_after projection \
+        ${LAB_WIRELESS_TCP:+--es lab_wireless_tcp $LAB_WIRELESS_TCP} \
         --ez lab_software_encoder "$SOFTWARE_ENCODER" \
         --ez lab_audio "$([ "$AUDIO" = 1 ] && echo true || echo false)" \
         --ez lab_navigation "$([ "$NAVIGATION" = 1 ] && echo true || echo false)" \
@@ -931,7 +941,7 @@ with zipfile.ZipFile(sys.argv[1], \"a\") as apk:
     # seen even if it has already passed by the next poll; the [attempt] section holds
     # the current stage as a line of its own, "stage=X" and nothing else.
     report() {
-        latest=$(adb shell run-as $package ls files/reports 2>/dev/null | tr -d "\r" | sort | tail -n 1)
+        latest=$(session_report)
         [ -n "$latest" ] || return 0
         adb exec-out run-as $package cat "files/reports/$latest" 2>/dev/null || true
     }
@@ -1520,15 +1530,43 @@ https://osmand.net/map?pin=30.50860,-97.67880#16/30.50860/-97.67880"
         sleep 1
     done
     adb exec-out screencap -p > /out/after.png
-    name=$(adb shell run-as $package ls files/reports | tr -d "\r" | sort | tail -n 1)
+    name=$(session_report)
     [ -n "$name" ] || fail "no saved report"
     adb exec-out run-as $package cat "files/reports/$name" > /out/app-report.txt
     [ -n "$idle" ] || fail "the attempt did not finish"
 
-    for line in attempt_complete=true stop_after=projection transport=lab-socket:openauto-lab \
+    transport=lab-socket:openauto-lab
+    [ -n "$LAB_WIRELESS_TCP" ] && transport=wireless
+    for line in attempt_complete=true stop_after=projection transport=$transport \
         last_completed=projecting; do
         grep -qx "$line" /out/app-report.txt || fail "app report lacks $line"
     done
+    # W2: the link report, which must show the TCP connection, the session it started and
+    # the link ended by that session ending (WirelessLink, ProjectionService.onReleased).
+    if [ -n "$LAB_WIRELESS_TCP" ]; then
+        for name in $(adb shell run-as $package ls files/reports | tr -d "\r"); do
+            adb exec-out run-as $package cat "files/reports/$name" > /out/candidate.txt
+            if grep -qx "\[wireless_connect\]" /out/candidate.txt; then mv /out/candidate.txt /out/wireless-report.txt; fi
+        done
+        rm -f /out/candidate.txt
+        [ -f /out/wireless-report.txt ] || fail "no wireless_connect report"
+        for line in tcp_connect=connected outcome=session_started attempt_complete=true; do
+            grep -qx "$line" /out/wireless-report.txt || fail "wireless report lacks $line"
+        done
+        grep -q "^ended=session ended: " /out/wireless-report.txt || fail "the wireless link did not end with the session"
+        log "wireless transport: $(grep -E "^(tcp_connect_ms|ended)=" /out/wireless-report.txt | tr "\n" " ")"
+        # The keep-awake (spec 5.2): on by default, its socket opened, and echoes sent to the
+        # receiver address. Replies depend on ICMP support in the emulator, so are logged only.
+        grep -qx "keep_awake=on interval_ms=50" /out/wireless-report.txt || fail "the keep-awake did not run"
+        grep -qx "keep_awake_error=none" /out/wireless-report.txt \
+            || fail "the keep-awake failed: $(grep "^keep_awake_error=" /out/wireless-report.txt)"
+        echoes=0
+        for sent in $(sed -n "s/^keep_awake_screen_o[nf]*=sent=\([0-9][0-9]*\) .*/\1/p" /out/wireless-report.txt); do
+            echoes=$((echoes + sent))
+        done
+        [ "$echoes" -ge 20 ] || fail "the keep-awake sent only $echoes echoes"
+        log "keep-awake: $(grep -E "^keep_awake_(screen_on|screen_off|send_failures)=" /out/wireless-report.txt | tr "\n" " ")"
+    fi
     # P6.1: the source own account of the drive, beside the receiver own picture-side
     # check. Both are needed: the receiver can see that the pane moved but not why, and
     # these counters can say the camera moved but not that anything was drawn with it.

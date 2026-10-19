@@ -77,6 +77,44 @@
          could declare this permission name if Breezy were not installed. -->
     <uses-permission android:name="org.breezyweather.READ_PROVIDER" />
 
+    <!-- W0: the wireless probe (docs/wireless-investigation.md, spec.md 5.2 as amended
+         14 October 2026). A runtime grant (Nearby devices), asked for only when the
+         operator opens Diagnostics, Wireless probe; nothing else in the app touches
+         Bluetooth. With it the probe lists paired devices and asks the one picked which
+         services it offers (one SDP query). After an advertised verdict, and only on a
+         second tap, W1 opens one RFCOMM connection to that service, reads the head unit's
+         wireless setup and closes; it joins no network. Neither report carries a device
+         name or address, and W1's keeps no Wi-Fi key (spec.md 5.2, the W1 amendment). -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+    <!-- W2: wireless projection (docs/wireless-investigation.md, spec.md 5.2, the W2
+         amendment). A normal, install-time permission for one thing: the local-only
+         network request for the head unit's own Wi-Fi, which Android confirms with the
+         operator once. Nothing else in the app requests a network. -->
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+
+    <!-- W3: start wireless projection when the truck connects over Bluetooth
+         (docs/wireless-w3-procedure.md, spec.md 5.2, the W3 amendment). Both are normal,
+         install-time permissions and do nothing on their own: they apply only once the
+         operator has linked the app to the truck through Android's companion-device dialog
+         (Settings, Link the truck for wireless), and stop applying when that
+         link is removed. The first lets Android wake WirelessCompanionService when the
+         linked truck connects; the second lets the app, so woken, start its foreground
+         services with no screen showing. -->
+    <uses-permission android:name="android.permission.REQUEST_OBSERVE_COMPANION_DEVICE_PRESENCE" />
+    <uses-permission android:name="android.permission.REQUEST_COMPANION_START_FOREGROUND_SERVICES_FROM_BACKGROUND" />
+    <uses-feature
+        android:name="android.software.companion_device_setup"
+        android:required="false" />
+
+    <!-- Wireless standby (docs/wireless-w3-procedure.md, spec.md 5.2, the standby
+         amendment). A normal, install-time permission. The app holds a partial wake lock
+         only while the linked truck's own start request (its Android Auto button) is being
+         set up, at most 90 s and released once the session starts, and for 5 s to answer
+         each Bluetooth frame from the truck while waiting for one, so a phone asleep in a
+         pocket still answers the button. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
     <!-- P7.5: the idle media pane lists player apps that can be resumed with no session
          left, through Android's media resumption (docs/p7-plan.md §5.5). This makes apps
          exporting a MediaBrowserService visible to this one. It is a package-visibility
@@ -154,6 +192,27 @@
             android:exported="false"
             android:label="@string/preview_title"
             android:process=":preview" />
+        <!-- W0's probe screen, opened from Diagnostics only: no launcher entry, not exported. -->
+        <activity
+            android:name=".WirelessProbeActivity"
+            android:exported="false"
+            android:label="@string/wireless_probe_label" />
+        <!-- W2/W3: the foreground while a wireless link sets up, until ProjectionService
+             takes over; see WirelessLinkService. -->
+        <service
+            android:name=".WirelessLinkService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
+        <!-- W3: bound by Android's companion-device service alone, which BIND_COMPANION_DEVICE_SERVICE
+             guarantees, when the linked truck connects; exported for that reason only. -->
+        <service
+            android:name=".WirelessCompanionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_COMPANION_DEVICE_SERVICE">
+            <intent-filter>
+                <action android:name="android.companion.CompanionDeviceService" />
+            </intent-filter>
+        </service>
         <service
             android:name=".ProjectionService"
             android:exported="false"

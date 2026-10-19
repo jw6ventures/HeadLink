@@ -175,8 +175,10 @@ class ProjectionService : Service() {
         }
         val usb = getSystemService(UsbManager::class.java)
         val lab = attempt.settings.labSocket
-        val accessory = if (lab == null) Accessories.current(usb, attempt.accessory) else null
-        if (lab == null && accessory == null) {
+        // W2: a wireless attempt arrives with its TCP connection already open (WirelessLink).
+        val wireless = attempt.settings.wireless
+        val accessory = if (lab == null && !wireless) Accessories.current(usb, attempt.accessory) else null
+        if (lab == null && !wireless && accessory == null) {
             SessionController.finish(attempt, "NO_ACCESSORY", "accessory no longer enumerated before open")
             return stopIfIdle()
         }
@@ -232,6 +234,17 @@ class ProjectionService : Service() {
                 return StartResult.Failed("USB_OPEN_FAILED", "lab socket $lab failed: $e")
             }
             labSocket = socket
+        } else if (attempt.settings.wireless) {
+            // The socket stays WirelessLink's; native gets a duplicate of its descriptor,
+            // like the accessory's, and WirelessLink closes the original when the session ends.
+            val socket = WirelessLink.socket()
+                ?: return StartResult.Failed("WIRELESS_NOT_CONNECTED", "no TCP connection to the head unit at open")
+            descriptor =
+                try {
+                    ParcelFileDescriptor.fromSocket(socket)
+                } catch (e: RuntimeException) {
+                    return StartResult.Failed("WIRELESS_NOT_CONNECTED", "fromSocket threw $e")
+                } ?: return StartResult.Failed("WIRELESS_NOT_CONNECTED", "the TCP socket has no descriptor")
         } else {
             if (accessory == null) {
                 return StartResult.Failed("NO_ACCESSORY", "no accessory at open")
@@ -938,6 +951,9 @@ class ProjectionService : Service() {
         }
         val category = report["final_category"] ?: "CANCELLED"
         val detail = report["final_detail"] ?: "native session released without a final report"
+        // Stopped from the phone (Home or the notification), a standby link waits for the button only.
+        val operator = session.stopRequested || session.shutdownRequested
+        if (session.attempt.settings.wireless) WirelessLink.sessionEnded(session.attempt.generation, "session ended: $category", operator)
         SessionController.finish(session.attempt, category, detail)
         stopIfIdle()
     }
@@ -1015,6 +1031,7 @@ class ProjectionService : Service() {
                     labSocket?.close()
                 }
             }
+            if (session.attempt.settings.wireless) WirelessLink.sessionEnded(session.attempt.generation, "service destroyed", operator = false)
             SessionController.finish(session.attempt, "CANCELLED", "service destroyed")
         }
         running = null

@@ -154,6 +154,22 @@
 #   miles and km with and without a name or a stop, the via point's release, and a report of
 #   counts only. ROUTING_SEGMENTS with W100_N30.rd5 and OBF_DIR with the Austin file add a real
 #   search north on I-35 toward Round Rock: gas in the corridor, BRouter's detours, timings.
+# * WirelessProbeTest: W0's wireless probe - the verdict for each way an SDP query can end,
+#   the UUID labels, and a report with no name or address that ends complete. The query,
+#   its broadcast and the Nearby devices prompt need a phone.
+# * WirelessBootstrapTest: W1's bootstrap read - framing across RFCOMM chunks, the protobuf
+#   reader, the redaction rule, and the session against scripted head units (start first,
+#   version first, endpoint only in the version request, pings, silence, a dropped socket),
+#   with no key, SSID, BSSID or VIN in the report. The socket and the truck need a phone.
+# * WirelessAutoStartTest: W3's start rule - every reason the linked truck connecting over
+#   Bluetooth does or does not start wireless projection, in order, across every combination.
+#   Android's companion-device wake-up and the link need a phone and the truck.
+# * WirelessKeepAwakeTest: the wireless keep-awake's bookkeeping - echo replies split by screen
+#   state, bucketed percentiles, and the Wi-Fi link readings with Android's unknowns skipped.
+#   The ICMP socket, the screen and the truck need a phone.
+# * WirelessStandbyTest: wireless standby's rules - the start reasons, which start requests
+#   start projection, the automatic-start loop guard and the reconnect pacing. The held
+#   RFCOMM link, the truck's button and the wake lock need a phone and the truck.
 # LabDrive.java and LabTraffic.java are compiled here but not run: they are generators run
 # by hand, the second writing the P9 lab's stand-in HERE scenarios and traffic drive
 # (tools/here-standin/, docs/p9-lab-results.md).
@@ -208,6 +224,11 @@ java -cp "$out:$classes:$stdlib" WeatherTest tools/breezy-standin/scenarios
 java -cp "$out:$classes:$stdlib" ObfTest "${OBF_DIR:-}"
 java -cp "$out:$classes:$stdlib" AddressSearchTest "${OBF_DIR:-}"
 java -cp "$out:$classes:$stdlib:$brouter" SearchAheadTest "${ROUTING_SEGMENTS:-}" "${OBF_DIR:-}"
+java -cp "$out:$classes:$stdlib" WirelessProbeTest
+java -cp "$out:$classes:$stdlib" WirelessBootstrapTest
+java -cp "$out:$classes:$stdlib" WirelessAutoStartTest
+java -cp "$out:$classes:$stdlib" WirelessKeepAwakeTest
+java -cp "$out:$classes:$stdlib" WirelessStandbyTest
 status=0
 java -Xcheck:jni --add-opens java.base/sun.nio.ch=ALL-UNNAMED -Djava.library.path=target/release \
     -cp "$out:$classes:$stdlib" JniContractTest > "$out/output.txt" 2>&1 || status=$?

@@ -14,9 +14,9 @@ line "minSdkVersion:'33'"
 line "targetSdkVersion:'36'"
 line "native-code: 'arm64-v8a'"
 # The spec §5.2 baseline plus P5.5's four optional dashboard grants. Still notably no
-# Bluetooth and no microphone. Each addition here is a deliberate, separately optional
-# integration that degrades without its grant (APP09); this list is the guard that makes
-# adding another a visible act.
+# microphone, and Bluetooth only for W0 below. Each addition here is a deliberate,
+# separately optional integration that degrades without its grant (APP09); this list is
+# the guard that makes adding another a visible act.
 # P7.9 adds MANAGE_ONGOING_CALLS (signature|appop; docs/p7-backends-results.md §4.2 amends
 # docs/p7-plan.md §9 item 3). Declaring it grants nothing: it takes effect only after
 # `adb shell appops set org.openautoandroid.source MANAGE_ONGOING_CALLS allow`, and even
@@ -28,9 +28,29 @@ line "native-code: 'arm64-v8a'"
 # P9 adds INTERNET for live traffic alone (APP10 as amended 28 September 2026,
 # docs/p9-plan.md §2): off by default, and no socket opens unless the operator turns it on
 # with their own HERE key (host-tested in TrafficClientTest; this script cannot see that).
+# W0 adds BLUETOOTH_CONNECT (spec §5.2 as amended 14 October 2026,
+# docs/wireless-investigation.md): the wireless probe's SDP query and, on a second tap
+# after an advertised verdict, W1's one RFCOMM bootstrap read; and W2's link below. Asked
+# for when the operator opens the probe from Diagnostics, or first taps Home's Connect
+# wirelessly (the 16 October 2026 amendment).
+# W2 adds CHANGE_NETWORK_STATE (normal; spec §5.2, the W2 amendment): the local-only
+# request for the head unit's own Wi-Fi, made only by a Connect wirelessly tap, on the
+# probe or on Home, or by W3's start below.
+# W3 adds REQUEST_OBSERVE_COMPANION_DEVICE_PRESENCE and
+# REQUEST_COMPANION_START_FOREGROUND_SERVICES_FROM_BACKGROUND (both normal; spec §5.2, the
+# W3 amendment): Android wakes the app when the truck it was linked to connects, and the
+# app may then start its foreground services. Both apply only while the operator has
+# linked the app to the truck through Android's companion-device dialog.
+# Standby adds WAKE_LOCK (normal; spec §5.2, the standby amendment): held only while the
+# linked truck's own start request sets up (at most 90 s), and 5 s per Bluetooth frame from
+# the truck while waiting for one.
 permissions=$(printf '%s\n' "$badging" | sed -n "s/^uses-permission: name='\([^']*\)'.*/\1/p" | LC_ALL=C sort | tr '\n' ' ')
-[ "$permissions" = "android.permission.ACCESS_COARSE_LOCATION android.permission.ACCESS_FINE_LOCATION android.permission.ACCESS_NETWORK_STATE android.permission.FOREGROUND_SERVICE android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE android.permission.INTERNET android.permission.MANAGE_ONGOING_CALLS android.permission.POST_NOTIFICATIONS android.permission.READ_PHONE_STATE org.breezyweather.READ_PROVIDER " ] \
+[ "$permissions" = "android.permission.ACCESS_COARSE_LOCATION android.permission.ACCESS_FINE_LOCATION android.permission.ACCESS_NETWORK_STATE android.permission.BLUETOOTH_CONNECT android.permission.CHANGE_NETWORK_STATE android.permission.FOREGROUND_SERVICE android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE android.permission.INTERNET android.permission.MANAGE_ONGOING_CALLS android.permission.POST_NOTIFICATIONS android.permission.READ_PHONE_STATE android.permission.REQUEST_COMPANION_START_FOREGROUND_SERVICES_FROM_BACKGROUND android.permission.REQUEST_OBSERVE_COMPANION_DEVICE_PRESENCE android.permission.WAKE_LOCK org.breezyweather.READ_PROVIDER " ] \
     || fail "unexpected permission set: $permissions"
+# One launcher entry, the main screen. The probe is reached from Diagnostics alone.
+[ "$(printf '%s\n' "$badging" | grep -c '^launchable-activity:')" = 1 ] || fail "launcher entry count"
+printf '%s\n' "$badging" | grep -q "^launchable-activity: name='org.openautoandroid.source.ConnectionActivity'" \
+    || fail "ConnectionActivity must be the launcher entry"
 
 printf '%s\n' "$badging" | grep -qx "  uses-feature: name='android.hardware.usb.accessory'" \
     || fail "required uses-feature android.hardware.usb.accessory"
@@ -41,6 +61,14 @@ manifest=$(aapt2 dump xmltree --file AndroidManifest.xml "$apk")
 # domain for Android 12's device transfer, which ignores allowBackup.
 printf '%s\n' "$manifest" | grep -q ':allowBackup([^)]*)=false\( \|$\)' || fail "allowBackup must be false"
 printf '%s\n' "$manifest" | grep -q ':dataExtractionRules(' || fail "dataExtractionRules missing"
+# W0's probe screen: declared, and not exported, so only this app opens it.
+probe=$(printf '%s\n' "$manifest" | awk '
+    /E: / && collecting { print line; collecting = 0; line = "" }
+    /E: activity / { collecting = 1 }
+    collecting { sub(/^ +/, ""); line = line " " $0 }
+    END { if (collecting) print line }
+' | grep '"org.openautoandroid.source.WirelessProbeActivity"') || fail "WirelessProbeActivity not declared"
+printf '%s\n' "$probe" | grep -q ':exported([^)]*)=false\( \|$\)' || fail "WirelessProbeActivity must not be exported"
 # Cleartext never in a release build. A debuggable build may carry the network security
 # config that lets live traffic reach the lab's stand-in server on the lab host (P9 §8).
 if printf '%s\n' "$manifest" | grep -q ':usesCleartextTraffic([^)]*)=true'; then
@@ -60,14 +88,31 @@ services=$(printf '%s\n' "$manifest" | awk '
     collecting { sub(/^ +/, ""); line = line " " $0 }
     END { if (collecting) print line }
 ')
-# Exactly three services, each pinned by name and by the attributes that make it safe.
+# Exactly five services, each pinned by name and by the attributes that make it safe.
 # Anything else appearing here is a packaging regression, not a detail.
-[ "$(printf '%s\n' "$services" | grep -c 'E: service ')" = 3 ] || fail "service count"
+[ "$(printf '%s\n' "$services" | grep -c 'E: service ')" = 5 ] || fail "service count"
 projection=$(printf '%s\n' "$services" | grep '"org.openautoandroid.source.ProjectionService"') \
     || fail "ProjectionService not declared"
 printf '%s\n' "$projection" | grep -q ':exported([^)]*)=false\( \|$\)' || fail "ProjectionService must not be exported"
 printf '%s\n' "$projection" | grep -q ':foregroundServiceType([^)]*)=0x00000010' \
     || fail "ProjectionService foregroundServiceType must be connectedDevice only"
+
+# W2/W3: the foreground while a wireless link sets up. Unexported, connectedDevice only.
+linking=$(printf '%s\n' "$services" | grep '"org.openautoandroid.source.WirelessLinkService"') \
+    || fail "WirelessLinkService not declared"
+printf '%s\n' "$linking" | grep -q ':exported([^)]*)=false\( \|$\)' || fail "WirelessLinkService must not be exported"
+printf '%s\n' "$linking" | grep -q ':foregroundServiceType([^)]*)=0x00000010' \
+    || fail "WirelessLinkService foregroundServiceType must be connectedDevice only"
+# W3: woken by Android's companion-device service alone. BIND_COMPANION_DEVICE_SERVICE
+# (signature) is what makes exporting it safe; it is bound, never started, so no type.
+companion=$(printf '%s\n' "$services" | grep '"org.openautoandroid.source.WirelessCompanionService"') \
+    || fail "WirelessCompanionService not declared"
+printf '%s\n' "$companion" | grep -q ':permission([^)]*)="android.permission.BIND_COMPANION_DEVICE_SERVICE"' \
+    || fail "WirelessCompanionService must be guarded by BIND_COMPANION_DEVICE_SERVICE"
+printf '%s\n' "$manifest" | grep -q '"android.companion.CompanionDeviceService"' || fail "WirelessCompanionService intent filter"
+if printf '%s\n' "$companion" | grep -q ':foregroundServiceType'; then
+    fail "WirelessCompanionService must not declare a foreground service type"
+fi
 
 # P5.1's notification listener. It is bound by the system and by nothing else: the
 # BIND_NOTIFICATION_LISTENER_SERVICE guard is what makes an unexported, callback-free

@@ -1,0 +1,523 @@
+// W1's wireless bootstrap read on a desktop JVM (docs/wireless-investigation.md): framing
+// across arbitrary RFCOMM chunks, the protobuf reader, the redaction rule, and the session
+// against scripted head units in the shapes the two head-unit-side projects describe -
+// WifiStartRequest first (WirelessAndroidAutoDongle), WifiVersionRequest first with head
+// unit details (aa-proxy-rs's MBUX traces), an endpoint only in the version request, pings,
+// and silence. Asserts that no key, SSID, BSSID or VIN reaches the report. The RFCOMM
+// socket and the truck's real messages need a phone and the truck.
+import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.util.List;
+import java.util.regex.Pattern;
+import org.openautoandroid.source.ReportStore;
+import org.openautoandroid.source.WirelessBootstrap;
+import org.openautoandroid.source.WirelessProbe;
+import org.openautoandroid.source.WirelessStandby;
+
+public final class WirelessBootstrapTest {
+    private static int passed;
+    private static final WirelessBootstrap WB = WirelessBootstrap.INSTANCE;
+    private static final Instant AT = Instant.parse("2026-10-15T15:04:05Z");
+    private static final byte[] SALT = "0123456789abcdef".getBytes(StandardCharsets.UTF_8);
+    private static final String KEY = "correct-horse-battery";
+    private static final String SSID = "SYNC-1A2B";
+    private static final String BSSID = "a6:5e:60:12:34:56";
+    private static final String VIN = "1FTFW1E50PFA12345";
+    private static final String DEVICE_ID = "0f8e2c1a-3b4d-4e5f-8a9b-0c1d2e3f4a5b";
+
+    public static void main(String[] args) {
+        framing();
+        protobuf();
+        redaction();
+        startFirst();
+        versionFirst();
+        versionOneZero();
+        versionEndpointOnly();
+        repeatedStart();
+        connectMode();
+        ping();
+        silent();
+        restart();
+        standby();
+        standbyDeadline();
+        rearm();
+        eventCap();
+        failures();
+        System.out.println("jni-host-test: ok " + passed + " wireless bootstrap checks");
+    }
+
+    // ---- protobuf helpers for scripting the head unit ----
+
+    private static void varint(ByteArrayOutputStream out, long value) {
+        while ((value & ~0x7fL) != 0) {
+            out.write((int) ((value & 0x7f) | 0x80));
+            value >>>= 7;
+        }
+        out.write((int) value);
+    }
+
+    private static final class Proto {
+        private final ByteArrayOutputStream out = new ByteArrayOutputStream();
+
+        Proto num(int field, long value) {
+            varint(out, ((long) field << 3));
+            varint(out, value);
+            return this;
+        }
+
+        Proto bytes(int field, byte[] value) {
+            varint(out, ((long) field << 3) | 2);
+            varint(out, value.length);
+            out.writeBytes(value);
+            return this;
+        }
+
+        Proto str(int field, String value) {
+            return bytes(field, value.getBytes(StandardCharsets.UTF_8));
+        }
+
+        Proto msg(int field, Proto value) {
+            return bytes(field, value.build());
+        }
+
+        byte[] build() {
+            return out.toByteArray();
+        }
+    }
+
+    private static WirelessBootstrap.Frame frame(int id, Proto payload) {
+        return new WirelessBootstrap.Frame(id, payload.build());
+    }
+
+    private static WirelessBootstrap.Session session() {
+        return new WirelessBootstrap.Session(new WirelessBootstrap.Redactor(SALT), DEVICE_ID);
+    }
+
+    private static Proto infoResponse() {
+        return new Proto().str(1, SSID).str(2, KEY).str(3, BSSID).num(4, 8).num(5, 1);
+    }
+
+    private static String report(WirelessBootstrap.Session s) {
+        return WB.report(AT, "0.4.5-lab", 37, 0x0408, 1234L, null, s);
+    }
+
+    // ---- checks ----
+
+    private static void framing() {
+        byte[] payload = new Proto().str(1, "192.168.1.1").num(2, 5288).build();
+        byte[] wire = WB.encode(new WirelessBootstrap.Frame(WirelessBootstrap.START_REQUEST, payload));
+        check(wire.length == payload.length + 4, "frame length");
+        check(wire[0] == 0 && wire[1] == payload.length && wire[2] == 0 && wire[3] == 1, "frame header big-endian");
+        // One byte at a time, as a slow RFCOMM read might deliver it.
+        WirelessBootstrap.Deframer d = new WirelessBootstrap.Deframer();
+        int frames = 0;
+        for (int i = 0; i < wire.length; i++) {
+            List<WirelessBootstrap.Frame> got = d.push(new byte[] {wire[i]}, 1);
+            frames += got.size();
+            if (!got.isEmpty()) {
+                check(got.get(0).getId() == 1, "deframed id");
+                check(java.util.Arrays.equals(got.get(0).getPayload(), payload), "deframed payload");
+            }
+        }
+        check(frames == 1 && d.pending() == 0, "one frame from single bytes");
+        // Two frames and a partial third in one read; the read buffer is longer than the data.
+        byte[] empty = WB.encode(new WirelessBootstrap.Frame(WirelessBootstrap.INFO_REQUEST, new byte[0]));
+        byte[] chunk = new byte[64];
+        System.arraycopy(wire, 0, chunk, 0, wire.length);
+        System.arraycopy(empty, 0, chunk, wire.length, empty.length);
+        System.arraycopy(wire, 0, chunk, wire.length + empty.length, 3);
+        List<WirelessBootstrap.Frame> got = d.push(chunk, wire.length + empty.length + 3);
+        check(got.size() == 2 && got.get(1).getId() == 2 && got.get(1).getPayload().length == 0, "two frames in one read");
+        check(d.pending() == 3, "partial third held back");
+    }
+
+    private static void protobuf() {
+        check(WB.fields(new byte[] {(byte) 0x08}) == null, "truncated varint is malformed");
+        check(WB.fields(new byte[] {0x0a, 0x05, 0x41}) == null, "overlong length is malformed");
+        check(WB.fields(new byte[0]).isEmpty(), "empty message has no fields");
+        WirelessBootstrap.Redactor r = new WirelessBootstrap.Redactor(SALT);
+        String dump = WB.dump(new Proto().num(1, 1).msg(4, new Proto().str(1, "Ford").str(4, VIN)).build(), r, 0);
+        check(dump.startsWith("1=1 4={1=\"Ford\" 4=h:"), "nested dump: " + dump);
+        check(!dump.contains(VIN), "VIN hashed in nested dump");
+        check(WB.dump(new byte[] {(byte) 0xff}, r, 0).equals("malformed len=1"), "malformed dump");
+        check(WB.dump(new byte[0], r, 0).equals("empty"), "empty dump");
+    }
+
+    private static void redaction() {
+        for (String yes : List.of(VIN, "4de17a00-52cb-11e6-bdf4-0800200c9a66", BSSID, "R58N12ABCDE", "356938035643809")) {
+            check(WB.looksIdentifying(yes), "identifying: " + yes);
+        }
+        for (String no : List.of("SYNC4_22198", "3.4.1", "Ford", "F-150", "2023", "SYNC 4", "192.168.1.1")) {
+            check(!WB.looksIdentifying(no), "not identifying: " + no);
+        }
+        WirelessBootstrap.Redactor a = new WirelessBootstrap.Redactor(SALT);
+        WirelessBootstrap.Redactor b = new WirelessBootstrap.Redactor("fedcba9876543210".getBytes(StandardCharsets.UTF_8));
+        check(a.hash(SSID).equals(a.hash(SSID)), "hash stable for one salt");
+        check(!a.hash(SSID).equals(b.hash(SSID)), "hash differs between salts");
+        check(a.hash(SSID).matches("h:[0-9a-f]{12}"), "hash shape");
+    }
+
+    /** WirelessAndroidAutoDongle's order: WifiStartRequest, our WifiInfoRequest, WifiInfoResponse. */
+    private static void startFirst() {
+        WirelessBootstrap.Session s = session();
+        check(s.tick(50).isEmpty(), "nothing to say before the head unit speaks");
+        List<WirelessBootstrap.Frame> out = s.received(frame(1, new Proto().str(1, "192.168.1.1").num(2, 5288)), 100);
+        check(out.size() == 1 && out.get(0).getId() == WirelessBootstrap.INFO_REQUEST && out.get(0).getPayload().length == 0,
+                "WifiStartRequest answered with an empty WifiInfoRequest");
+        check(s.received(frame(3, infoResponse()), 300).isEmpty(), "nothing sent after WifiInfoResponse");
+        check(s.tick(2000).isEmpty() && !s.getDone(), "lingers after WifiInfoResponse");
+        s.tick(2300);
+        check(s.getDone(), "done after lingering");
+        check(s.outcome() == WirelessBootstrap.Outcome.WIFI_DETAILS, "outcome wifi_details");
+        String text = report(s);
+        line(text, "start_endpoint=192.168.1.1:5288");
+        line(text, "wifi_ssid=" + new WirelessBootstrap.Redactor(SALT).hash(SSID));
+        line(text, "wifi_ssid_length=9");
+        line(text, "wifi_ssid_wifi_direct=false");
+        line(text, "wifi_bssid=" + new WirelessBootstrap.Redactor(SALT).hash(BSSID));
+        line(text, "wifi_bssid_locally_administered=true");
+        line(text, "wifi_key_length=" + KEY.length());
+        line(text, "wifi_security=wpa2_personal");
+        line(text, "wifi_ap_type=dynamic");
+        line(text, "wifi_other_fields=none");
+        line(text, "frames=in_WifiInfoResponse=1 in_WifiStartRequest=1 out_WifiInfoRequest=1");
+        line(text, "outcome=wifi_details");
+        secretsAbsent(text);
+        check(text.endsWith("attempt_complete=true\n"), "report ends complete");
+    }
+
+    /** aa-proxy-rs's MBUX shape: WifiVersionRequest with head unit details first. */
+    private static void versionFirst() {
+        WirelessBootstrap.Session s = session();
+        Proto hu = new Proto().str(1, "Ford").str(2, "F-150").str(3, "2023").str(4, VIN).str(6, "SYNC 4").str(8, "SYNC4_22198");
+        List<WirelessBootstrap.Frame> out = s.received(frame(4, new Proto().num(1, 1).num(2, 2).num(3, 149).msg(5, hu)), 40);
+        check(out.size() == 1 && out.get(0).getId() == WirelessBootstrap.VERSION_RESPONSE, "WifiVersionRequest answered");
+        byte[] expected = new Proto().num(1, 1).num(2, 2).str(3, "unknown").num(4, 0)
+                .msg(6, new Proto().str(1, DEVICE_ID).str(2, "UNKNOWN")).build();
+        check(java.util.Arrays.equals(out.get(0).getPayload(), expected),
+                "WifiVersionResponse in Android Auto 17.6's shape: 1.2 echoed, serial unknown, status 0, device info");
+        out = s.received(frame(1, new Proto().str(1, "192.168.4.1").num(2, 5288)), 500);
+        check(out.size() == 1 && out.get(0).getId() == WirelessBootstrap.INFO_REQUEST, "then WifiStartRequest answered");
+        s.received(frame(3, infoResponse()), 700);
+        s.tick(2800);
+        String text = report(s);
+        line(text, "hu_version=1.2");
+        line(text, "version_endpoint=none");
+        check(text.contains("\"Ford\"") && text.contains("\"SYNC4_22198\"") && text.contains("\"F-150\""), "head unit details readable");
+        check(text.contains("out 5 WifiVersionResponse len=" + expected.length + " fields=1=1 2=2 3=\"unknown\" 4=0 6={1=h:"),
+                "our version response recorded, device id hashed");
+        check(!text.contains(DEVICE_ID), "device id not in the report");
+        check(!text.contains(VIN), "VIN not in the report");
+        secretsAbsent(text);
+    }
+
+    /** Android Auto 17.6 adds device info only above version 1.0. */
+    private static void versionOneZero() {
+        WirelessBootstrap.Session s = session();
+        List<WirelessBootstrap.Frame> out = s.received(frame(4, new Proto().num(1, 1).num(2, 0)), 10);
+        byte[] expected = new Proto().num(1, 1).num(2, 0).str(3, "unknown").num(4, 0).build();
+        check(java.util.Arrays.equals(out.get(0).getPayload(), expected), "1.0: no device info");
+        // SYNC 4.0's own request, as W1 recorded it on 14 October 2026: 1.6, with frequencies.
+        WirelessBootstrap.Session sync = session();
+        out = sync.received(frame(4, new Proto().num(1, 1).num(2, 6).num(3, 0).num(4, 5180).num(4, 5745)
+                .msg(5, new Proto().str(1, "Ford").str(6, "SYNC 4.0"))), 292);
+        List<WirelessBootstrap.Field> fields = WB.fields(out.get(0).getPayload());
+        check(fields.size() == 5 && fields.get(0).getVarint() == 1 && fields.get(1).getVarint() == 6
+                && fields.get(4).getNumber() == 6, "SYNC 1.6 answered 1.6 with device info");
+        line(report(sync), "hu_version=1.6");
+    }
+
+    /** No WifiStartRequest: the endpoint only inside WifiVersionRequest, so we ask anyway after the wait. */
+    private static void versionEndpointOnly() {
+        WirelessBootstrap.Session s = session();
+        s.received(frame(4, new Proto().num(1, 1).num(2, 0).msg(5, new Proto().str(1, "10.0.0.1").num(2, 5000))), 100);
+        check(s.tick(100 + WirelessBootstrap.START_WAIT_MS - 1).isEmpty(), "waits for WifiStartRequest");
+        List<WirelessBootstrap.Frame> out = s.tick(100 + WirelessBootstrap.START_WAIT_MS);
+        check(out.size() == 1 && out.get(0).getId() == WirelessBootstrap.INFO_REQUEST, "asks after the wait");
+        s.tick(WirelessBootstrap.DEADLINE_MS);
+        check(s.getDone() && s.outcome() == WirelessBootstrap.Outcome.START_ONLY, "start_only without Wi-Fi details");
+        line(report(s), "version_endpoint=10.0.0.1:5000");
+    }
+
+    /** A head unit that repeats WifiStartRequest still gets at most INFO_ATTEMPTS WifiInfoRequests (spec 5.2, W1). */
+    private static void repeatedStart() {
+        WirelessBootstrap.Session s = session();
+        int asked = 0;
+        for (long t = 0; t <= WirelessBootstrap.DEADLINE_MS; t += 100) {
+            List<WirelessBootstrap.Frame> out = t % 1000 == 0
+                    ? s.received(frame(1, new Proto().str(1, "192.168.1.1").num(2, 5288)), t)
+                    : s.tick(t);
+            for (WirelessBootstrap.Frame f : out) if (f.getId() == WirelessBootstrap.INFO_REQUEST) asked++;
+        }
+        check(asked == WirelessBootstrap.INFO_ATTEMPTS, "capped WifiInfoRequests: " + asked);
+    }
+
+    /** W2's connect mode: 17.6's WifiStartResponse, credentials held, the link kept open. */
+    private static void connectMode() {
+        check(java.util.Arrays.equals(WB.startResponse(), new byte[] {0x18, 0x00}), "WifiStartResponse is status 0 in field 3");
+        check(java.util.Arrays.equals(WB.connectStatus(0, null), new byte[] {0x08, 0x00}), "WifiConnectStatus success");
+        check(java.util.Arrays.equals(WB.connectStatus(-3, "no"), new Proto().num(1, -3).str(2, "no").build()),
+                "WifiConnectStatus with a negative status and a message");
+        WirelessBootstrap.Session s = new WirelessBootstrap.Session(new WirelessBootstrap.Redactor(SALT), DEVICE_ID, true);
+        s.received(frame(4, new Proto().num(1, 1).num(2, 6)), 189);
+        List<WirelessBootstrap.Frame> out = s.received(frame(1, new Proto().str(1, "192.168.100.1").num(2, 30515).num(3, 1)), 4962);
+        check(out.size() == 2 && out.get(0).getId() == WirelessBootstrap.INFO_REQUEST
+                && out.get(1).getId() == WirelessBootstrap.START_RESPONSE, "start request answered with info request, then start response");
+        out = s.received(frame(1, new Proto().str(1, "192.168.100.1").num(2, 30515).num(3, 1)), 5000);
+        check(out.stream().noneMatch(f -> f.getId() == WirelessBootstrap.START_RESPONSE), "start response sent once");
+        s.received(frame(3, infoResponse()), 5020);
+        WirelessBootstrap.Credentials c = s.getCredentials();
+        check(c != null && c.getSsid().equals(SSID) && c.getKey().equals(KEY) && c.getBssid().equals(BSSID)
+                && c.getSecurityMode() == 8L, "credentials held for the network request");
+        check(!c.toString().contains(KEY) && !c.toString().contains(SSID), "credentials never print");
+        check(s.tick(WirelessBootstrap.DEADLINE_MS * 10).isEmpty() && !s.getDone(), "link kept open past the W1 deadline");
+        check(s.received(new WirelessBootstrap.Frame(WirelessBootstrap.PING_REQUEST, new byte[] {0x08, 0x01}), 60_000).size() == 1,
+                "pings still answered during the session");
+        s.send(new WirelessBootstrap.Frame(WirelessBootstrap.CONNECT_STATUS, WB.connectStatus(0, null)), 61_000);
+        s.note(61_000, "tcp connected after 120ms");
+        s.closed(900_000, "end of stream");
+        check(s.getDone(), "closed ends it");
+        WirelessBootstrap.W2Summary w2 = new WirelessBootstrap.W2Summary("available", 3400L, "connected", 120L, 7L, "session ended: IO_ERROR", "session_started");
+        String text = WB.report(AT, "0.4.5-lab", 37, 0x0408, 269L, null, s, w2);
+        line(text, "[wireless_connect]");
+        line(text, "probe=w2_connect");
+        line(text, "start_endpoint=192.168.100.1:30515");
+        line(text, "network_request=available");
+        line(text, "tcp_connect_ms=120");
+        line(text, "session_generation=7");
+        line(text, "outcome=session_started");
+        line(text, "attempt_complete=true");
+        check(text.contains("out 7 WifiStartResponse len=2 fields=3=0"), "start response recorded");
+        check(text.contains("out 6 WifiConnectStatus len=2 fields=1=0"), "connect status recorded");
+        check(text.contains("tcp connected after 120ms"), "link note recorded");
+        secretsAbsent(text);
+        check(!text.contains(DEVICE_ID), "device id not in the W2 report");
+        // While running, the W2 report is not yet complete.
+        WirelessBootstrap.W2Summary running = new WirelessBootstrap.W2Summary("requested", null, "not_attempted", null, null, null, null);
+        line(WB.report(AT, "0.4.5-lab", 37, 0x0408, 269L, null, s, running), "attempt_complete=false");
+        // W1 (read mode) never sends a WifiStartResponse.
+        WirelessBootstrap.Session r = session();
+        check(r.received(frame(1, new Proto().str(1, "192.168.100.1").num(2, 30515)), 10).stream()
+                .noneMatch(f -> f.getId() == WirelessBootstrap.START_RESPONSE), "W1 sends no start response");
+    }
+
+    private static void ping() {
+        WirelessBootstrap.Session s = session();
+        byte[] payload = new Proto().num(1, 1_760_000_000_000L).build();
+        List<WirelessBootstrap.Frame> out = s.received(new WirelessBootstrap.Frame(WirelessBootstrap.PING_REQUEST, payload), 10);
+        check(out.size() == 1 && out.get(0).getId() == WirelessBootstrap.PING_RESPONSE
+                && java.util.Arrays.equals(out.get(0).getPayload(), payload), "ping echoed");
+        check(s.outcome() == WirelessBootstrap.Outcome.TALKED, "a ping alone is talked");
+    }
+
+    /** A head unit that says nothing: one nudge at 5 s, two retries, then the deadline. */
+    private static void silent() {
+        WirelessBootstrap.Session s = session();
+        int asked = 0;
+        for (long t = 0; t <= WirelessBootstrap.DEADLINE_MS; t += 100) {
+            for (WirelessBootstrap.Frame f : s.tick(t)) {
+                check(f.getId() == WirelessBootstrap.INFO_REQUEST, "only WifiInfoRequest when silent");
+                asked++;
+            }
+        }
+        check(asked == WirelessBootstrap.INFO_ATTEMPTS, "nudge plus retries: " + asked);
+        check(s.getDone() && s.outcome() == WirelessBootstrap.Outcome.SILENT, "silent outcome");
+        String text = report(s);
+        check(text.contains("nudge: nothing received"), "nudge recorded");
+        line(text, "outcome=silent");
+    }
+
+    /**
+     * W3's start over (truck runs 3 and 4): SYNC goes quiet after the version reply, the
+     * link reconnects, and the second conversation gets its own nudge and deadline, keeps
+     * the first one's events, and can still reach the Wi-Fi details.
+     */
+    private static void restart() {
+        WirelessBootstrap.Session s = new WirelessBootstrap.Session(new WirelessBootstrap.Redactor(SALT), DEVICE_ID, true);
+        s.received(frame(4, new Proto().num(1, 1).num(2, 6)), 223);
+        for (long t = 300; t <= WirelessBootstrap.DEADLINE_MS; t += 100) s.tick(t);
+        check(s.getDone() && s.outcome() == WirelessBootstrap.Outcome.TALKED, "quiet after the version reply: talked");
+        long again = 35_000;
+        s.restart(again);
+        check(!s.getDone() && s.outcome() == WirelessBootstrap.Outcome.SILENT, "start over clears the conversation");
+        check(s.tick(again + 100).isEmpty(), "no deadline straight after starting over");
+        check(s.tick(again + WirelessBootstrap.NUDGE_MS - 1).isEmpty(), "nudge counts from the new connection");
+        List<WirelessBootstrap.Frame> nudge = s.tick(again + WirelessBootstrap.NUDGE_MS);
+        check(nudge.size() == 1 && nudge.get(0).getId() == WirelessBootstrap.INFO_REQUEST, "nudged again on the new connection");
+        long v = again + WirelessBootstrap.NUDGE_MS + 200;
+        List<WirelessBootstrap.Frame> out = s.received(frame(4, new Proto().num(1, 1).num(2, 6)), v);
+        check(out.size() == 1 && out.get(0).getId() == WirelessBootstrap.VERSION_RESPONSE, "version answered again");
+        out = s.received(frame(1, new Proto().str(1, "192.168.100.1").num(2, 30515).num(3, 2)), v + 30);
+        check(out.stream().anyMatch(f -> f.getId() == WirelessBootstrap.START_RESPONSE), "start response sent on the new connection");
+        s.received(frame(3, infoResponse()), v + 50);
+        check(s.getCredentials() != null && s.outcome() == WirelessBootstrap.Outcome.WIFI_DETAILS, "Wi-Fi details after starting over");
+        check(s.tick(again + WirelessBootstrap.DEADLINE_MS * 2).isEmpty() && !s.getDone(), "held open once the details arrived");
+        String text = WB.report(AT, "0.4.5-lab", 37, 0x0408, 91L, null, s,
+                new WirelessBootstrap.W2Summary("requested", null, "not_attempted", null, null, null, null));
+        check(text.contains("+223ms in 4 WifiVersionRequest") && text.contains("done: deadline"), "first conversation kept in the events");
+        line(text, "frames=in_WifiInfoResponse=1 in_WifiStartRequest=1 in_WifiVersionRequest=2 out_WifiInfoRequest=5 out_WifiStartResponse=1 out_WifiVersionResponse=2");
+        secretsAbsent(text);
+    }
+
+    private static WirelessBootstrap.Session connectSession() {
+        return new WirelessBootstrap.Session(new WirelessBootstrap.Redactor(SALT), DEVICE_ID, true);
+    }
+
+    private static Proto startRequest(long reason) {
+        return new Proto().str(1, "192.168.100.1").num(2, 30515).num(3, reason);
+    }
+
+    /**
+     * Standby (spec 5.2, the standby amendment): after the version reply the conversation
+     * sends nothing unprompted and never times out; the head unit's own start is held while
+     * automatic starts are off, and the button's start goes on as any other.
+     */
+    private static void standby() {
+        WirelessBootstrap.Session s = connectSession();
+        s.standBy(0, false);
+        check(s.getWaiting(), "waiting");
+        List<WirelessBootstrap.Frame> out = s.received(frame(4, new Proto().num(1, 1).num(2, 6)), 190);
+        check(out.size() == 1 && out.get(0).getId() == WirelessBootstrap.VERSION_RESPONSE, "version still answered");
+        int sent = 0;
+        for (long t = 200; t <= 10 * 60_000L; t += 100) sent += s.tick(t).size();
+        check(sent == 0, "nothing sent unprompted while waiting: " + sent);
+        check(!s.getDone() && s.getWaiting(), "no deadline while waiting");
+        check(s.received(new WirelessBootstrap.Frame(WirelessBootstrap.PING_REQUEST, new byte[] {0x08, 0x01}), 600_100).size() == 1,
+                "pings answered while waiting");
+        s.setAcceptAuto(false);
+        out = s.received(frame(1, startRequest(WirelessStandby.REASON_AUTO_LAUNCH)), 600_200);
+        check(out.isEmpty() && s.getWaiting() && s.getStart() == null, "auto-launch held: nothing answered, still waiting");
+        out = s.received(frame(1, startRequest(WirelessStandby.REASON_AUTOMATIC_RESTART)), 600_300);
+        check(out.isEmpty() && s.getStartsHeld() == 2, "a restart is held too");
+        check(s.tick(600_400 + WirelessBootstrap.DEADLINE_MS).isEmpty() && !s.getDone(), "a held start starts no deadline");
+        out = s.received(frame(1, startRequest(WirelessStandby.REASON_USER_REQUEST)), 700_000);
+        check(!s.getWaiting() && s.getStartsAccepted() == 1, "the button's start is accepted");
+        check(out.size() == 2 && out.get(0).getId() == WirelessBootstrap.INFO_REQUEST
+                && out.get(1).getId() == WirelessBootstrap.START_RESPONSE, "and answered as any start is");
+        // From acceptance on, the usual retries and deadline, counted from the start request.
+        int asked = 0;
+        for (long t = 700_100; t < 700_000 + WirelessBootstrap.DEADLINE_MS; t += 100) {
+            for (WirelessBootstrap.Frame f : s.tick(t)) if (f.getId() == WirelessBootstrap.INFO_REQUEST) asked++;
+        }
+        check(asked == WirelessBootstrap.INFO_ATTEMPTS - 1 && !s.getDone(), "info retried after acceptance: " + asked);
+        s.received(frame(3, infoResponse()), 715_000);
+        check(s.getCredentials() != null, "Wi-Fi details after the button");
+        String text = WB.report(AT, "0.4.5-lab", 37, 0x0408, 91L, null, s,
+                new WirelessBootstrap.W2Summary("requested", null, "not_attempted", null, null, null, null));
+        line(text, "start_reason=user_request");
+        line(text, "starts_accepted=1");
+        line(text, "starts_held=2");
+        check(text.contains("held: start request reason auto_launch") && text.contains("accepted: start request reason user_request"),
+                "held and accepted starts in the events");
+        check(text.contains("standby: waiting for the head unit's start request"), "the wait in the events");
+        secretsAbsent(text);
+        // Automatic starts taken: the head unit's own start goes straight through.
+        WirelessBootstrap.Session a = connectSession();
+        a.standBy(0, false);
+        out = a.received(frame(1, startRequest(WirelessStandby.REASON_AUTO_LAUNCH)), 50);
+        check(!a.getWaiting() && out.size() == 2, "auto-launch accepted when automatic starts are taken");
+        // A start without field 3 counts as the button.
+        WirelessBootstrap.Session n = connectSession();
+        n.standBy(0, false);
+        n.setAcceptAuto(false);
+        n.received(frame(1, new Proto().str(1, "192.168.100.1").num(2, 30515)), 50);
+        check(!n.getWaiting(), "a start without a reason is accepted");
+        check(WB.startReason(startRequest(2).build()) == 2L && WB.startReason(new Proto().num(1, 5).build()) == null, "reason read from field 3");
+        // Not standing by, every start is taken, as before.
+        WirelessBootstrap.Session plain = connectSession();
+        plain.setAcceptAuto(false);
+        check(plain.received(frame(1, startRequest(1)), 10).size() == 2 && plain.getStartsAccepted() == 1,
+                "without standby the reason changes nothing");
+    }
+
+    /** An automatic start's first waits still end at the deadline, so the link can try a new connection. */
+    private static void standbyDeadline() {
+        WirelessBootstrap.Session s = connectSession();
+        s.standBy(0, true);
+        s.received(frame(4, new Proto().num(1, 1).num(2, 6)), 223);
+        int sent = 0;
+        for (long t = 300; t < WirelessBootstrap.DEADLINE_MS; t += 100) sent += s.tick(t).size();
+        check(sent == 0 && !s.getDone(), "nothing unprompted before the deadline");
+        s.tick(WirelessBootstrap.DEADLINE_MS);
+        check(s.getDone() && "deadline".equals(s.getDoneWhy()), "the wait ends at the deadline when asked");
+        s.restart(35_000);
+        check(!s.getWaiting() && !s.getDone() && s.getDoneWhy() == null, "a new connection starts over, not waiting until told");
+        s.standBy(35_000, false);
+        for (long t = 35_100; t <= 35_000 + 3 * WirelessBootstrap.DEADLINE_MS; t += 100) s.tick(t);
+        check(!s.getDone(), "after the retries the wait has no deadline");
+    }
+
+    /** A projection ended with the connection still up: back to waiting, nothing of the last start kept. */
+    private static void rearm() {
+        WirelessBootstrap.Session s = connectSession();
+        s.standBy(0, false);
+        s.received(frame(4, new Proto().num(1, 1).num(2, 6)), 190);
+        s.received(frame(1, startRequest(1)), 236);
+        s.received(frame(3, infoResponse()), 300);
+        check(s.getCredentials() != null && !s.getWaiting(), "first projection set up");
+        s.rearm(3_600_000);
+        s.standBy(3_600_000, false);
+        check(s.getCredentials() == null && s.getStart() == null && s.getWifi() == null && s.getWaiting(), "rearmed: details dropped, waiting");
+        check(s.getHuVersion().equals("1.6"), "the head unit's version kept");
+        check(s.tick(3_600_000 + WirelessBootstrap.DEADLINE_MS * 5).isEmpty() && !s.getDone(), "rearmed wait has no deadline");
+        s.setAcceptAuto(false);
+        check(s.received(frame(1, startRequest(2)), 3_700_000).isEmpty(), "after a phone stop, the truck's restart is held");
+        List<WirelessBootstrap.Frame> out = s.received(frame(1, startRequest(0)), 3_800_000);
+        check(out.stream().anyMatch(f -> f.getId() == WirelessBootstrap.START_RESPONSE), "the next button press answered with a start response");
+        s.received(frame(3, infoResponse()), 3_800_050);
+        check(s.getCredentials() != null && s.getStartsAccepted() == 2, "second projection's details");
+        String text = WB.report(AT, "0.4.5-lab", 37, 0x0408, 91L, null, s,
+                new WirelessBootstrap.W2Summary("requested", null, "not_attempted", null, null, null, null));
+        check(text.contains("rearmed on the same connection"), "rearm in the events");
+        secretsAbsent(text);
+    }
+
+    /** A drive-long standby link keeps its report bounded. */
+    private static void eventCap() {
+        WirelessBootstrap.Session s = connectSession();
+        s.standBy(0, false);
+        for (int i = 0; i < WirelessBootstrap.MAX_EVENTS; i++) {
+            s.received(new WirelessBootstrap.Frame(WirelessBootstrap.PING_REQUEST, new byte[] {0x08, 0x01}), 1_000L * i);
+        }
+        check(s.getEvents().size() == WirelessBootstrap.MAX_EVENTS, "events capped at " + WirelessBootstrap.MAX_EVENTS);
+        check(s.getEventsDropped() > 0, "the rest counted");
+        String text = report(s);
+        check(text.contains("events_dropped=" + s.getEventsDropped()), "dropped count in the report");
+        check(text.contains("in_WifiPingRequest=" + WirelessBootstrap.MAX_EVENTS), "frame counts still whole");
+    }
+
+    private static void failures() {
+        WirelessBootstrap.Session s = session();
+        s.received(frame(1, new Proto().str(1, "192.168.1.1").num(2, 5288)), 100);
+        s.closed(900, "read failed: java.io.IOException: bt socket closed");
+        check(s.getDone() && s.received(frame(3, infoResponse()), 950).isEmpty(), "nothing after close");
+        check(s.outcome() == WirelessBootstrap.Outcome.START_ONLY, "closed after start: start_only");
+        // A WifiInfoResponse that is not protobuf is recorded, never dumped.
+        WirelessBootstrap.Session m = session();
+        m.received(new WirelessBootstrap.Frame(WirelessBootstrap.INFO_RESPONSE, KEY.getBytes(StandardCharsets.UTF_8)), 10);
+        String bad = report(m);
+        check(bad.contains("not well-formed") && !bad.contains(KEY), "malformed WifiInfoResponse kept out");
+        String failed = WB.report(AT, "0.4.5-lab", 37, null, 15000L, "java.io.IOException: read failed", session());
+        line(failed, "rfcomm_connect_error=java.io.IOException: read failed");
+        line(failed, "device_class=unknown");
+        line(failed, "outcome=connect_failed");
+        check(ReportStore.Companion.getNAME().matches(WirelessProbe.INSTANCE.reportName(AT, "w1abcdef")), "report name fits the store");
+    }
+
+    private static void secretsAbsent(String text) {
+        check(!text.contains(KEY), "no key");
+        check(!text.contains(SSID), "no SSID");
+        check(!text.contains(BSSID) && !text.contains("a6:5e"), "no BSSID");
+        check(!Pattern.compile("([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}").matcher(text).find(), "no MAC-shaped text");
+    }
+
+    private static void line(String text, String expected) {
+        check(text.lines().anyMatch(expected::equals), "report line " + expected + " in:\n" + text);
+    }
+
+    private static void check(boolean condition, String message) {
+        if (!condition) throw new AssertionError(message);
+        passed++;
+    }
+}

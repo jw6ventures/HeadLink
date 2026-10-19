@@ -132,7 +132,16 @@ data class AttemptSettings(
      * in a vehicle.
      */
     val labSocket: String? = null,
-)
+    /**
+     * W2 (docs/wireless-investigation.md): the session runs over the TCP connection
+     * [WirelessLink] has already opened to the head unit, instead of the USB accessory.
+     */
+    val wireless: Boolean = false,
+) {
+    /** The transport, as reports name it. */
+    val transport: String
+        get() = labSocket?.let { "lab-socket:$it" } ?: if (wireless) "wireless" else "accessory"
+}
 
 /**
  * One user-initiated connection attempt. Identity is immutable; progress fields are
@@ -291,7 +300,7 @@ object SessionController {
             "armed generation=${next.generation} profile=${settings.profile} stop_after=${settings.stopAfter} " +
                 "tls_profile=${settings.tlsProfile} first_use_armed=${settings.armedFirstUse} pins=${settings.pins.size} " +
                 "capture_discovery=${settings.captureDiscovery} keepalive=${settings.keepalive} " +
-                "sensors=${settings.sensors} transport=${settings.labSocket?.let { "lab-socket:$it" } ?: "accessory"}",
+                "sensors=${settings.sensors} transport=${settings.transport}",
         )
         return next
     }
