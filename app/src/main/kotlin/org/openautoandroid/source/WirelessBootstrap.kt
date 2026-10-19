@@ -53,6 +53,12 @@ object WirelessBootstrap {
     /** RFCOMM connect, separately bounded: a stack that never answers must not hold the screen. */
     const val CONNECT_TIMEOUT_MS = 15_000L
 
+    /**
+     * A conversation keeps at most this many events; later ones are only counted
+     * (`events_dropped`). A standby link can stay up for a whole drive.
+     */
+    const val MAX_EVENTS = 600
+
     fun name(id: Int): String =
         when (id) {
             START_REQUEST -> "WifiStartRequest"
@@ -364,6 +370,10 @@ object WirelessBootstrap {
 
     private val IPV4 = Regex("""\d{1,3}(\.\d{1,3}){3}""")
 
+    /** WifiStartRequest's field 3, the reason it was sent ([WirelessStandby.reasonName]); null when absent. */
+    fun startReason(payload: ByteArray): Long? =
+        fields(payload)?.firstOrNull { it.number == 3 && it.varint != null }?.varint
+
     /** A WifiVersionRequest's endpoint, if one of its nested fields carries one (one revision puts it at field 5). */
     fun versionEndpoint(payload: ByteArray): Pair<String, Long>? =
         fields(payload)?.firstNotNullOfOrNull { field -> field.bytes?.takeIf { field.wire == 2 }?.let { endpoint(it) } }
@@ -378,7 +388,15 @@ object WirelessBootstrap {
 
     /**
      * One bootstrap conversation, without the socket. [received] and [tick] return frames
-     * to send. Times are milliseconds since the RFCOMM connection completed.
+     * to send. Times are milliseconds since the first RFCOMM connection completed; after
+     * [restart], the nudge and the deadline count from the new connection.
+     *
+     * Standby (spec §5.2, the standby amendment): after [standBy], the conversation answers the
+     * version request and pings and otherwise waits for the head unit's start request, with
+     * no deadline unless asked and nothing sent unprompted. A start request is then accepted
+     * or held by [WirelessStandby.accepts] with [acceptAuto]; accepted, the conversation goes
+     * on as usual, its deadline counted from then. [rearm] puts a conversation back to
+     * waiting on the same connection once a projection has ended.
      */
     class Session @JvmOverloads constructor(
         private val redactor: Redactor,
@@ -400,6 +418,25 @@ object WirelessBootstrap {
         private var startAnswered = false
         var done = false
             private set
+        /** Why [done]: `deadline`, `linger ended`, or how the socket closed. */
+        var doneWhy: String? = null
+            private set
+        /** Waiting for the head unit's start request ([standBy]). */
+        var waiting = false
+            private set
+        /** While [waiting]: whether the wait ends at [DEADLINE_MS] from the connection. */
+        private var waitDeadline = false
+        /** Set by the link before each frame: whether the head unit's own starts are taken. */
+        var acceptAuto = true
+        /** The latest start request's reason, and whether it carried one. */
+        var startReason: Long? = null
+            private set
+        var startsAccepted = 0
+            private set
+        var startsHeld = 0
+            private set
+        var eventsDropped = 0
+            private set
         var lastAt = 0L
             private set
         private var received = 0
@@ -408,6 +445,8 @@ object WirelessBootstrap {
         private var lastInfoAt = -1L
         private var versionAnsweredAt = -1L
         private var lingerUntil = -1L
+        /** When the current conversation's RFCOMM connection completed. */
+        private var startedAt = 0L
         private val counts = sortedMapOf<String, Int>()
 
         fun received(frame: Frame, at: Long): List<Frame> {
@@ -416,8 +455,27 @@ object WirelessBootstrap {
             received++
             counts.merge("in_${name(frame.id)}", 1, Int::plus)
             val detail = if (frame.id == INFO_RESPONSE) "redacted(see wifi_*)" else dump(frame.payload, redactor)
-            events += "+${at}ms in ${frame.id} ${name(frame.id)} len=${frame.payload.size} fields=$detail"
+            event("+${at}ms in ${frame.id} ${name(frame.id)} len=${frame.payload.size} fields=$detail")
             val out = mutableListOf<Frame>()
+            when (frame.id) {
+                START_REQUEST -> {
+                    startReason = WirelessBootstrap.startReason(frame.payload)
+                    if (waiting) {
+                        val reason = WirelessStandby.reasonName(startReason)
+                        if (!WirelessStandby.accepts(startReason, acceptAuto)) {
+                            startsHeld++
+                            event("+${at}ms held: start request reason $reason; only the head unit's Android Auto button starts projection now")
+                            return sent(out, at)
+                        }
+                        waiting = false
+                        startedAt = at
+                        startsAccepted++
+                        event("+${at}ms accepted: start request reason $reason")
+                    } else if (connect && !startAnswered) {
+                        startsAccepted++
+                    }
+                }
+            }
             when (frame.id) {
                 VERSION_REQUEST -> {
                     val fields = fields(frame.payload)
@@ -441,7 +499,7 @@ object WirelessBootstrap {
                 }
                 INFO_RESPONSE -> {
                     val details = wifiDetails(frame.payload, redactor)
-                    if (details == null) events += "+${at}ms WifiInfoResponse is not well-formed protobuf"
+                    if (details == null) event("+${at}ms WifiInfoResponse is not well-formed protobuf")
                     wifi = details ?: wifi
                     if (connect) {
                         if (credentials == null) credentials = credentials(frame.payload)
@@ -460,7 +518,9 @@ object WirelessBootstrap {
             when {
                 // W2 holds the link open once it has what it needs; only [closed] ends it.
                 connect && credentials != null -> {}
-                at >= DEADLINE_MS -> finish(at, "deadline")
+                // Standby: only the head unit speaks first; the wait ends only if asked to.
+                waiting -> if (waitDeadline && at - startedAt >= DEADLINE_MS) finish(at, "deadline")
+                at - startedAt >= DEADLINE_MS -> finish(at, "deadline")
                 lingerUntil in 0..at -> finish(at, "linger ended")
                 wifi != null -> {}
                 // Asked already: ask again, up to the limit.
@@ -468,9 +528,9 @@ object WirelessBootstrap {
                 infoAttempts > 0 -> {}
                 // Version answered, no WifiStartRequest: ask for Wi-Fi details anyway.
                 versionAnsweredAt >= 0 && start == null && at - versionAnsweredAt >= START_WAIT_MS -> out += askInfo(at)
-                received == 0 && !nudged && at >= NUDGE_MS -> {
+                received == 0 && !nudged && at - startedAt >= NUDGE_MS -> {
                     nudged = true
-                    events += "+${at}ms nudge: nothing received, asking for Wi-Fi details unprompted"
+                    event("+${at}ms nudge: nothing received, asking for Wi-Fi details unprompted")
                     out += askInfo(at)
                 }
             }
@@ -486,21 +546,82 @@ object WirelessBootstrap {
 
         /** A link-level event (network, TCP) in the same timeline as the frames. */
         fun note(at: Long, text: String) {
-            events += "+${at}ms $text"
+            event("+${at}ms $text")
+        }
+
+        /**
+         * A new RFCOMM connection after this one ended without the Wi-Fi details: the
+         * conversation starts over at [at], and the events and frame counts carry on.
+         */
+        fun restart(at: Long) {
+            lastAt = at
+            startedAt = at
+            done = false
+            doneWhy = null
+            waiting = false
+            credentials = null
+            received = 0
+            nudged = false
+            infoAttempts = 0
+            lastInfoAt = -1L
+            versionAnsweredAt = -1L
+            lingerUntil = -1L
+            startAnswered = false
+            start = null
+            versionEndpointSeen = null
+            wifi = null
+        }
+
+        /**
+         * Standby: from [at], wait for the head unit's start request on this connection.
+         * [deadline] ends the wait at [DEADLINE_MS] from the connection instead of never.
+         */
+        fun standBy(at: Long, deadline: Boolean) {
+            if (done) return
+            lastAt = at
+            waiting = true
+            waitDeadline = deadline
+            event("+${at}ms standby: waiting for the head unit's start request" + if (deadline) " (deadline ${DEADLINE_MS / 1000} s)" else "")
+        }
+
+        /**
+         * A projection started over this connection has ended and the connection is still
+         * up: the next start request is a new projection. The head unit's version and the
+         * events and counts carry on; what the last start handed over does not.
+         */
+        fun rearm(at: Long) {
+            lastAt = at
+            startedAt = at
+            infoAttempts = 0
+            lastInfoAt = -1L
+            versionAnsweredAt = -1L
+            lingerUntil = -1L
+            startAnswered = false
+            start = null
+            versionEndpointSeen = null
+            wifi = null
+            credentials = null
+            event("+${at}ms rearmed on the same connection")
         }
 
         /** The socket closed or failed under us. */
         fun closed(at: Long, why: String) {
             if (!done) {
                 lastAt = at
-                events += "+${at}ms closed: $why"
+                event("+${at}ms closed: $why")
                 done = true
+                doneWhy = why
             }
         }
 
         private fun finish(at: Long, why: String) {
-            events += "+${at}ms done: $why"
+            event("+${at}ms done: $why")
             done = true
+            doneWhy = why
+        }
+
+        private fun event(text: String) {
+            if (events.size < MAX_EVENTS) events += text else eventsDropped++
         }
 
         private fun askInfo(at: Long): Frame {
@@ -514,7 +635,7 @@ object WirelessBootstrap {
                 counts.merge("out_${name(frame.id)}", 1, Int::plus)
                 // Our own messages, dumped with the same redaction: the device id is UUID-shaped,
                 // so it appears as a hash.
-                events += "+${at}ms out ${frame.id} ${name(frame.id)} len=${frame.payload.size} fields=${dump(frame.payload, redactor)}"
+                event("+${at}ms out ${frame.id} ${name(frame.id)} len=${frame.payload.size} fields=${dump(frame.payload, redactor)}")
             }
             return frames
         }
@@ -565,6 +686,7 @@ object WirelessBootstrap {
         appendLine("hu_version=${session.huVersion ?: "none"}")
         appendLine("start_endpoint=${session.start?.let { "${it.first}:${it.second}" } ?: "none"}")
         appendLine("version_endpoint=${session.versionEndpointSeen?.let { "${it.first}:${it.second}" } ?: "none"}")
+        appendLine("start_reason=${WirelessStandby.reasonName(session.startReason)}")
         val wifi = session.wifi
         appendLine("wifi_ssid=${wifi?.ssidHash ?: "none"}")
         appendLine("wifi_ssid_length=${wifi?.ssidLength ?: "none"}")
@@ -582,8 +704,12 @@ object WirelessBootstrap {
             appendLine("tcp_connect_ms=${w2.tcpMs ?: "none"}")
             appendLine("session_generation=${w2.generation ?: "none"}")
             appendLine("ended=${w2.ended ?: "running"}")
+            appendLine("starts_accepted=${session.startsAccepted}")
+            appendLine("starts_held=${session.startsHeld}")
+            w2.extra.forEach { appendLine(it) }
         }
         session.events.forEachIndexed { index, event -> appendLine("event_${index + 1}=$event") }
+        if (session.eventsDropped > 0) appendLine("events_dropped=${session.eventsDropped}")
         if (w2 != null) {
             appendLine("outcome=${w2.outcome ?: outcome.key}")
         } else {
@@ -594,8 +720,11 @@ object WirelessBootstrap {
         appendLine("attempt_complete=${w2 == null || w2.ended != null}")
     }
 
-    /** W2's link milestones for [report]. Values are words or numbers, never addresses or names. */
-    class W2Summary(
+    /**
+     * W2's link milestones for [report]. Values are words or numbers, never addresses or
+     * names. [extra] is whole `key=value` lines: the keep-awake's and the Wi-Fi link's.
+     */
+    class W2Summary @JvmOverloads constructor(
         val network: String,
         val networkMs: Long?,
         val tcp: String,
@@ -603,5 +732,6 @@ object WirelessBootstrap {
         val generation: Long?,
         val ended: String?,
         val outcome: String?,
+        val extra: List<String> = emptyList(),
     )
 }

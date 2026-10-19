@@ -161,6 +161,15 @@
 #   reader, the redaction rule, and the session against scripted head units (start first,
 #   version first, endpoint only in the version request, pings, silence, a dropped socket),
 #   with no key, SSID, BSSID or VIN in the report. The socket and the truck need a phone.
+# * WirelessAutoStartTest: W3's start rule - every reason the linked truck connecting over
+#   Bluetooth does or does not start wireless projection, in order, across every combination.
+#   Android's companion-device wake-up and the link need a phone and the truck.
+# * WirelessKeepAwakeTest: the wireless keep-awake's bookkeeping - echo replies split by screen
+#   state, bucketed percentiles, and the Wi-Fi link readings with Android's unknowns skipped.
+#   The ICMP socket, the screen and the truck need a phone.
+# * WirelessStandbyTest: wireless standby's rules - the start reasons, which start requests
+#   start projection, the automatic-start loop guard and the reconnect pacing. The held
+#   RFCOMM link, the truck's button and the wake lock need a phone and the truck.
 # LabDrive.java and LabTraffic.java are compiled here but not run: they are generators run
 # by hand, the second writing the P9 lab's stand-in HERE scenarios and traffic drive
 # (tools/here-standin/, docs/p9-lab-results.md).
@@ -217,6 +226,9 @@ java -cp "$out:$classes:$stdlib" AddressSearchTest "${OBF_DIR:-}"
 java -cp "$out:$classes:$stdlib:$brouter" SearchAheadTest "${ROUTING_SEGMENTS:-}" "${OBF_DIR:-}"
 java -cp "$out:$classes:$stdlib" WirelessProbeTest
 java -cp "$out:$classes:$stdlib" WirelessBootstrapTest
+java -cp "$out:$classes:$stdlib" WirelessAutoStartTest
+java -cp "$out:$classes:$stdlib" WirelessKeepAwakeTest
+java -cp "$out:$classes:$stdlib" WirelessStandbyTest
 status=0
 java -Xcheck:jni --add-opens java.base/sun.nio.ch=ALL-UNNAMED -Djava.library.path=target/release \
     -cp "$out:$classes:$stdlib" JniContractTest > "$out/output.txt" 2>&1 || status=$?

@@ -4,7 +4,6 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.bluetooth.BluetoothAdapter
-import android.bluetooth.BluetoothClass
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
@@ -55,6 +54,10 @@ class WirelessProbeActivity : Activity() {
     private lateinit var result: TextView
     private lateinit var bootstrapButton: Button
     private lateinit var connectButton: Button
+    private val linkListener: (String) -> Unit = { text ->
+        status.text = text
+        if (!WirelessLink.active || WirelessLink.waiting) setButtons(true)
+    }
     private var adapter: BluetoothAdapter? = null
     private var hfp: BluetoothProfile? = null
     private var a2dp: BluetoothProfile? = null
@@ -119,10 +122,7 @@ class WirelessProbeActivity : Activity() {
             }
         })
         adapter = getSystemService(BluetoothManager::class.java)?.adapter
-        WirelessLink.listener = { text ->
-            status.text = text
-            if (!WirelessLink.active) setButtons(true)
-        }
+        WirelessLink.addListener(linkListener)
         if (granted()) ready() else requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_CONNECT), REQUEST_CONNECT)
     }
 
@@ -134,7 +134,7 @@ class WirelessProbeActivity : Activity() {
     }
 
     override fun onDestroy() {
-        WirelessLink.listener = null
+        WirelessLink.removeListener(linkListener)
         probe?.let { stop(it) }
         probe = null
         adapter?.let { a ->
@@ -178,12 +178,7 @@ class WirelessProbeActivity : Activity() {
             status.text = getString(R.string.wireless_probe_failed, e.toString())
             return
         }
-        // Vehicles first: car audio, or hands-free, which is what Ford SYNC 4 calls itself
-        // (0x0408, docs/wireless-w0-results.md).
-        val vehicle = setOf(BluetoothClass.Device.AUDIO_VIDEO_CAR_AUDIO, BluetoothClass.Device.AUDIO_VIDEO_HANDSFREE)
-        val sorted = bonded.sortedWith(
-            compareBy<BluetoothDevice>({ it.bluetoothClass?.deviceClass !in vehicle }, { it.name.orEmpty() }),
-        )
+        val sorted = WirelessLink.vehiclesFirst(bonded)
         devices.removeAllViews()
         if (sorted.isEmpty()) {
             status.setText(R.string.wireless_probe_no_devices)
@@ -201,7 +196,8 @@ class WirelessProbeActivity : Activity() {
 
     @SuppressLint("MissingPermission")
     private fun start(device: BluetoothDevice) {
-        if (probe != null || bootstrap != null || WirelessLink.active || !granted()) return
+        // The SDP query needs no RFCOMM, so a link standing by for the truck stays.
+        if (probe != null || bootstrap != null || (WirelessLink.active && !WirelessLink.waiting) || !granted()) return
         bootstrapButton.visibility = View.GONE
         connectButton.visibility = View.GONE
         val before = WirelessProbe.Device(
@@ -272,14 +268,20 @@ class WirelessProbeActivity : Activity() {
      * screen. Progress arrives through its listener while the screen is open.
      */
     private fun runConnect(device: BluetoothDevice) {
+        // Standing by for the truck gives way to the probe, which needs the same RFCOMM service.
+        if (probe == null && bootstrap == null && granted()) WirelessLink.stopWaiting("replaced by the wireless probe")
         if (probe != null || bootstrap != null || WirelessLink.active || !granted()) return
         result.text = null
         if (!WirelessLink.connect(this, device)) return
+        // Home's Connect wirelessly goes to the same head unit from now on.
+        AppSettings.saveWirelessDevice(this, device.address)
         setButtons(false)
     }
 
     @SuppressLint("MissingPermission")
     private fun runBootstrap(device: BluetoothDevice, label: String) {
+        // Standing by for the truck gives way to the probe, which needs the same RFCOMM service.
+        if (probe == null && bootstrap == null && granted()) WirelessLink.stopWaiting("replaced by the wireless probe")
         if (probe != null || bootstrap != null || WirelessLink.active || !granted()) return
         setButtons(false)
         result.text = null

@@ -68,6 +68,16 @@ data class SavedSettings(
     val notificationsPaused: Boolean = false,
     /** The companion in-call service may be enabled while projecting (§5.8, P7.9). */
     val callControls: Boolean = false,
+    /**
+     * Wireless sessions ping the head unit often enough that the phone's Wi-Fi never dozes
+     * (spec §5.2, the keep-awake amendment). Cleared, one ping a second only measures (diagnostic).
+     */
+    val wirelessKeepAwake: Boolean = true,
+    /**
+     * Standby (spec §5.2, the standby amendment): with the truck linked, its own automatic
+     * starts are taken as well as its Android Auto button. Cleared, only the button starts.
+     */
+    val wirelessAutoStart: Boolean = true,
     // P8 settings (docs/p8-plan.md §7).
     /** A tapped dashboard notification is read aloud; on, though the tile itself is off by default. */
     val readAloud: Boolean = true,
@@ -202,6 +212,8 @@ data class SavedSettings(
             NOTIFICATION_EXCLUSIONS to s.notificationExclusions.toSet(),
             NOTIFICATIONS_PAUSED to s.notificationsPaused,
             CALL_CONTROLS to s.callControls,
+            WIRELESS_KEEP_AWAKE to s.wirelessKeepAwake,
+            WIRELESS_AUTO_START to s.wirelessAutoStart,
             READ_ALOUD to s.readAloud,
             SPEECH_MEDIA to s.speechMedia.key,
             VOICE_GUIDANCE to s.voice.enabled,
@@ -282,6 +294,8 @@ data class SavedSettings(
                     ?.filterIsInstance<String>()?.toSet() ?: d.notificationExclusions,
                 notificationsPaused = flag(NOTIFICATIONS_PAUSED, d.notificationsPaused),
                 callControls = flag(CALL_CONTROLS, d.callControls),
+                wirelessKeepAwake = flag(WIRELESS_KEEP_AWAKE, d.wirelessKeepAwake),
+                wirelessAutoStart = flag(WIRELESS_AUTO_START, d.wirelessAutoStart),
                 readAloud = flag(READ_ALOUD, d.readAloud),
                 speechMedia = SpeechMedia.of(stored[SPEECH_MEDIA] as? String),
                 voice = VoiceSettings(
@@ -348,6 +362,8 @@ data class SavedSettings(
         private const val NOTIFICATION_EXCLUSIONS = "notification_exclusions"
         private const val NOTIFICATIONS_PAUSED = "notifications_paused"
         private const val CALL_CONTROLS = "call_controls"
+        private const val WIRELESS_KEEP_AWAKE = "wireless_keep_awake"
+        private const val WIRELESS_AUTO_START = "wireless_auto_start"
         private const val READ_ALOUD = "read_aloud"
         private const val WEATHER_ENABLED = "weather_enabled"
         private const val WEATHER_SPEAK_ALERTS = "weather_speak_alerts"
@@ -536,7 +552,21 @@ object AppSettings {
         prefs(context).edit().putBoolean(LAST_NIGHT, night).apply()
     }
 
+    /**
+     * The Bluetooth address of the head unit Home's Connect wirelessly goes to, or null
+     * before one has been chosen. Kept here, app-private, and never in a report (spec §10).
+     * Not a [SavedSettings] field for the same reason as [lastNight]: no screen write
+     * should reset it, and the stored form the host test pins stays as it is.
+     */
+    fun wirelessDevice(context: Context): String? = prefs(context).getString(WIRELESS_DEVICE, null)
+
+    /** Records [wirelessDevice]. */
+    fun saveWirelessDevice(context: Context, address: String) {
+        prefs(context).edit().putString(WIRELESS_DEVICE, address).apply()
+    }
+
     private const val LAST_NIGHT = "last_resolved_night"
+    private const val WIRELESS_DEVICE = "wireless_device"
 
     private fun prefs(context: Context): SharedPreferences =
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE)

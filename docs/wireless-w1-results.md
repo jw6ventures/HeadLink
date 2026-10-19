@@ -92,7 +92,7 @@ phone's interpretation.
 | | |
 | --- | --- |
 | Where to connect | `192.168.100.1`, TCP port **30515** (not the dongle projects' 5288) |
-| `WifiStartRequest` field 3 | 1. Android Auto logs "Received WifiStartRequest, reason=%s", so probably a reason code |
+| `WifiStartRequest` field 3 | 1. It is the start reason. Decoded 18 October 2026 from AA 17.6 (`pgy.a`, enum map `a.ao`): 0 `USER_REQUEST`, 1 `AUTO_LAUNCH`, 2 `AUTOMATIC_RESTART`. Run 3's `8ffdd8ea` sent 2, after SYNC had reset the previous session |
 | SSID | 10 characters, not `DIRECT-…`. This is an ordinary access point, not a Wi-Fi Direct group |
 | BSSID | Locally administered (a virtual or randomised address) |
 | Security | WPA2-Personal, key 12 characters |

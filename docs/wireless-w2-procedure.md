@@ -7,7 +7,8 @@ amendment (15 October 2026).
 
 ## What it does
 
-When you tap **Connect wirelessly to … (W2)** on the wireless probe screen:
+When you tap **Connect wirelessly** on Home, or **Connect wirelessly to … (W2)** on the
+wireless probe screen:
 
 1. **Bluetooth:** the W1 conversation with SYNC. It also sends the start response Android
    Auto sends. This link stays open during the session.
@@ -23,6 +24,16 @@ When you tap **Connect wirelessly to … (W2)** on the wireless probe screen:
 The Wi-Fi password is used for the one request and never stored. The `[wireless_connect]`
 report records each step with the same redaction as W1, plus every Bluetooth A2DP and HFP
 change for the truck while wireless is up.
+
+### From Home (16 October 2026)
+
+Home has a **Connect wirelessly** button under the large Connect (spec §5.2, the Home
+amendment). It skips the probe's SDP check and goes straight to step 1, to the paired device
+used last time, whether it was chosen on Home or on the probe. The first time it asks for
+Nearby devices, then which paired device, unless only one is a car or hands-free device.
+**Long-press** it to choose again. While Bluetooth and Wi-Fi are setting up it reads
+**Cancel wireless**; once projecting it hides, and the large **Stop** ends the session. The
+line under it shows each step and, after the link ends, its outcome.
 
 ## Checked before the truck
 
@@ -44,8 +55,9 @@ change for the truck while wireless is up.
 1. **Phone Wi-Fi on** (no need to be connected to anything). Bluetooth connected to the truck
    as usual. **USB cable unplugged.** If a VPN is on, OpenAutoAndroid must be excluded from
    it, or Android refuses the socket on SYNC's network (run 1, [results](wireless-w2-results.md)).
-2. Diagnostics → Wireless probe → tap the truck. Wait for `Verdict: advertised`.
-3. Tap **Connect wirelessly to … (W2)**. Answer the prompts:
+2. On Home, tap **Connect wirelessly** (the first time, pick the truck). Or, the long way:
+   Diagnostics → Wireless probe → tap the truck, wait for `Verdict: advertised`.
+3. On the probe, tap **Connect wirelessly to … (W2)**. Either way, answer the prompts:
    - **SYNC:** "allow Android Auto?" Tap **Allow**, if it asks.
    - **Android:** the network prompt. Choose the truck's network and tap **Connect**. The
      first time only, if all goes to plan.

@@ -4,6 +4,8 @@ import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
 import android.app.PendingIntent
+import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -109,6 +111,7 @@ class ConnectionActivity : Activity() {
     private lateinit var openAllChannelsCheck: CheckBox
     private lateinit var resumeInPlaceCheck: CheckBox
     private lateinit var congestionRestartCheck: CheckBox
+    private lateinit var wirelessKeepAwakeCheck: CheckBox
     private lateinit var waitForFocusCheck: CheckBox
     private lateinit var keyframeSpinner: Spinner
     private lateinit var setupFieldSpinner: Spinner
@@ -256,6 +259,16 @@ class ConnectionActivity : Activity() {
     private lateinit var statusActionButton: Button
     private lateinit var primaryButton: Button
     private var primaryAction = StatusAction.CONNECT
+    /** Home's Connect wirelessly (W2 from the main screen), and its progress line under it. */
+    private lateinit var wirelessButton: Button
+    private lateinit var wirelessText: TextView
+    private val wirelessListener: (String) -> Unit = { renderState() }
+    /** What to do once Nearby devices is granted: the wireless action that asked for it. */
+    private var afterBluetoothGrant: (() -> Unit)? = null
+    /** W3's Settings switch: Link the truck for wireless (the companion-device link). */
+    private lateinit var wirelessLinkCheck: CompoundButton
+    /** Standby's: Start wirelessly when the truck connects, as well as on its button. */
+    private lateinit var wirelessAutoCheck: CompoundButton
     private var cardAction = StatusAction.NONE
     private lateinit var routeSummaryText: TextView
     private lateinit var favoritesList: LinearLayout
@@ -313,6 +326,7 @@ class ConnectionActivity : Activity() {
         registerReceiver(permissionReceiver, IntentFilter(ACTION_USB_PERMISSION), RECEIVER_NOT_EXPORTED)
         registerReceiver(detachReceiver, IntentFilter(UsbManager.ACTION_USB_ACCESSORY_DETACHED), RECEIVER_NOT_EXPORTED)
         SessionController.addListener(render)
+        WirelessLink.addListener(wirelessListener)
         showHomeOnAttach(intent)
         if (!handleLabIntent(intent)) handleAttachIntent(intent)
         renderState()
@@ -353,6 +367,8 @@ class ConnectionActivity : Activity() {
         speechEngine = SpeechEngines.default(this)
         // P10: Breezy may have been installed, granted or refreshed meanwhile.
         refreshWeather()
+        // W3: the link to the truck can be removed in Android's settings too.
+        WirelessAuto.refresh(this)
         renderState()
     }
 
@@ -403,13 +419,20 @@ class ConnectionActivity : Activity() {
             )
         }
         // P9 lab: the dashboard's and the map's figures in the saved report, as they are now.
+        // W3 lab: watch every companion link, as the Settings switch does after Android's
+        // dialog. The emulator has no paired head unit to link through the dialog, so the
+        // lab makes the link with `cmd companiondevice associate` and this watches it.
+        val wirelessObserve = intent?.hasExtra(EXTRA_LAB_WIRELESS_OBSERVE) == true
+        if (wirelessObserve && applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+            WirelessAuto.observeAll(this)
+        }
         val reportNow = intent?.hasExtra(EXTRA_LAB_REPORT) == true
         if (reportNow && applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
             ProjectionService.labReport?.invoke() ?: SessionController.note("lab report: not projecting")
         }
         val socket = intent?.getStringExtra(EXTRA_LAB_SOCKET)
         if (socket == null) {
-            if (route == null && favorites == null && !speechGate && !trafficLab && !weatherLab && offerLayout == null && !reportNow) return false
+            if (route == null && favorites == null && !speechGate && !trafficLab && !weatherLab && offerLayout == null && !reportNow && !wirelessObserve) return false
             setIntent(Intent(this, ConnectionActivity::class.java))
             return true
         }
@@ -504,6 +527,7 @@ class ConnectionActivity : Activity() {
     override fun onDestroy() {
         ObfLibrary.listener = null
         SessionController.removeListener(render)
+        WirelessLink.removeListener(wirelessListener)
         unregisterReceiver(permissionReceiver)
         unregisterReceiver(detachReceiver)
         main.removeCallbacks(autoStartGiveUp)
@@ -675,6 +699,20 @@ class ConnectionActivity : Activity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_WIRELESS) {
+            val after = afterBluetoothGrant
+            afterBluetoothGrant = null
+            if (checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
+                after?.invoke()
+            } else {
+                Toast.makeText(this, R.string.home_wireless_no_permission, Toast.LENGTH_LONG).show()
+                // Refused for good: Android shows no prompt again, so go where it can be allowed.
+                if (grantResults.isNotEmpty() && !shouldShowRequestPermissionRationale(Manifest.permission.BLUETOOTH_CONNECT)) {
+                    openAppSettings()
+                }
+            }
+            return
+        }
         // P7.7's Setup buttons ask for these outside any attempt; they only change the list.
         if (requestCode == REQUEST_SETUP_LOCATION) {
             val granted = grantResults.any { it == PackageManager.PERMISSION_GRANTED }
@@ -799,6 +837,103 @@ class ConnectionActivity : Activity() {
         }
     }
 
+    /**
+     * Home's Connect wirelessly: W2 ([WirelessLink]) without the probe, to the head unit
+     * chosen last time. The first time, or on a long press ([choose]), it asks which paired
+     * device, unless only one is a vehicle. While the link is still setting up (Bluetooth,
+     * then Android's Wi-Fi prompt), the same button cancels it; once projecting, the large
+     * Stop ends it as it ends a wired session. Nearby devices is asked for on the first tap
+     * and not before.
+     */
+    private fun connectWirelessly(choose: Boolean = false) {
+        if (WirelessLink.settingUp) {
+            if (SessionController.stage == Stage.IDLE) WirelessLink.end("cancelled from Home", operator = true)
+            return
+        }
+        // Standing by for the truck is not busy: this tap replaces it (startWireless).
+        if (WirelessLink.active && !WirelessLink.waiting) return
+        if (SessionController.stage != Stage.IDLE || SessionController.identityBusy) return
+        if (!SessionController.identityReady) {
+            Toast.makeText(this, R.string.identity_not_ready, Toast.LENGTH_LONG).show()
+            return
+        }
+        withBluetooth { pickWirelessDevice(choose) { startWireless(it) } }
+    }
+
+    /** Runs [action] now if Nearby devices is granted, else asks for it and runs it on a grant. */
+    private fun withBluetooth(action: () -> Unit) {
+        if (checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) return action()
+        afterBluetoothGrant = action
+        requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_CONNECT), REQUEST_WIRELESS)
+    }
+
+    /**
+     * The head unit for a wireless action: the one used last, else the only paired vehicle,
+     * else the operator's pick from the paired devices, vehicles first. [choose] always
+     * asks. Only after [withBluetooth].
+     */
+    @android.annotation.SuppressLint("MissingPermission")
+    private fun pickWirelessDevice(choose: Boolean, then: (BluetoothDevice) -> Unit) {
+        val adapter = getSystemService(BluetoothManager::class.java)?.adapter
+        if (adapter == null || !adapter.isEnabled) {
+            Toast.makeText(this, R.string.wireless_probe_no_bluetooth, Toast.LENGTH_LONG).show()
+            return
+        }
+        val bonded = try {
+            WirelessLink.vehiclesFirst(adapter.bondedDevices.orEmpty())
+        } catch (e: SecurityException) {
+            Toast.makeText(this, getString(R.string.wireless_probe_failed, e.toString()), Toast.LENGTH_LONG).show()
+            return
+        }
+        if (bonded.isEmpty()) {
+            Toast.makeText(this, R.string.wireless_probe_no_devices, Toast.LENGTH_LONG).show()
+            return
+        }
+        val saved = AppSettings.wirelessDevice(this)?.let { address -> bonded.firstOrNull { it.address == address } }
+        val device = if (choose) null else saved ?: bonded.filter(WirelessLink::isVehicle).singleOrNull()
+        if (device != null) return then(device)
+        val names = bonded.map { it.name ?: getString(R.string.wireless_probe_unnamed) }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle(R.string.home_wireless_pick)
+            .setItems(names) { _, which -> then(bonded[which]) }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun startWireless(device: BluetoothDevice) {
+        // A link standing by for the truck gives way: this one asks the truck now.
+        if (SessionController.stage == Stage.IDLE) WirelessLink.stopWaiting("replaced by Home's Connect wirelessly")
+        // The world may have moved on while a dialog was open.
+        if (WirelessLink.active || SessionController.stage != Stage.IDLE) return
+        AppSettings.saveWirelessDevice(this, device.address)
+        if (WirelessLink.connect(this, device)) SessionController.note("wireless connect from Home (W2)")
+        renderState()
+    }
+
+    /**
+     * W3's switch, Link the truck for wireless. On: Nearby devices, the head unit (as Home
+     * picks it), then Android's own companion-device dialog, after which Android wakes the
+     * app whenever that head unit connects over Bluetooth ([WirelessAuto]) and the app stands
+     * by for it. Off: the link to it is removed, so Android no longer tells the app at all.
+     * The switch shows the link as it is, never a wish.
+     */
+    private fun onWirelessLinkSwitch() {
+        val wanted = wirelessLinkCheck.isChecked
+        wirelessLinkCheck.isChecked = WirelessAuto.isOn(this)
+        if (!wanted) {
+            WirelessAuto.unlink(this)
+            SessionController.note("link the truck for wireless: off")
+            renderState()
+            return
+        }
+        withBluetooth {
+            pickWirelessDevice(choose = false) { device ->
+                AppSettings.saveWirelessDevice(this, device.address)
+                WirelessAuto.link(this, device, REQUEST_WIRELESS_LINK) { renderState() }
+            }
+        }
+    }
+
     private fun stop() {
         val attempt = SessionController.attempt ?: return
         if (!SessionController.isCurrent(attempt)) return
@@ -897,6 +1032,12 @@ class ConnectionActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == REQUEST_PREVIEW) {
             if (resultCode == RESULT_OK && data != null) adoptPreviewChoice(data.getLongExtra(PreviewActivity.EXTRA_TOKEN, -1L))
+            return
+        }
+        // W3: Android's companion-device dialog, answered.
+        if (requestCode == REQUEST_WIRELESS_LINK) {
+            WirelessAuto.linkResult(this, resultCode, data)
+            renderState()
             return
         }
         val uri = data?.data
@@ -1348,8 +1489,8 @@ class ConnectionActivity : Activity() {
         captureUnhandledCheck.isEnabled =
             idle && stopAfterSpinner.selectedItem != SessionSettings.STOP_AFTER_VERSION
         for (view in listOf(
-            captureVideoCheck, openAllChannelsCheck, resumeInPlaceCheck, congestionRestartCheck, waitForFocusCheck,
-            keyframeSpinner, setupFieldSpinner,
+            captureVideoCheck, openAllChannelsCheck, resumeInPlaceCheck, congestionRestartCheck, wirelessKeepAwakeCheck,
+            waitForFocusCheck, keyframeSpinner, setupFieldSpinner,
         )) {
             view.isEnabled =
                 idle && stopAfterSpinner.selectedItem == SessionSettings.STOP_AFTER_PROJECTION
@@ -1523,6 +1664,18 @@ class ConnectionActivity : Activity() {
         }
         // The same conditions as Diagnostics' own Connect and Stop, computed above.
         primaryButton.isEnabled = if (primaryAction == StatusAction.STOP) stopButton.isEnabled else connectButton.isEnabled
+        // Connect wirelessly while idle, Cancel while the link sets up; hidden once a session
+        // runs, when the large Stop ends either transport. Its line says how the link went.
+        // Standing by for the truck's button reads as Connect wirelessly: a tap asks the truck now.
+        val linking = WirelessLink.active
+        val settingUp = WirelessLink.settingUp
+        wirelessLinkCheck.isChecked = WirelessAuto.isOn(this)
+        wirelessAutoCheck.isEnabled = wirelessLinkCheck.isChecked
+        wirelessButton.visibility = if (stage == Stage.IDLE) View.VISIBLE else View.GONE
+        wirelessButton.setText(if (settingUp) R.string.home_wireless_cancel else R.string.home_wireless_connect)
+        wirelessButton.isEnabled = settingUp || connectButton.isEnabled
+        wirelessText.visibility = if (stage == Stage.IDLE || linking) View.VISIBLE else View.GONE
+        wirelessText.text = WirelessLink.lastStatus ?: getString(R.string.home_wireless_hint)
 
         // P8.1 (plan §7): which engine speaks, flagged if it can reach the network.
         val engine = speechEngine
@@ -2394,6 +2547,7 @@ class ConnectionActivity : Activity() {
         openAllChannelsCheck = CheckBox(this).apply { setText(R.string.open_all_channels_label) }
         resumeInPlaceCheck = CheckBox(this).apply { setText(R.string.resume_in_place_label) }
         congestionRestartCheck = CheckBox(this).apply { setText(R.string.congestion_restart_label) }
+        wirelessKeepAwakeCheck = CheckBox(this).apply { setText(R.string.wireless_keep_awake_label) }
         waitForFocusCheck = CheckBox(this).apply { setText(R.string.wait_for_focus_label) }
         keyframeSpinner = spinner(SessionSettings.KEYFRAME_SECONDS.map { "$it s" })
         setupFieldSpinner = spinner(SessionSettings.SETUP_FIELDS)
@@ -2439,6 +2593,8 @@ class ConnectionActivity : Activity() {
         speedUnitSpinner = spinner(SpeedUnit.LABELS)
         // P7.1's settings, on the Settings tab since P7.7.
         autoStartCheck = switch(R.string.auto_start_label)
+        wirelessLinkCheck = switch(R.string.wireless_link_label).apply { setOnClickListener { onWirelessLinkSwitch() } }
+        wirelessAutoCheck = switch(R.string.wireless_auto_label)
         diagnosticsCheck = switch(R.string.diagnostics)
         markerColourSpinner = spinner(MarkerColour.LABELS)
         clockFormatSpinner = spinner(ClockFormat.LABELS)
@@ -2646,6 +2802,13 @@ class ConnectionActivity : Activity() {
             addView(statusActionButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
         primaryButton = ui.primaryButton { onPrimary() }
+        wirelessButton = button(R.string.home_wireless_connect) { connectWirelessly() }.apply {
+            setOnLongClickListener {
+                if (!WirelessLink.settingUp) connectWirelessly(choose = true)
+                true
+            }
+        }
+        wirelessText = ui.caption()
         routeSummaryText = ui.primary(TextView(this)).apply {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
             setPadding(0, ui.dp(4), 0, ui.dp(4))
@@ -2662,6 +2825,10 @@ class ConnectionActivity : Activity() {
                 it.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                     .apply { setMargins(0, ui.dp(12), 0, ui.dp(6)) }
             },
+            wirelessButton.also {
+                it.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            },
+            wirelessText,
             ui.card(
                 ui.title(R.string.route_title), routeSummaryText, routeInput, searchSuggestions.view, ui.row(routeButton, clearRouteButton),
                 previewButton.also {
@@ -2760,7 +2927,11 @@ class ConnectionActivity : Activity() {
                 ui.labelled(R.string.marker_colour_label, null, markerColourSpinner),
                 ui.labelled(R.string.day_night_label, R.string.day_night_help, dayNightSpinner),
             ),
-            ui.card(ui.withHelp(autoStartCheck, R.string.auto_start_label, R.string.auto_start_help)),
+            ui.card(
+                ui.withHelp(autoStartCheck, R.string.auto_start_label, R.string.auto_start_help),
+                ui.withHelp(wirelessLinkCheck, R.string.wireless_link_label, R.string.wireless_link_help),
+                ui.withHelp(wirelessAutoCheck, R.string.wireless_auto_label, R.string.wireless_auto_help),
+            ),
             ui.card(
                 ui.title(R.string.settings_media),
                 ui.withHelp(mediaInfoCheck, R.string.media_info_label, R.string.media_info_help),
@@ -2824,6 +2995,7 @@ class ConnectionActivity : Activity() {
                 ui.withHelp(openAllChannelsCheck, R.string.open_all_channels_label, R.string.open_all_channels_help),
                 ui.withHelp(resumeInPlaceCheck, R.string.resume_in_place_label, R.string.resume_in_place_help),
                 ui.withHelp(congestionRestartCheck, R.string.congestion_restart_label, R.string.congestion_restart_help),
+                ui.withHelp(wirelessKeepAwakeCheck, R.string.wireless_keep_awake_label, R.string.wireless_keep_awake_help),
                 ui.withHelp(waitForFocusCheck, R.string.wait_for_focus_label, R.string.wait_for_focus_help),
                 ui.labelled(R.string.keyframe_label, R.string.keyframe_help, keyframeSpinner, stacked = true),
                 ui.labelled(R.string.setup_field_label, R.string.setup_field_help, setupFieldSpinner, stacked = true),
@@ -2918,6 +3090,7 @@ class ConnectionActivity : Activity() {
         openAllChannelsCheck.isChecked = saved.openAllChannels
         resumeInPlaceCheck.isChecked = saved.resumeInPlace
         congestionRestartCheck.isChecked = saved.congestionRestart
+        wirelessKeepAwakeCheck.isChecked = saved.wirelessKeepAwake
         waitForFocusCheck.isChecked = saved.waitForFocus
         keyframeSpinner.setSelection(SessionSettings.KEYFRAME_SECONDS.indexOf(saved.keyframeSeconds))
         setupFieldSpinner.setSelection(SessionSettings.SETUP_FIELDS.indexOf(saved.setupField))
@@ -2936,6 +3109,7 @@ class ConnectionActivity : Activity() {
         mapSideSpinner.setSelection(if (saved.mapOnLeft) 0 else 1)
         speedUnitSpinner.setSelection(saved.speedUnit.ordinal)
         autoStartCheck.isChecked = saved.autoStart
+        wirelessAutoCheck.isChecked = saved.wirelessAutoStart
         diagnosticsCheck.isChecked = saved.diagnostics
         markerColourSpinner.setSelection(saved.markerColour.ordinal)
         clockFormatSpinner.setSelection(saved.clockFormat.ordinal)
@@ -2988,6 +3162,7 @@ class ConnectionActivity : Activity() {
         openAllChannelsCheck.saves { s, on -> s.copy(openAllChannels = on) }
         resumeInPlaceCheck.saves { s, on -> s.copy(resumeInPlace = on) }
         congestionRestartCheck.saves { s, on -> s.copy(congestionRestart = on) }
+        wirelessKeepAwakeCheck.saves { s, on -> s.copy(wirelessKeepAwake = on) }
         waitForFocusCheck.saves { s, on -> s.copy(waitForFocus = on) }
         keyframeSpinner.saves { s, i -> s.copy(keyframeSeconds = SessionSettings.KEYFRAME_SECONDS[i]) }
         setupFieldSpinner.saves { s, i -> s.copy(setupField = SessionSettings.SETUP_FIELDS[i]) }
@@ -3006,6 +3181,7 @@ class ConnectionActivity : Activity() {
         mapSideSpinner.saves { s, i -> s.copy(mapOnLeft = i == 0) }
         speedUnitSpinner.saves { s, i -> s.copy(speedUnit = SpeedUnit.entries[i]) }
         autoStartCheck.saves { s, on -> s.copy(autoStart = on) }
+        wirelessAutoCheck.saves { s, on -> s.copy(wirelessAutoStart = on) }
         // Turning the switch either way ends a reveal from the status card: the switch
         // is the operator's answer to whether the tab should be there.
         diagnosticsCheck.saves { s, on ->
@@ -3143,6 +3319,7 @@ class ConnectionActivity : Activity() {
         const val EXTRA_LAB_OFFER_LAYOUT = "lab_offer_layout"
         /** P9 lab: refresh the projection's part of the saved report now (boolean, any value). Debug builds only. */
         const val EXTRA_LAB_REPORT = "lab_report"
+        const val EXTRA_LAB_WIRELESS_OBSERVE = "lab_wireless_observe"
         /** P10 lab: Show weather on or off (boolean). Never asks for Breezy's permission. */
         const val EXTRA_LAB_WEATHER = "lab_weather"
         /** P10 lab: alerts shown from, by [AlertLevel.key]: minor, moderate, severe or extreme. */
@@ -3165,6 +3342,8 @@ class ConnectionActivity : Activity() {
         private const val REQUEST_WEATHER = 10
         private const val REQUEST_WEATHER_GRANT = 11
         private const val REQUEST_MAPS_FOLDER = 12
+        private const val REQUEST_WIRELESS = 13
+        private const val REQUEST_WIRELESS_LINK = 14
         /** This screen's hold on OsmAnd's open maps ([ObfLibrary.hold]). */
         private const val MAPS_HOLDER = "screen"
 

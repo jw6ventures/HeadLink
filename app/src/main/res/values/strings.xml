@@ -25,6 +25,7 @@ Incomplete from a previous run: %3$s</string>
     <string name="capture_video_help">Save the encoded video stream for offline decoding (diagnostic; tens of MB)</string>
     <string name="open_all_channels_help">Open every advertised channel, as Android Auto does (diagnostic)</string>
     <string name="resume_in_place_help">Resume the encoder instead of rebuilding it when focus returns (diagnostic)</string>
+    <string name="wireless_keep_awake_help">Wireless only: ping the car over its Wi-Fi every 50 ms, so the phone\'s Wi-Fi does not doze while the screen is off. Cleared, it pings once a second, only to measure the delay</string>
     <string name="congestion_restart_help">When the head unit keeps falling behind the video, restart the stream as switching screens does</string>
     <string name="wait_for_focus_help">Wait for unsolicited video focus instead of asking, as Android Auto does</string>
     <string name="keyframe_help">Keyframe interval (Android Auto configures 60 s; this source used 1 s)</string>
@@ -301,6 +302,7 @@ Incomplete from a previous run: %3$s</string>
     <string name="capture_video_label">Save the encoded video</string>
     <string name="open_all_channels_label">Open every channel</string>
     <string name="resume_in_place_label">Resume the encoder in place</string>
+    <string name="wireless_keep_awake_label">Keep Wi-Fi awake during wireless projection</string>
     <string name="congestion_restart_label">Restart video when the car falls behind</string>
     <string name="wait_for_focus_label">Wait for video focus</string>
     <string name="keyframe_label">Keyframe interval</string>

@@ -1555,6 +1555,17 @@ https://osmand.net/map?pin=30.50860,-97.67880#16/30.50860/-97.67880"
         done
         grep -q "^ended=session ended: " /out/wireless-report.txt || fail "the wireless link did not end with the session"
         log "wireless transport: $(grep -E "^(tcp_connect_ms|ended)=" /out/wireless-report.txt | tr "\n" " ")"
+        # The keep-awake (spec 5.2): on by default, its socket opened, and echoes sent to the
+        # receiver address. Replies depend on ICMP support in the emulator, so are logged only.
+        grep -qx "keep_awake=on interval_ms=50" /out/wireless-report.txt || fail "the keep-awake did not run"
+        grep -qx "keep_awake_error=none" /out/wireless-report.txt \
+            || fail "the keep-awake failed: $(grep "^keep_awake_error=" /out/wireless-report.txt)"
+        echoes=0
+        for sent in $(sed -n "s/^keep_awake_screen_o[nf]*=sent=\([0-9][0-9]*\) .*/\1/p" /out/wireless-report.txt); do
+            echoes=$((echoes + sent))
+        done
+        [ "$echoes" -ge 20 ] || fail "the keep-awake sent only $echoes echoes"
+        log "keep-awake: $(grep -E "^keep_awake_(screen_on|screen_off|send_failures)=" /out/wireless-report.txt | tr "\n" " ")"
     fi
     # P6.1: the source own account of the drive, beside the receiver own picture-side
     # check. Both are needed: the receiver can see that the pane moved but not why, and

@@ -129,7 +129,21 @@ From `WifiNetworkFactory.java`:
 - **W2 — join and TCP. Built 15 October 2026 ([procedure](wireless-w2-procedure.md)).** Make the local-only specifier request, open TCP, and run the
   existing session over the socket. This is the first wireless G2/G3 equivalent. Watch
   A2DP the whole time.
-- **W3 — auto-start.** CDM association plus the presence service. No activity tap needed.
+- **W3 — auto-start. Built 16 October 2026 ([procedure](wireless-w3-procedure.md)).** CDM
+  association plus the presence service. No activity tap needed. Found while building it: the
+  CDM binding ranks the app below foreground-service importance, so the Wi-Fi request waits
+  for the app's own foreground service.
+  Truck run 2 auto-started, but with the screen off the video fell apart and SYNC hung up.
+  The Pixel's Wi-Fi dozes up to ~925 ms with the screen off, and the Wi-Fi lock Android Auto
+  uses isn't honoured for this app. So the app now pings the truck every 50 ms over its Wi-Fi
+  while projecting (the keep-awake, spec §5.2 amendment); see the procedure's run 2 section.
+- **Standby — the truck's Android Auto button. Built 18 October 2026
+  ([procedure](wireless-w3-procedure.md#standby-the-trucks-android-auto-button-spec-52-standby-amendment)).**
+  Android Auto never listens for the head unit, so SYNC's button reaches only a phone that holds
+  the RFCOMM link. The app now keeps that link up while the linked truck is connected, between
+  sessions too, and starts on SYNC's start request. Field 3 is the reason (0 the button, 1 auto
+  launch, 2 restart). With Start wirelessly when the truck connects off, only the button starts.
+  Spec §5.2 has the standby amendment (adds `WAKE_LOCK`).
 - **Lab:** the dongle's `aawgd` (BlueZ + hostapd) on a Linux box with a radio could stand
   in as a wireless HU for W1–W2. The Prodigy lab receiver has no wireless bootstrap.
 

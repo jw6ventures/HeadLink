@@ -951,7 +951,9 @@ class ProjectionService : Service() {
         }
         val category = report["final_category"] ?: "CANCELLED"
         val detail = report["final_detail"] ?: "native session released without a final report"
-        if (session.attempt.settings.wireless) WirelessLink.end("session ended: $category")
+        // Stopped from the phone (Home or the notification), a standby link waits for the button only.
+        val operator = session.stopRequested || session.shutdownRequested
+        if (session.attempt.settings.wireless) WirelessLink.sessionEnded(session.attempt.generation, "session ended: $category", operator)
         SessionController.finish(session.attempt, category, detail)
         stopIfIdle()
     }
@@ -1029,7 +1031,7 @@ class ProjectionService : Service() {
                     labSocket?.close()
                 }
             }
-            if (session.attempt.settings.wireless) WirelessLink.end("service destroyed")
+            if (session.attempt.settings.wireless) WirelessLink.sessionEnded(session.attempt.generation, "service destroyed", operator = false)
             SessionController.finish(session.attempt, "CANCELLED", "service destroyed")
         }
         running = null

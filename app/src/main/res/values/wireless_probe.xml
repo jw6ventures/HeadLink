@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- W0 wireless probe (docs/wireless-investigation.md), opened from Diagnostics. -->
+<!-- W0 wireless probe (docs/wireless-investigation.md), opened from Diagnostics, and
+     W2's Connect wirelessly, on the probe and on Home. -->
 <resources>
     <string name="wireless_probe_label">Wireless probe</string>
     <string name="wireless_probe_title">Wireless probe</string>
@@ -21,9 +22,24 @@
     <string name="wireless_bootstrap_saved">W1 outcome: %1$s. Saved as %2$s.</string>
     <string name="wireless_bootstrap_unsaved">W1 outcome: %1$s. Not saved: the report store is not available.</string>
     <string name="wireless_connect_button">Connect wirelessly to %1$s (W2)</string>
-    <string name="wireless_link_bootstrap">W2: reading the truck\'s wireless setup over Bluetooth… Allow Android Auto if the truck asks.</string>
-    <string name="wireless_link_wifi">W2: joining the truck\'s Wi-Fi… Approve Android\'s prompt if it appears.</string>
-    <string name="wireless_link_tcp">W2: connecting to the truck over its Wi-Fi…</string>
-    <string name="wireless_link_projecting">W2: projecting wirelessly. Check the truck\'s screen. Stop it from the notification or the main screen as usual.</string>
-    <string name="wireless_link_ended">W2 ended (%1$s): %2$s. The report is saved; export saved reports under Diagnostics.</string>
+    <string name="wireless_link_bootstrap">Reading the truck\'s wireless setup over Bluetooth… Allow Android Auto if the truck asks.</string>
+    <string name="wireless_link_retry">The truck didn\'t finish its wireless setup. Trying again in %1$d s (%2$d of %3$d)…</string>
+    <string name="wireless_link_wifi">Joining the truck\'s Wi-Fi… Approve Android\'s prompt if it appears.</string>
+    <string name="wireless_link_tcp">Connecting to the truck over its Wi-Fi…</string>
+    <string name="wireless_link_projecting">Projecting wirelessly. Check the truck\'s screen. Stop it from the notification or the main screen as usual.</string>
+    <string name="wireless_link_ended">Wireless ended (%1$s): %2$s. The report is saved; export saved reports under Diagnostics.</string>
+    <string name="home_wireless_connect">Connect wirelessly</string>
+    <string name="home_wireless_cancel">Cancel wireless</string>
+    <string name="home_wireless_hint">Over the truck\'s Wi-Fi, set up through Bluetooth: leave the cable unplugged and the phone paired as usual. Long-press to choose which paired device.</string>
+    <string name="home_wireless_pick">Connect wirelessly to</string>
+    <string name="wireless_link_channel">Wireless connection</string>
+    <string name="wireless_link_notification_title">Connecting wirelessly</string>
+    <string name="wireless_link_waiting">Waiting for the truck. Press Android Auto on the truck\'s screen to project wirelessly.</string>
+    <string name="wireless_link_button">The truck\'s Android Auto button was pressed. Setting up over Bluetooth…</string>
+    <string name="wireless_link_label">Link the truck for wireless</string>
+    <string name="wireless_link_help">Links the app to the truck through Android\'s own dialog, once; turning this on asks for Nearby devices first. From then on, whenever the truck connects to this phone over Bluetooth, Android wakes the app and the app waits for the truck. Pressing Android Auto on the truck\'s screen then projects over the truck\'s Wi-Fi, with the phone in a pocket and the app closed, as with Android Auto. After a wireless session ends, the app waits again until the truck disconnects.\n\nWi-Fi must be on and the cable unplugged; with the cable in, the cable is used. It works only for a head unit already trusted over USB. Turning this off removes the link, and Android stops waking the app.</string>
+    <string name="wireless_auto_label">Start wirelessly when the truck connects</string>
+    <string name="wireless_auto_help">Needs the truck link above. On, the app also takes the truck\'s own offer to start when it connects, or to restart after a drop, so projection starts without pressing anything. Off, only the Android Auto button on the truck\'s screen, or Connect wirelessly here, starts it.\n\nAfter you stop or cancel a wireless session from the phone, only the button starts it again until the truck next connects. The same happens after three automatic starts in a row that each end within two minutes.</string>
+    <string name="wireless_auto_failed">Android did not link the app to the truck: %1$s</string>
+    <string name="home_wireless_no_permission">Connect wirelessly needs Nearby devices. Allow it in Settings, Apps.</string>
 </resources>

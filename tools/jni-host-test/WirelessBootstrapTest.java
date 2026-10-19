@@ -13,6 +13,7 @@ import java.util.regex.Pattern;
 import org.openautoandroid.source.ReportStore;
 import org.openautoandroid.source.WirelessBootstrap;
 import org.openautoandroid.source.WirelessProbe;
+import org.openautoandroid.source.WirelessStandby;
 
 public final class WirelessBootstrapTest {
     private static int passed;
@@ -37,6 +38,11 @@ public final class WirelessBootstrapTest {
         connectMode();
         ping();
         silent();
+        restart();
+        standby();
+        standbyDeadline();
+        rearm();
+        eventCap();
         failures();
         System.out.println("jni-host-test: ok " + passed + " wireless bootstrap checks");
     }
@@ -320,6 +326,165 @@ public final class WirelessBootstrapTest {
         String text = report(s);
         check(text.contains("nudge: nothing received"), "nudge recorded");
         line(text, "outcome=silent");
+    }
+
+    /**
+     * W3's start over (truck runs 3 and 4): SYNC goes quiet after the version reply, the
+     * link reconnects, and the second conversation gets its own nudge and deadline, keeps
+     * the first one's events, and can still reach the Wi-Fi details.
+     */
+    private static void restart() {
+        WirelessBootstrap.Session s = new WirelessBootstrap.Session(new WirelessBootstrap.Redactor(SALT), DEVICE_ID, true);
+        s.received(frame(4, new Proto().num(1, 1).num(2, 6)), 223);
+        for (long t = 300; t <= WirelessBootstrap.DEADLINE_MS; t += 100) s.tick(t);
+        check(s.getDone() && s.outcome() == WirelessBootstrap.Outcome.TALKED, "quiet after the version reply: talked");
+        long again = 35_000;
+        s.restart(again);
+        check(!s.getDone() && s.outcome() == WirelessBootstrap.Outcome.SILENT, "start over clears the conversation");
+        check(s.tick(again + 100).isEmpty(), "no deadline straight after starting over");
+        check(s.tick(again + WirelessBootstrap.NUDGE_MS - 1).isEmpty(), "nudge counts from the new connection");
+        List<WirelessBootstrap.Frame> nudge = s.tick(again + WirelessBootstrap.NUDGE_MS);
+        check(nudge.size() == 1 && nudge.get(0).getId() == WirelessBootstrap.INFO_REQUEST, "nudged again on the new connection");
+        long v = again + WirelessBootstrap.NUDGE_MS + 200;
+        List<WirelessBootstrap.Frame> out = s.received(frame(4, new Proto().num(1, 1).num(2, 6)), v);
+        check(out.size() == 1 && out.get(0).getId() == WirelessBootstrap.VERSION_RESPONSE, "version answered again");
+        out = s.received(frame(1, new Proto().str(1, "192.168.100.1").num(2, 30515).num(3, 2)), v + 30);
+        check(out.stream().anyMatch(f -> f.getId() == WirelessBootstrap.START_RESPONSE), "start response sent on the new connection");
+        s.received(frame(3, infoResponse()), v + 50);
+        check(s.getCredentials() != null && s.outcome() == WirelessBootstrap.Outcome.WIFI_DETAILS, "Wi-Fi details after starting over");
+        check(s.tick(again + WirelessBootstrap.DEADLINE_MS * 2).isEmpty() && !s.getDone(), "held open once the details arrived");
+        String text = WB.report(AT, "0.4.5-lab", 37, 0x0408, 91L, null, s,
+                new WirelessBootstrap.W2Summary("requested", null, "not_attempted", null, null, null, null));
+        check(text.contains("+223ms in 4 WifiVersionRequest") && text.contains("done: deadline"), "first conversation kept in the events");
+        line(text, "frames=in_WifiInfoResponse=1 in_WifiStartRequest=1 in_WifiVersionRequest=2 out_WifiInfoRequest=5 out_WifiStartResponse=1 out_WifiVersionResponse=2");
+        secretsAbsent(text);
+    }
+
+    private static WirelessBootstrap.Session connectSession() {
+        return new WirelessBootstrap.Session(new WirelessBootstrap.Redactor(SALT), DEVICE_ID, true);
+    }
+
+    private static Proto startRequest(long reason) {
+        return new Proto().str(1, "192.168.100.1").num(2, 30515).num(3, reason);
+    }
+
+    /**
+     * Standby (spec 5.2, the standby amendment): after the version reply the conversation
+     * sends nothing unprompted and never times out; the head unit's own start is held while
+     * automatic starts are off, and the button's start goes on as any other.
+     */
+    private static void standby() {
+        WirelessBootstrap.Session s = connectSession();
+        s.standBy(0, false);
+        check(s.getWaiting(), "waiting");
+        List<WirelessBootstrap.Frame> out = s.received(frame(4, new Proto().num(1, 1).num(2, 6)), 190);
+        check(out.size() == 1 && out.get(0).getId() == WirelessBootstrap.VERSION_RESPONSE, "version still answered");
+        int sent = 0;
+        for (long t = 200; t <= 10 * 60_000L; t += 100) sent += s.tick(t).size();
+        check(sent == 0, "nothing sent unprompted while waiting: " + sent);
+        check(!s.getDone() && s.getWaiting(), "no deadline while waiting");
+        check(s.received(new WirelessBootstrap.Frame(WirelessBootstrap.PING_REQUEST, new byte[] {0x08, 0x01}), 600_100).size() == 1,
+                "pings answered while waiting");
+        s.setAcceptAuto(false);
+        out = s.received(frame(1, startRequest(WirelessStandby.REASON_AUTO_LAUNCH)), 600_200);
+        check(out.isEmpty() && s.getWaiting() && s.getStart() == null, "auto-launch held: nothing answered, still waiting");
+        out = s.received(frame(1, startRequest(WirelessStandby.REASON_AUTOMATIC_RESTART)), 600_300);
+        check(out.isEmpty() && s.getStartsHeld() == 2, "a restart is held too");
+        check(s.tick(600_400 + WirelessBootstrap.DEADLINE_MS).isEmpty() && !s.getDone(), "a held start starts no deadline");
+        out = s.received(frame(1, startRequest(WirelessStandby.REASON_USER_REQUEST)), 700_000);
+        check(!s.getWaiting() && s.getStartsAccepted() == 1, "the button's start is accepted");
+        check(out.size() == 2 && out.get(0).getId() == WirelessBootstrap.INFO_REQUEST
+                && out.get(1).getId() == WirelessBootstrap.START_RESPONSE, "and answered as any start is");
+        // From acceptance on, the usual retries and deadline, counted from the start request.
+        int asked = 0;
+        for (long t = 700_100; t < 700_000 + WirelessBootstrap.DEADLINE_MS; t += 100) {
+            for (WirelessBootstrap.Frame f : s.tick(t)) if (f.getId() == WirelessBootstrap.INFO_REQUEST) asked++;
+        }
+        check(asked == WirelessBootstrap.INFO_ATTEMPTS - 1 && !s.getDone(), "info retried after acceptance: " + asked);
+        s.received(frame(3, infoResponse()), 715_000);
+        check(s.getCredentials() != null, "Wi-Fi details after the button");
+        String text = WB.report(AT, "0.4.5-lab", 37, 0x0408, 91L, null, s,
+                new WirelessBootstrap.W2Summary("requested", null, "not_attempted", null, null, null, null));
+        line(text, "start_reason=user_request");
+        line(text, "starts_accepted=1");
+        line(text, "starts_held=2");
+        check(text.contains("held: start request reason auto_launch") && text.contains("accepted: start request reason user_request"),
+                "held and accepted starts in the events");
+        check(text.contains("standby: waiting for the head unit's start request"), "the wait in the events");
+        secretsAbsent(text);
+        // Automatic starts taken: the head unit's own start goes straight through.
+        WirelessBootstrap.Session a = connectSession();
+        a.standBy(0, false);
+        out = a.received(frame(1, startRequest(WirelessStandby.REASON_AUTO_LAUNCH)), 50);
+        check(!a.getWaiting() && out.size() == 2, "auto-launch accepted when automatic starts are taken");
+        // A start without field 3 counts as the button.
+        WirelessBootstrap.Session n = connectSession();
+        n.standBy(0, false);
+        n.setAcceptAuto(false);
+        n.received(frame(1, new Proto().str(1, "192.168.100.1").num(2, 30515)), 50);
+        check(!n.getWaiting(), "a start without a reason is accepted");
+        check(WB.startReason(startRequest(2).build()) == 2L && WB.startReason(new Proto().num(1, 5).build()) == null, "reason read from field 3");
+        // Not standing by, every start is taken, as before.
+        WirelessBootstrap.Session plain = connectSession();
+        plain.setAcceptAuto(false);
+        check(plain.received(frame(1, startRequest(1)), 10).size() == 2 && plain.getStartsAccepted() == 1,
+                "without standby the reason changes nothing");
+    }
+
+    /** An automatic start's first waits still end at the deadline, so the link can try a new connection. */
+    private static void standbyDeadline() {
+        WirelessBootstrap.Session s = connectSession();
+        s.standBy(0, true);
+        s.received(frame(4, new Proto().num(1, 1).num(2, 6)), 223);
+        int sent = 0;
+        for (long t = 300; t < WirelessBootstrap.DEADLINE_MS; t += 100) sent += s.tick(t).size();
+        check(sent == 0 && !s.getDone(), "nothing unprompted before the deadline");
+        s.tick(WirelessBootstrap.DEADLINE_MS);
+        check(s.getDone() && "deadline".equals(s.getDoneWhy()), "the wait ends at the deadline when asked");
+        s.restart(35_000);
+        check(!s.getWaiting() && !s.getDone() && s.getDoneWhy() == null, "a new connection starts over, not waiting until told");
+        s.standBy(35_000, false);
+        for (long t = 35_100; t <= 35_000 + 3 * WirelessBootstrap.DEADLINE_MS; t += 100) s.tick(t);
+        check(!s.getDone(), "after the retries the wait has no deadline");
+    }
+
+    /** A projection ended with the connection still up: back to waiting, nothing of the last start kept. */
+    private static void rearm() {
+        WirelessBootstrap.Session s = connectSession();
+        s.standBy(0, false);
+        s.received(frame(4, new Proto().num(1, 1).num(2, 6)), 190);
+        s.received(frame(1, startRequest(1)), 236);
+        s.received(frame(3, infoResponse()), 300);
+        check(s.getCredentials() != null && !s.getWaiting(), "first projection set up");
+        s.rearm(3_600_000);
+        s.standBy(3_600_000, false);
+        check(s.getCredentials() == null && s.getStart() == null && s.getWifi() == null && s.getWaiting(), "rearmed: details dropped, waiting");
+        check(s.getHuVersion().equals("1.6"), "the head unit's version kept");
+        check(s.tick(3_600_000 + WirelessBootstrap.DEADLINE_MS * 5).isEmpty() && !s.getDone(), "rearmed wait has no deadline");
+        s.setAcceptAuto(false);
+        check(s.received(frame(1, startRequest(2)), 3_700_000).isEmpty(), "after a phone stop, the truck's restart is held");
+        List<WirelessBootstrap.Frame> out = s.received(frame(1, startRequest(0)), 3_800_000);
+        check(out.stream().anyMatch(f -> f.getId() == WirelessBootstrap.START_RESPONSE), "the next button press answered with a start response");
+        s.received(frame(3, infoResponse()), 3_800_050);
+        check(s.getCredentials() != null && s.getStartsAccepted() == 2, "second projection's details");
+        String text = WB.report(AT, "0.4.5-lab", 37, 0x0408, 91L, null, s,
+                new WirelessBootstrap.W2Summary("requested", null, "not_attempted", null, null, null, null));
+        check(text.contains("rearmed on the same connection"), "rearm in the events");
+        secretsAbsent(text);
+    }
+
+    /** A drive-long standby link keeps its report bounded. */
+    private static void eventCap() {
+        WirelessBootstrap.Session s = connectSession();
+        s.standBy(0, false);
+        for (int i = 0; i < WirelessBootstrap.MAX_EVENTS; i++) {
+            s.received(new WirelessBootstrap.Frame(WirelessBootstrap.PING_REQUEST, new byte[] {0x08, 0x01}), 1_000L * i);
+        }
+        check(s.getEvents().size() == WirelessBootstrap.MAX_EVENTS, "events capped at " + WirelessBootstrap.MAX_EVENTS);
+        check(s.getEventsDropped() > 0, "the rest counted");
+        String text = report(s);
+        check(text.contains("events_dropped=" + s.getEventsDropped()), "dropped count in the report");
+        check(text.contains("in_WifiPingRequest=" + WirelessBootstrap.MAX_EVENTS), "frame counts still whole");
     }
 
     private static void failures() {

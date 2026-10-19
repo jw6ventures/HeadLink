@@ -245,6 +245,13 @@ public final class AppSettingsTest {
                 "the congestion restart is on by default");
         check(!stored("congestion_restart", false).attempt(PINS, PerAttempt.Companion.getNONE()).getCongestionRestart(),
                 "and can be cleared");
+        // Spec 5.2, the keep-awake amendment: on unless cleared.
+        check(new SavedSettings().getWirelessKeepAwake(), "the wireless keep-awake is on by default");
+        check(!stored("wireless_keep_awake", false).getWirelessKeepAwake(), "and can be cleared");
+        // Spec 5.2, the standby amendment: the truck's own starts are taken unless cleared,
+        // as the single W3 switch behaved before the button-only choice existed.
+        check(new SavedSettings().getWirelessAutoStart(), "wireless automatic start is on by default");
+        check(!stored("wireless_auto_start", false).getWirelessAutoStart(), "and can be cleared");
 
         // The saved value is kept even while the stage hides it.
         check(discoveryOnly.getAudio() && discoveryOnly.getEncoderFps() == 30, "a hidden choice is still saved");
@@ -280,7 +287,8 @@ public final class AppSettingsTest {
                 "map_on_left", false, "speed_unit", "km/h", "auto_start", false, "diagnostics", true,
                 "marker_colour", "magenta", "clock_format", "12", "day_night", "night", "notifications_on_dashboard", true,
                 "notification_exclusions", excluded, "notifications_paused", true, "call_controls", true,
-                "read_aloud", false, "speech_media", "duck");
+                "read_aloud", false, "speech_media", "duck", "wireless_keep_awake", false,
+                "wireless_auto_start", false);
         SavedSettings d = new SavedSettings();
         // Every field moved off its default, so a key that failed to read would show.
         check(!changed.getProfile().equals(d.getProfile()) && changed.getKeyframeSeconds() == 60
@@ -289,10 +297,10 @@ public final class AppSettingsTest {
                 && changed.getDayNight() == DayNightMode.NIGHT && changed.getNotificationExclusions().equals(excluded)
                 && !changed.getAutoStart() && changed.getCallControls() && !changed.getMapOnLeft()
                 && !changed.getReadAloud() && changed.getSpeechMedia() == SpeechMedia.DUCK
-                && !changed.getCongestionRestart(),
+                && !changed.getCongestionRestart() && !changed.getWirelessKeepAwake() && !changed.getWirelessAutoStart(),
                 "every key read: " + changed);
         Map<String, Object> form = changed.toStored();
-        check(form.size() == 56, "56 fields stored, one key each: " + form.size());
+        check(form.size() == 58, "58 fields stored, one key each: " + form.size());
         check(SavedSettings.Companion.fromStored(form).equals(changed), "the stored form reads back whole");
         check(SavedSettings.Companion.fromStored(d.toStored()).equals(d), "and so do the defaults");
         for (Object value : form.values()) {
