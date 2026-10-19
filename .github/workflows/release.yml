@@ -1,0 +1,64 @@
+# Push a tag v<versionName> (for example v0.5.0) to build, sign and publish a release.
+# Needs the "release" environment's secrets; see docs/release.md.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    environment: release
+    permissions:
+      contents: write      # create the GitHub release
+      id-token: write      # build provenance attestation
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tag matches versionName
+        id: version
+        run: |
+          name=$(sed -n 's/^ *versionName = "\(.*\)"$/\1/p' app/build.gradle.kts)
+          code=$(sed -n 's/^ *versionCode = \([0-9]*\)$/\1/p' app/build.gradle.kts)
+          [ "v$name" = "$GITHUB_REF_NAME" ] \
+            || { echo "::error::tag $GITHUB_REF_NAME does not match versionName $name"; exit 1; }
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+
+      - uses: ./.github/actions/build
+
+      - name: Sign
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          export RELEASE_KEYSTORE="$RUNNER_TEMP/release.jks"
+          printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 -d > "$RELEASE_KEYSTORE"
+          chmod 600 "$RELEASE_KEYSTORE"
+          ./tools/sign-release.sh "dist/OpenAutoAndroid-${{ steps.version.outputs.name }}.apk"
+          rm -f "$RELEASE_KEYSTORE"
+          (cd dist && sha256sum *.apk > SHA256SUMS && cat SHA256SUMS)
+
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/*.apk
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes=fastlane/metadata/android/en-US/changelogs/${{ steps.version.outputs.code }}.txt
+          [ -f "$notes" ] || notes=/dev/null
+          prerelease=
+          case "${{ steps.version.outputs.name }}" in *-*) prerelease=--prerelease ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/*.apk dist/SHA256SUMS \
+              --title "OpenAutoAndroid ${{ steps.version.outputs.name }}" \
+              --notes-file "$notes" $prerelease --verify-tag

@@ -93,7 +93,8 @@ OpenSSL is built from the pinned tarball into `target/openssl/<target>` and link
 statically (`tools/openssl-build.sh`, `tools/openssl-env.sh`); no system OpenSSL is
 used. Building the Android image accepts the Android SDK License. Pinned versions and
 checksums are listed in [licenses](docs/licenses.md). APKs are written to
-`app/build/outputs/apk/`. The debug APK is signed with a local debug key kept in the
+`app/build/outputs/apk/`. Signed releases are built by CI from a version tag; see
+[releases](docs/release.md). The debug APK is signed with a local debug key kept in the
 cache directory; it is not a project identity. To prove a clean build, delete (or move
 aside) `target/` and `app/build/` first.
 

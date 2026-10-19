@@ -61,8 +61,12 @@ android {
 
     lint {
         warningsAsErrors = true
-        // SDK levels are the spec §5.1 baseline; arm64-v8a is the only target ABI.
-        disable += setOf("OldTargetApi", "GradleDependency", "ChromeOsAbiSupport")
+        // SDK levels are the spec §5.1 baseline; arm64-v8a is the only target ABI. The two
+        // "newer version available" checks ask the network, so an online build (CI) would
+        // fail whenever Google ships a release; versions move by a deliberate pin change.
+        disable += setOf(
+            "OldTargetApi", "GradleDependency", "AndroidGradlePluginVersion", "ChromeOsAbiSupport",
+        )
     }
 }
 

@@ -1,0 +1,53 @@
+# The project's own build, unchanged, on a GitHub runner: the pinned Podman images from
+# tools/Containerfile.*, the checksummed dependency fetch, then check.sh and
+# android-build.sh. Shared by the ci and release workflows.
+name: Build
+description: Build the pinned images and run the Rust checks, APK build, lint and host tests
+runs:
+  using: composite
+  steps:
+    - name: Free disk space
+      shell: bash
+      # The Android image is about 5 GB, and the runner's preinstalled SDKs are unused.
+      run: |
+        sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+        df -h /
+
+    - name: Allow rootless Podman user namespaces
+      shell: bash
+      # Ubuntu 24.04's AppArmor default blocks the unprivileged user namespaces that
+      # tools/podman-env.sh's --userns=keep-id needs.
+      run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+    - name: Restore dependency caches
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/openauto-android/cargo
+          ~/.cache/openauto-android/sources
+          ~/.cache/openauto-android/gradle/caches/modules-2
+          ~/.cache/openauto-android/gradle/wrapper
+        key: deps-${{ hashFiles('Cargo.lock', 'tools/proto-gen/Cargo.lock', 'tools/fetch-deps.sh', 'gradle/verification-metadata.xml', 'gradle/libs.versions.toml', 'gradle/wrapper/gradle-wrapper.properties') }}
+        restore-keys: deps-
+
+    - name: Build images
+      shell: bash
+      run: |
+        podman --version
+        podman build -f tools/Containerfile.rust -t localhost/openauto-rust:1.85.1 .
+        podman build -f tools/Containerfile.android -t localhost/openauto-android:p0.2 .
+
+    - name: Fetch dependencies
+      shell: bash
+      run: ./tools/fetch-deps.sh
+
+    - name: Rust checks
+      shell: bash
+      run: ./tools/check.sh
+
+    - name: Android build, lint, APK checks and host tests
+      shell: bash
+      # --online fills the Gradle cache; every artifact is checked against
+      # gradle/verification-metadata.xml. Everything else in the build runs offline.
+      run: ./tools/android-build.sh --online

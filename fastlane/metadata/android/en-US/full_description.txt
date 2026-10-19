@@ -1,0 +1,17 @@
+OpenAutoAndroid is an independent, open-source app that drives a car's Android Auto head unit from your phone, without Google's Android Auto app. It is not made by or affiliated with Google or any car maker.
+
+<b>What it does</b>
+<ul>
+<li>Projects over USB, or wirelessly over the head unit's own Wi-Fi, started from the phone, automatically when the car connects, or from the car's Android Auto button.</li>
+<li>Its own offline map and turn-by-turn navigation (Mapsforge maps, BRouter routing), with turn instructions on the instrument cluster where the car supports it.</li>
+<li>Media controls and now-playing for whatever is playing on the phone; phone audio stays on Bluetooth.</li>
+<li>Destinations shared from OsmAnd or any app, address search from OsmAnd map files, saved places.</li>
+<li>Optional live traffic with your own HERE key, and weather from Breezy Weather. Both are off by default.</li>
+</ul>
+
+<b>Before you install</b>
+Head units only talk to a phone that presents a certificate they trust. OpenAutoAndroid does not ship one: you import a source identity you have obtained yourself (the project's documentation describes how). Without it the app cannot connect.
+
+Tested on a 2024 Ford SYNC 4.0 head unit. Other head units may not work. No certification or vehicle compatibility is claimed. Do not operate the phone while driving.
+
+No ads, no analytics, no account. The app connects to the internet only if you turn on live traffic.

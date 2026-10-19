@@ -13,3 +13,4 @@
 *.p12
 *.jks
 *.keystore
+/dist/

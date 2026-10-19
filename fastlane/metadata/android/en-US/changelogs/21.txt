@@ -1,0 +1,3 @@
+First public build.
+• Wireless projection on head units that offer it: start from the phone, automatically when the car connects, or from the car's Android Auto button.
+• Wired projection, offline map and navigation, cluster turn-by-turn, media controls.
