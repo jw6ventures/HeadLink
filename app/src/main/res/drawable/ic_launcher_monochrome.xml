@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- HeadLink's glyph for themed icons: a phone, its cable with the link, and the car's
+     screen, outlined. Drawn inside the 72dp visible circle. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:scaleX="0.9"
+        android:scaleY="0.9"
+        android:translateX="4.5"
+        android:translateY="7.2">
+        <path
+            android:fillColor="#00000000"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="4.4"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:pathData="M51,30h28a5,5 0 0 1 5,5v14a5,5 0 0 1 -5,5h-28a5,5 0 0 1 -5,-5v-14a5,5 0 0 1 5,-5z" />
+        <path
+            android:fillColor="#00000000"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="4.4"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:pathData="M30,40h8a4,4 0 0 1 4,4v26a4,4 0 0 1 -4,4h-8a4,4 0 0 1 -4,-4v-26a4,4 0 0 1 4,-4z" />
+        <path
+            android:fillColor="#00000000"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="4.4"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:pathData="M42,68h8" />
+        <path
+            android:fillColor="#00000000"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="4.4"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:pathData="M56,62h4a6,6 0 0 1 0,12h-4a6,6 0 0 1 0,-12z" />
+        <path
+            android:fillColor="#00000000"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="4.4"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:pathData="M56.5,70.5l3,-5" />
+        <path
+            android:fillColor="#00000000"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="4.4"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:pathData="M66,68h6a6,6 0 0 0 6,-6v-8" />
+    </group>
+</vector>
