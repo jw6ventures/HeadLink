@@ -11,8 +11,8 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import org.openautoandroid.source.ObfRules;
-import org.openautoandroid.source.PoiValues;
+import com.jw6ventures.headlink.ObfRules;
+import com.jw6ventures.headlink.PoiValues;
 
 public final class ObfLibraryTest {
     private static int passed;

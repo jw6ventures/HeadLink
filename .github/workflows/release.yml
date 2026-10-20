@@ -43,7 +43,7 @@ jobs:
           export RELEASE_KEYSTORE="$RUNNER_TEMP/release.jks"
           printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 -d > "$RELEASE_KEYSTORE"
           chmod 600 "$RELEASE_KEYSTORE"
-          ./tools/sign-release.sh "dist/OpenAutoAndroid-${{ steps.version.outputs.name }}.apk"
+          ./tools/sign-release.sh "dist/HeadLink-${{ steps.version.outputs.name }}.apk"
           rm -f "$RELEASE_KEYSTORE"
           (cd dist && sha256sum *.apk > SHA256SUMS && cat SHA256SUMS)
 
@@ -60,5 +60,5 @@ jobs:
           prerelease=
           case "${{ steps.version.outputs.name }}" in *-*) prerelease=--prerelease ;; esac
           gh release create "$GITHUB_REF_NAME" dist/*.apk dist/SHA256SUMS \
-              --title "OpenAutoAndroid ${{ steps.version.outputs.name }}" \
+              --title "HeadLink ${{ steps.version.outputs.name }}" \
               --notes-file "$notes" $prerelease --verify-tag

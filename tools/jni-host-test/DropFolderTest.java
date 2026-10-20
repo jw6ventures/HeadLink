@@ -8,10 +8,10 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.Arrays;
-import org.openautoandroid.source.DropAction;
-import org.openautoandroid.source.DropKind;
-import org.openautoandroid.source.DropRules;
-import org.openautoandroid.source.MapData;
+import com.jw6ventures.headlink.DropAction;
+import com.jw6ventures.headlink.DropKind;
+import com.jw6ventures.headlink.DropRules;
+import com.jw6ventures.headlink.MapData;
 
 public final class DropFolderTest {
     private static int passed;

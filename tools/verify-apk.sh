@@ -9,7 +9,7 @@ fail() {
 }
 badging=$(aapt2 dump badging "$apk")
 line() { printf '%s\n' "$badging" | grep -qx "$1" || fail "expected badging line: $1"; }
-printf '%s\n' "$badging" | grep -q "^package: name='org.openautoandroid.source' " || fail "package name"
+printf '%s\n' "$badging" | grep -q "^package: name='com.jw6ventures.headlink' " || fail "package name"
 line "minSdkVersion:'33'"
 line "targetSdkVersion:'36'"
 line "native-code: 'arm64-v8a'"
@@ -19,7 +19,7 @@ line "native-code: 'arm64-v8a'"
 # the guard that makes adding another a visible act.
 # P7.9 adds MANAGE_ONGOING_CALLS (signature|appop; docs/p7-backends-results.md §4.2 amends
 # docs/p7-plan.md §9 item 3). Declaring it grants nothing: it takes effect only after
-# `adb shell appops set org.openautoandroid.source MANAGE_ONGOING_CALLS allow`, and even
+# `adb shell appops set com.jw6ventures.headlink MANAGE_ONGOING_CALLS allow`, and even
 # then only while the disabled CallCompanionService pinned below is enabled by the
 # operator's Call controls setting during a session.
 # P10 adds org.breezyweather.READ_PROVIDER (spec §5.2 as amended, docs/p10-plan.md §9):
@@ -49,7 +49,7 @@ permissions=$(printf '%s\n' "$badging" | sed -n "s/^uses-permission: name='\([^'
     || fail "unexpected permission set: $permissions"
 # One launcher entry, the main screen. The probe is reached from Diagnostics alone.
 [ "$(printf '%s\n' "$badging" | grep -c '^launchable-activity:')" = 1 ] || fail "launcher entry count"
-printf '%s\n' "$badging" | grep -q "^launchable-activity: name='org.openautoandroid.source.ConnectionActivity'" \
+printf '%s\n' "$badging" | grep -q "^launchable-activity: name='com.jw6ventures.headlink.ConnectionActivity'" \
     || fail "ConnectionActivity must be the launcher entry"
 
 printf '%s\n' "$badging" | grep -qx "  uses-feature: name='android.hardware.usb.accessory'" \
@@ -67,7 +67,7 @@ probe=$(printf '%s\n' "$manifest" | awk '
     /E: activity / { collecting = 1 }
     collecting { sub(/^ +/, ""); line = line " " $0 }
     END { if (collecting) print line }
-' | grep '"org.openautoandroid.source.WirelessProbeActivity"') || fail "WirelessProbeActivity not declared"
+' | grep '"com.jw6ventures.headlink.WirelessProbeActivity"') || fail "WirelessProbeActivity not declared"
 printf '%s\n' "$probe" | grep -q ':exported([^)]*)=false\( \|$\)' || fail "WirelessProbeActivity must not be exported"
 # Cleartext never in a release build. A debuggable build may carry the network security
 # config that lets live traffic reach the lab's stand-in server on the lab host (P9 §8).
@@ -91,21 +91,21 @@ services=$(printf '%s\n' "$manifest" | awk '
 # Exactly five services, each pinned by name and by the attributes that make it safe.
 # Anything else appearing here is a packaging regression, not a detail.
 [ "$(printf '%s\n' "$services" | grep -c 'E: service ')" = 5 ] || fail "service count"
-projection=$(printf '%s\n' "$services" | grep '"org.openautoandroid.source.ProjectionService"') \
+projection=$(printf '%s\n' "$services" | grep '"com.jw6ventures.headlink.ProjectionService"') \
     || fail "ProjectionService not declared"
 printf '%s\n' "$projection" | grep -q ':exported([^)]*)=false\( \|$\)' || fail "ProjectionService must not be exported"
 printf '%s\n' "$projection" | grep -q ':foregroundServiceType([^)]*)=0x00000010' \
     || fail "ProjectionService foregroundServiceType must be connectedDevice only"
 
 # W2/W3: the foreground while a wireless link sets up. Unexported, connectedDevice only.
-linking=$(printf '%s\n' "$services" | grep '"org.openautoandroid.source.WirelessLinkService"') \
+linking=$(printf '%s\n' "$services" | grep '"com.jw6ventures.headlink.WirelessLinkService"') \
     || fail "WirelessLinkService not declared"
 printf '%s\n' "$linking" | grep -q ':exported([^)]*)=false\( \|$\)' || fail "WirelessLinkService must not be exported"
 printf '%s\n' "$linking" | grep -q ':foregroundServiceType([^)]*)=0x00000010' \
     || fail "WirelessLinkService foregroundServiceType must be connectedDevice only"
 # W3: woken by Android's companion-device service alone. BIND_COMPANION_DEVICE_SERVICE
 # (signature) is what makes exporting it safe; it is bound, never started, so no type.
-companion=$(printf '%s\n' "$services" | grep '"org.openautoandroid.source.WirelessCompanionService"') \
+companion=$(printf '%s\n' "$services" | grep '"com.jw6ventures.headlink.WirelessCompanionService"') \
     || fail "WirelessCompanionService not declared"
 printf '%s\n' "$companion" | grep -q ':permission([^)]*)="android.permission.BIND_COMPANION_DEVICE_SERVICE"' \
     || fail "WirelessCompanionService must be guarded by BIND_COMPANION_DEVICE_SERVICE"
@@ -117,7 +117,7 @@ fi
 # P5.1's notification listener. It is bound by the system and by nothing else: the
 # BIND_NOTIFICATION_LISTENER_SERVICE guard is what makes an unexported, callback-free
 # service the narrowest form spec §5.2 permits. Without the guard any app could bind it.
-media=$(printf '%s\n' "$services" | grep '"org.openautoandroid.source.MediaAccessService"') \
+media=$(printf '%s\n' "$services" | grep '"com.jw6ventures.headlink.MediaAccessService"') \
     || fail "MediaAccessService not declared"
 printf '%s\n' "$media" | grep -q ':exported([^)]*)=false\( \|$\)' || fail "MediaAccessService must not be exported"
 printf '%s\n' "$media" | grep -q ':permission([^)]*)="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"' \
@@ -131,7 +131,7 @@ fi
 # P7.9's companion in-call service. Disabled in the manifest, so an idle app exposes
 # nothing to Telecom; guarded by BIND_INCALL_SERVICE (signature|privileged), which is what
 # makes exporting it safe; and never a call-screen UI, in or out of car mode.
-incall=$(printf '%s\n' "$services" | grep '"org.openautoandroid.source.CallCompanionService"') \
+incall=$(printf '%s\n' "$services" | grep '"com.jw6ventures.headlink.CallCompanionService"') \
     || fail "CallCompanionService not declared"
 printf '%s\n' "$incall" | grep -q ':enabled([^)]*)=false\( \|$\)' || fail "CallCompanionService must be disabled in the manifest"
 printf '%s\n' "$incall" | grep -q ':permission([^)]*)="android.permission.BIND_INCALL_SERVICE"' \

@@ -5,9 +5,9 @@
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import org.openautoandroid.source.SignalRows;
-import org.openautoandroid.source.SimSignal;
-import org.openautoandroid.source.SubscriptionSignal;
+import com.jw6ventures.headlink.SignalRows;
+import com.jw6ventures.headlink.SimSignal;
+import com.jw6ventures.headlink.SubscriptionSignal;
 
 public final class SimSignalTest {
     private static int passed;

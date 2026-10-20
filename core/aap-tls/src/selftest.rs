@@ -55,7 +55,7 @@ fn client(
     let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?;
     let key = PKey::from_ec_key(EcKey::generate(&group)?)?;
     let mut name = X509NameBuilder::new()?;
-    name.append_entry_by_nid(Nid::COMMONNAME, "OpenAutoAndroid self-test client")?;
+    name.append_entry_by_nid(Nid::COMMONNAME, "HeadLink self-test client")?;
     let name = name.build();
     let mut builder = X509::builder()?;
     builder.set_version(2)?;

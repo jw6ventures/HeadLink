@@ -27,7 +27,7 @@ set -eu
 cd "$(dirname "$0")/.."
 . tools/podman-env.sh
 RECEIVER_IMAGE=localhost/openauto-lab-receiver:p4
-PACKAGE=org.openautoandroid.source
+PACKAGE=com.jw6ventures.headlink
 SOCKET=openauto-lab
 PORT=5288
 work=$CACHE_ROOT/receiver
@@ -57,7 +57,7 @@ podman run -d --name "$name" --network host --security-opt label=disable --usern
     -v "$work:/receiver" -v "$out:/out" "$RECEIVER_IMAGE" sh -ec "
     cd /out
     openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 7 \
-        -subj '/CN=OpenAutoAndroid lab receiver' \
+        -subj '/CN=HeadLink lab receiver' \
         -keyout receiver-key.pem -out receiver-cert.pem 2>/dev/null
     export OAA_LAB_CERT_PEM=/out/receiver-cert.pem OAA_LAB_KEY_PEM=/out/receiver-key.pem
     exec /receiver/build/lab-receiver --listen 127.0.0.1:$PORT --request-version 1.1 \

@@ -24,8 +24,8 @@ use std::{
 };
 
 pub const KEY_BITS: u32 = 2048;
-pub const SUBJECT_COMMON_NAME: &str = "OpenAutoAndroid source";
-pub const SUBJECT_ORGANIZATION: &str = "OpenAutoAndroid project";
+pub const SUBJECT_COMMON_NAME: &str = "HeadLink source";
+pub const SUBJECT_ORGANIZATION: &str = "HeadLink project";
 /// Validity starts at a fixed past date rather than at generation, so a head unit whose
 /// clock lags (no network time) does not see a not-yet-valid certificate. Design choice;
 /// see docs/references.md. 2024-01-01T00:00:00Z.

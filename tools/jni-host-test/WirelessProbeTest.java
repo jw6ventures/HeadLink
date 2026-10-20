@@ -6,8 +6,8 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
-import org.openautoandroid.source.ReportStore;
-import org.openautoandroid.source.WirelessProbe;
+import com.jw6ventures.headlink.ReportStore;
+import com.jw6ventures.headlink.WirelessProbe;
 
 public final class WirelessProbeTest {
     private static int passed;

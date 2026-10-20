@@ -5,7 +5,7 @@
 // rasterises; whether the retried tile then draws needs the lab or the vehicle.
 import java.io.File;
 import java.util.logging.Logger;
-import org.openautoandroid.source.MapReadGuard;
+import com.jw6ventures.headlink.MapReadGuard;
 import org.oscim.backend.canvas.Bitmap;
 import org.oscim.core.MapElement;
 import org.oscim.layers.tile.MapTile;

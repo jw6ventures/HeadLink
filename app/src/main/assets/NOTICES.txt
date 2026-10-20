@@ -1,7 +1,8 @@
-OpenAutoAndroid POC - third-party notices
+HeadLink - third-party notices
 
-OpenAutoAndroid is licensed GPL-3.0-only. Corresponding source, build instructions,
-and the license inventory are published with the project (docs/licenses.md). This
+HeadLink is licensed GPL-3.0-only. Corresponding source, build instructions,
+and the license inventory are published with the project at
+https://github.com/jw6ventures/headlink (docs/licenses.md). This
 application includes the components below; their license texts follow.
 
 1. Statically linked into lib/arm64-v8a/libaap_jni.so

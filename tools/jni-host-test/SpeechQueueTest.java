@@ -5,17 +5,17 @@
 // the report carries and what it never carries, and what a tapped notification is read as.
 // SpeechQueue and ReadAloudText are pure Kotlin; Speaker, the Android glue around them
 // (TextToSpeech, audio focus, the A2DP device list), needs a phone and a Bluetooth sink.
-import org.openautoandroid.source.DashNotification;
-import org.openautoandroid.source.NotificationWords;
-import org.openautoandroid.source.ReadAloudText;
-import org.openautoandroid.source.SampleOutcome;
-import org.openautoandroid.source.SpeechAction;
-import org.openautoandroid.source.SpeechConditions;
-import org.openautoandroid.source.SpeechEnd;
-import org.openautoandroid.source.SpeechKind;
-import org.openautoandroid.source.SpeechMedia;
-import org.openautoandroid.source.SpeechQueue;
-import org.openautoandroid.source.SpeechSkip;
+import com.jw6ventures.headlink.DashNotification;
+import com.jw6ventures.headlink.NotificationWords;
+import com.jw6ventures.headlink.ReadAloudText;
+import com.jw6ventures.headlink.SampleOutcome;
+import com.jw6ventures.headlink.SpeechAction;
+import com.jw6ventures.headlink.SpeechConditions;
+import com.jw6ventures.headlink.SpeechEnd;
+import com.jw6ventures.headlink.SpeechKind;
+import com.jw6ventures.headlink.SpeechMedia;
+import com.jw6ventures.headlink.SpeechQueue;
+import com.jw6ventures.headlink.SpeechSkip;
 
 public final class SpeechQueueTest {
     private static int passed;

@@ -260,7 +260,7 @@ impl LabPlayer {
         NowPlaying::new(
             self.state,
             self.position.saturating_add(elapsed),
-            "org.openautoandroid.source (lab)",
+            "com.jw6ventures.headlink (lab)",
             title,
             artist,
             album,

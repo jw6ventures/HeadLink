@@ -5,15 +5,15 @@
 import java.util.List;
 import java.util.Set;
 import kotlin.Pair;
-import org.openautoandroid.source.RouteFigures;
-import org.openautoandroid.source.SetupCheck;
-import org.openautoandroid.source.SetupItem;
-import org.openautoandroid.source.SpeedUnit;
-import org.openautoandroid.source.Stage;
-import org.openautoandroid.source.Status;
-import org.openautoandroid.source.StatusAction;
-import org.openautoandroid.source.StatusText;
-import org.openautoandroid.source.StatusTone;
+import com.jw6ventures.headlink.RouteFigures;
+import com.jw6ventures.headlink.SetupCheck;
+import com.jw6ventures.headlink.SetupItem;
+import com.jw6ventures.headlink.SpeedUnit;
+import com.jw6ventures.headlink.Stage;
+import com.jw6ventures.headlink.Status;
+import com.jw6ventures.headlink.StatusAction;
+import com.jw6ventures.headlink.StatusText;
+import com.jw6ventures.headlink.StatusTone;
 
 public final class StatusTextTest {
     private static int passed;

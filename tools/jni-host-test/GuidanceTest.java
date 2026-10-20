@@ -11,17 +11,17 @@ import java.io.File;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
-import org.openautoandroid.source.FollowResult;
-import org.openautoandroid.source.FollowState;
-import org.openautoandroid.source.Maneuver;
-import org.openautoandroid.source.Maneuvers;
-import org.openautoandroid.source.Nogo;
-import org.openautoandroid.source.Route;
-import org.openautoandroid.source.RouteFollower;
-import org.openautoandroid.source.RouteOptions;
-import org.openautoandroid.source.RouteRequest;
-import org.openautoandroid.source.Router;
-import org.openautoandroid.source.RoutingData;
+import com.jw6ventures.headlink.FollowResult;
+import com.jw6ventures.headlink.FollowState;
+import com.jw6ventures.headlink.Maneuver;
+import com.jw6ventures.headlink.Maneuvers;
+import com.jw6ventures.headlink.Nogo;
+import com.jw6ventures.headlink.Route;
+import com.jw6ventures.headlink.RouteFollower;
+import com.jw6ventures.headlink.RouteOptions;
+import com.jw6ventures.headlink.RouteRequest;
+import com.jw6ventures.headlink.Router;
+import com.jw6ventures.headlink.RoutingData;
 
 public final class GuidanceTest {
     private static int passed;

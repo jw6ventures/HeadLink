@@ -1,4 +1,7 @@
-# OpenAutoAndroid
+# HeadLink
+
+HeadLink (formerly OpenAutoAndroid) is published by [JW6 Ventures](https://jw6ventures.com) at
+<https://github.com/jw6ventures/headlink>.
 
 Ordinary-app Android Auto source feasibility project, governed by [spec.md](spec.md)
 and tracked in [plan.md](plan.md). **G0–G3 passed on the Pixel 9 with a 2024 Ford
@@ -109,7 +112,7 @@ sourcing `tools/openssl-env.sh`.
 adb install app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Launch **OpenAutoAndroid POC**. Choose **Stop after** `projection` for the video and input
+Launch **HeadLink**. Choose **Stop after** `projection` for the video and input
 demonstration (G4/G5; see [its procedure](docs/g4-g5-procedure.md)) or `discovery` for the
 handshake POC. For G0, the report's `[native_probe]` section must show
 `self_test=pass`, `abi=aarch64-android`, and `tls_library=OpenSSL 3.5.8 …`, and its

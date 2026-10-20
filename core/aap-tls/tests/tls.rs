@@ -481,7 +481,7 @@ fn identity_is_rsa2048_sha256_non_ca_server_auth_and_persists() {
         "CA:FALSE",
         "TLS Web Server Authentication",
         "Digital Signature, Key Encipherment",
-        "Subject: CN=OpenAutoAndroid source, O=OpenAutoAndroid project",
+        "Subject: CN=HeadLink source, O=HeadLink project",
         "Not Before: Jan  1 00:00:00 2024 GMT",
         "Not After : Jan  1 00:00:00 2049 GMT",
     ] {
@@ -601,7 +601,7 @@ fn supplied_identity_preserves_and_transmits_intermediate_chain() {
     assert!(identity
         .summary()
         .contains("source_identity_self_signed=false"));
-    assert!(!identity.summary().contains("OpenAutoAndroid project"));
+    assert!(!identity.summary().contains("HeadLink project"));
     assert!(!identity.summary().contains("PRIVATE KEY"));
     let dir = std::env::temp_dir().join(format!("aap-chain-{}", identity::random_uuid().unwrap()));
     identity.save(&dir).unwrap();

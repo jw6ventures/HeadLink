@@ -10,28 +10,28 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
-import org.openautoandroid.source.Box;
-import org.openautoandroid.source.CallAction;
-import org.openautoandroid.source.CallActionKind;
-import org.openautoandroid.source.CallPhase;
-import org.openautoandroid.source.CallSource;
-import org.openautoandroid.source.CallState;
-import org.openautoandroid.source.Dashboard;
-import org.openautoandroid.source.DashboardChoices;
-import org.openautoandroid.source.DashboardLayout;
-import org.openautoandroid.source.DashboardPalette;
-import org.openautoandroid.source.DashNotification;
-import org.openautoandroid.source.DayNightMode;
-import org.openautoandroid.source.Favorite;
-import org.openautoandroid.source.FlexRules;
-import org.openautoandroid.source.FlexSource;
-import org.openautoandroid.source.MapOrientation;
-import org.openautoandroid.source.MarkerColour;
-import org.openautoandroid.source.MediaSessions;
-import org.openautoandroid.source.Player;
-import org.openautoandroid.source.SpeedUnit;
-import org.openautoandroid.source.TouchList;
-import org.openautoandroid.source.UpcomingTurn;
+import com.jw6ventures.headlink.Box;
+import com.jw6ventures.headlink.CallAction;
+import com.jw6ventures.headlink.CallActionKind;
+import com.jw6ventures.headlink.CallPhase;
+import com.jw6ventures.headlink.CallSource;
+import com.jw6ventures.headlink.CallState;
+import com.jw6ventures.headlink.Dashboard;
+import com.jw6ventures.headlink.DashboardChoices;
+import com.jw6ventures.headlink.DashboardLayout;
+import com.jw6ventures.headlink.DashboardPalette;
+import com.jw6ventures.headlink.DashNotification;
+import com.jw6ventures.headlink.DayNightMode;
+import com.jw6ventures.headlink.Favorite;
+import com.jw6ventures.headlink.FlexRules;
+import com.jw6ventures.headlink.FlexSource;
+import com.jw6ventures.headlink.MapOrientation;
+import com.jw6ventures.headlink.MarkerColour;
+import com.jw6ventures.headlink.MediaSessions;
+import com.jw6ventures.headlink.Player;
+import com.jw6ventures.headlink.SpeedUnit;
+import com.jw6ventures.headlink.TouchList;
+import com.jw6ventures.headlink.UpcomingTurn;
 
 public final class DashboardFlexTest {
     private static int passed;
@@ -421,7 +421,7 @@ public final class DashboardFlexTest {
 
     private static void telecomsHeadsetSessionIsNotAPlayer() {
         MediaSessions rules = MediaSessions.INSTANCE;
-        String own = "org.openautoandroid.source";
+        String own = "com.jw6ventures.headlink";
         // During a call: Telecom's HeadsetMediaButton first, with no state, then a paused player.
         check(rules.pick(List.of(MediaSessions.TELECOM, "com.example.music"), List.of(false, true), own) == 1,
             "Telecom's headset session is skipped for the player behind it");

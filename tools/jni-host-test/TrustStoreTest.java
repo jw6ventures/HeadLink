@@ -6,8 +6,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.List;
 import java.util.Map;
-import org.openautoandroid.source.NativeBridgeKt;
-import org.openautoandroid.source.TrustStore;
+import com.jw6ventures.headlink.NativeBridgeKt;
+import com.jw6ventures.headlink.TrustStore;
 
 public final class TrustStoreTest {
     private static int passed;

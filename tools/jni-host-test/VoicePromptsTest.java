@@ -6,19 +6,19 @@
 import btools.router.VoiceHintReader;
 import java.util.ArrayList;
 import java.util.List;
-import org.openautoandroid.source.LaterStep;
-import org.openautoandroid.source.Maneuver;
-import org.openautoandroid.source.Maneuvers;
-import org.openautoandroid.source.NextStep;
-import org.openautoandroid.source.PromptDetail;
-import org.openautoandroid.source.PromptStage;
-import org.openautoandroid.source.PromptTiming;
-import org.openautoandroid.source.RouteFollower;
-import org.openautoandroid.source.SpeedUnit;
-import org.openautoandroid.source.SpokenText;
-import org.openautoandroid.source.VoicePrompt;
-import org.openautoandroid.source.VoicePrompts;
-import org.openautoandroid.source.VoiceSettings;
+import com.jw6ventures.headlink.LaterStep;
+import com.jw6ventures.headlink.Maneuver;
+import com.jw6ventures.headlink.Maneuvers;
+import com.jw6ventures.headlink.NextStep;
+import com.jw6ventures.headlink.PromptDetail;
+import com.jw6ventures.headlink.PromptStage;
+import com.jw6ventures.headlink.PromptTiming;
+import com.jw6ventures.headlink.RouteFollower;
+import com.jw6ventures.headlink.SpeedUnit;
+import com.jw6ventures.headlink.SpokenText;
+import com.jw6ventures.headlink.VoicePrompt;
+import com.jw6ventures.headlink.VoicePrompts;
+import com.jw6ventures.headlink.VoiceSettings;
 
 public final class VoicePromptsTest {
     private static int passed;

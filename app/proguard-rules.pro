@@ -17,17 +17,17 @@
 # libaap_jni finds NativeBridge by class name and registers its natives by method name
 # and signature (core/aap-jni/src/lib.rs, BRIDGE_CLASS and RegisterNatives). A renamed
 # native fails RegisterNatives, and the library then refuses to load.
--keep class org.openautoandroid.source.NativeBridge {
+-keep class com.jw6ventures.headlink.NativeBridge {
     native <methods>;
 }
 
 # The session callback is looked up by GetMethodID on the callback object's class, as
 # onNativeEvent (JI[B)V (CALLBACK_METHOD, CALLBACK_SIGNATURE). Its implementations are
 # lambdas, so the interface and every implementation keep the name.
--keep interface org.openautoandroid.source.SessionCallback {
+-keep interface com.jw6ventures.headlink.SessionCallback {
     void onNativeEvent(long, int, byte[]);
 }
--keepclassmembers class * implements org.openautoandroid.source.SessionCallback {
+-keepclassmembers class * implements com.jw6ventures.headlink.SessionCallback {
     void onNativeEvent(long, int, byte[]);
 }
 

@@ -21,41 +21,41 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.zip.GZIPOutputStream;
-import org.openautoandroid.source.AlertLevel;
-import org.openautoandroid.source.Box;
-import org.openautoandroid.source.CallPhase;
-import org.openautoandroid.source.CallSource;
-import org.openautoandroid.source.CallState;
-import org.openautoandroid.source.ClockFormat;
-import org.openautoandroid.source.Dashboard;
-import org.openautoandroid.source.DashboardChoices;
-import org.openautoandroid.source.DashboardLayout;
-import org.openautoandroid.source.DayNightMode;
-import org.openautoandroid.source.FlexRules;
-import org.openautoandroid.source.FlexSource;
-import org.openautoandroid.source.MapOrientation;
-import org.openautoandroid.source.MarkerColour;
-import org.openautoandroid.source.PhoneSnapshot;
-import org.openautoandroid.source.SpeechAction;
-import org.openautoandroid.source.SpeechConditions;
-import org.openautoandroid.source.SpeechQueue;
-import org.openautoandroid.source.SpeechSkip;
-import org.openautoandroid.source.SpeedUnit;
-import org.openautoandroid.source.WeatherAlert;
-import org.openautoandroid.source.WeatherCode;
-import org.openautoandroid.source.WeatherCue;
-import org.openautoandroid.source.WeatherData;
-import org.openautoandroid.source.WeatherFeed;
-import org.openautoandroid.source.WeatherJson;
-import org.openautoandroid.source.WeatherPlace;
-import org.openautoandroid.source.WeatherReadException;
-import org.openautoandroid.source.WeatherReading;
-import org.openautoandroid.source.WeatherRules;
-import org.openautoandroid.source.WeatherSettings;
-import org.openautoandroid.source.WeatherSource;
-import org.openautoandroid.source.WeatherState;
-import org.openautoandroid.source.WeatherStatus;
-import org.openautoandroid.source.WeatherText;
+import com.jw6ventures.headlink.AlertLevel;
+import com.jw6ventures.headlink.Box;
+import com.jw6ventures.headlink.CallPhase;
+import com.jw6ventures.headlink.CallSource;
+import com.jw6ventures.headlink.CallState;
+import com.jw6ventures.headlink.ClockFormat;
+import com.jw6ventures.headlink.Dashboard;
+import com.jw6ventures.headlink.DashboardChoices;
+import com.jw6ventures.headlink.DashboardLayout;
+import com.jw6ventures.headlink.DayNightMode;
+import com.jw6ventures.headlink.FlexRules;
+import com.jw6ventures.headlink.FlexSource;
+import com.jw6ventures.headlink.MapOrientation;
+import com.jw6ventures.headlink.MarkerColour;
+import com.jw6ventures.headlink.PhoneSnapshot;
+import com.jw6ventures.headlink.SpeechAction;
+import com.jw6ventures.headlink.SpeechConditions;
+import com.jw6ventures.headlink.SpeechQueue;
+import com.jw6ventures.headlink.SpeechSkip;
+import com.jw6ventures.headlink.SpeedUnit;
+import com.jw6ventures.headlink.WeatherAlert;
+import com.jw6ventures.headlink.WeatherCode;
+import com.jw6ventures.headlink.WeatherCue;
+import com.jw6ventures.headlink.WeatherData;
+import com.jw6ventures.headlink.WeatherFeed;
+import com.jw6ventures.headlink.WeatherJson;
+import com.jw6ventures.headlink.WeatherPlace;
+import com.jw6ventures.headlink.WeatherReadException;
+import com.jw6ventures.headlink.WeatherReading;
+import com.jw6ventures.headlink.WeatherRules;
+import com.jw6ventures.headlink.WeatherSettings;
+import com.jw6ventures.headlink.WeatherSource;
+import com.jw6ventures.headlink.WeatherState;
+import com.jw6ventures.headlink.WeatherStatus;
+import com.jw6ventures.headlink.WeatherText;
 import kotlin.Pair;
 
 public final class WeatherTest {
@@ -290,9 +290,9 @@ public final class WeatherTest {
         check("Feels 84°".equals(WeatherText.INSTANCE.feels(d)) && "H 91° L 74°".equals(WeatherText.INSTANCE.highLow(d)), "feels, high and low");
         check("40%".equals(WeatherText.INSTANCE.rain(d.getHours().get(1).getRain())) && "20%".equals(WeatherText.INSTANCE.rain(d.getHours().get(2).getRain()))
             && WeatherText.INSTANCE.rain(d.getHours().get(3).getRain()) == null, "rain from 20% up, 19.6 rounding to 20; 10% not");
-        check("20%".equals(WeatherText.INSTANCE.rain(new org.openautoandroid.source.Tagged(19.6, "percent"))), "19.6 rounds to 20%");
+        check("20%".equals(WeatherText.INSTANCE.rain(new com.jw6ventures.headlink.Tagged(19.6, "percent"))), "19.6 rounds to 20%");
         check("—".equals(WeatherText.INSTANCE.temperature(null)), "no reading: a dash");
-        check("295 K".equals(WeatherText.INSTANCE.temperature(new org.openautoandroid.source.Tagged(295.2, "k"))), "Kelvin printed as tagged");
+        check("295 K".equals(WeatherText.INSTANCE.temperature(new com.jw6ventures.headlink.Tagged(295.2, "k"))), "Kelvin printed as tagged");
         check("20:00".equals(WeatherText.INSTANCE.hour(NOON + 3 * HOUR, UTC)), "an hour in the dashboard clock's style");
         check("8 PM".equals(WeatherText.INSTANCE.hour(NOON + 3 * HOUR, UTC, ClockFormat.H12)), "and in 12-hour style");
         check(WeatherText.INSTANCE.feels(parse(full(NOON, "").replace("84.4", "80.4"), NOON)) == null, "feels 2° off: not shown");
@@ -635,7 +635,7 @@ public final class WeatherTest {
 
     private static void theAlertTakesTheTileAndIsDismissed() {
         Dashboard d = dashboard(true, AlertLevel.SEVERE);
-        d.notifications(List.of(new org.openautoandroid.source.DashNotification("k", "App", "Sender", "Text", NOON, "org.example")));
+        d.notifications(List.of(new com.jw6ventures.headlink.DashNotification("k", "App", "Sender", "Text", NOON, "org.example")));
         d.weather(state(NOON, standardAlerts(NOON)));
         Dashboard.Snapshot s = d.nextFrame(NOON);
         check(s.getFlex() == FlexSource.WEATHER_ALERT && "weather alert".equals(s.getFlexLabel()), "a severe alert over a notification");
@@ -684,7 +684,7 @@ public final class WeatherTest {
         check("Permission not granted".equals(d.nextFrame(NOON).getWeatherView().getStatus()), "and why");
         d.weather(state(NOON, ""));
         s = d.nextFrame(NOON + 10_000);
-        org.openautoandroid.source.WeatherPanel v = s.getWeatherView();
+        com.jw6ventures.headlink.WeatherPanel v = s.getWeatherView();
         check(v.getStatus() == null && "78°F".equals(v.getTemperature()) && "Partly cloudy".equals(v.getText()), "now");
         check("Feels 84° · H 91° L 74°".equals(v.getDetail()), "feels, high, low: " + v.getDetail());
         check(v.getHours().size() == WeatherRules.VIEW_HOURS && "18:00".equals(v.getHours().get(0).getHour()) && "40%".equals(v.getHours().get(0).getRain()),
@@ -707,24 +707,24 @@ public final class WeatherTest {
     private static void alertsAreSpokenByTheRules() {
         SpeechQueue q = new SpeechQueue();
         SpeechAction a = q.alert("a1", 0, OK);
-        check(a instanceof SpeechAction.Speak && ((SpeechAction.Speak) a).getKind() == org.openautoandroid.source.SpeechKind.ALERT, "spoken");
+        check(a instanceof SpeechAction.Speak && ((SpeechAction.Speak) a).getKind() == com.jw6ventures.headlink.SpeechKind.ALERT, "spoken");
         q.began((SpeechAction.Speak) a, 0);
         check(skipped(q.read("n", 10, OK), SpeechSkip.ALERT_PLAYING), "a notification tap during an alert is dropped");
-        q.finished(((SpeechAction.Speak) a).getId(), org.openautoandroid.source.SpeechEnd.COMPLETED, 1000);
+        q.finished(((SpeechAction.Speak) a).getId(), com.jw6ventures.headlink.SpeechEnd.COMPLETED, 1000);
         // A notification being read is cut off by an alert.
         SpeechAction read = q.read("n", 5000, OK);
         q.began((SpeechAction.Speak) read, 5000);
         SpeechAction cut = q.alert("a2", 6000, OK);
         q.began((SpeechAction.Speak) cut, 6000);
         check(q.report().contains("notifications_read_interrupted_by_alert=1"), "the read, cut off by the alert");
-        q.finished(((SpeechAction.Speak) cut).getId(), org.openautoandroid.source.SpeechEnd.COMPLETED, 7000);
+        q.finished(((SpeechAction.Speak) cut).getId(), com.jw6ventures.headlink.SpeechEnd.COMPLETED, 7000);
         // A prompt being spoken is never cut: the alert waits, then goes first.
         SpeechAction prompt = q.guide("prepare", 8000, OK);
         q.began((SpeechAction.Speak) prompt, 8000);
         SpeechAction wait = q.alert("a3", 8100, OK);
         check(wait instanceof SpeechAction.Wait && List.of("a3").equals(q.getWaitingAlerts()), "waits for the prompt");
         check(q.waiting(8200, OK) == null, "not while the prompt is spoken");
-        q.finished(((SpeechAction.Speak) prompt).getId(), org.openautoandroid.source.SpeechEnd.COMPLETED, 9000);
+        q.finished(((SpeechAction.Speak) prompt).getId(), com.jw6ventures.headlink.SpeechEnd.COMPLETED, 9000);
         SpeechAction after = q.waiting(9000, OK);
         check(after instanceof SpeechAction.Speak && q.getWaitingAlerts().isEmpty(), "then goes");
         q.began((SpeechAction.Speak) after, 9000);
@@ -732,7 +732,7 @@ public final class WeatherTest {
         SpeechAction over = q.guide("at_turn", 9500, OK);
         q.began((SpeechAction.Speak) over, 9500);
         check(q.report().contains("weather_alerts_interrupted_by_guidance=1"), "a prompt cuts an alert off");
-        q.finished(((SpeechAction.Speak) over).getId(), org.openautoandroid.source.SpeechEnd.COMPLETED, 10_000);
+        q.finished(((SpeechAction.Speak) over).getId(), com.jw6ventures.headlink.SpeechEnd.COMPLETED, 10_000);
         // Waiting, then the toggle goes off: counted toggle_off when it would have gone.
         SpeechAction p2 = q.guide("early", 20_000, OK);
         q.began((SpeechAction.Speak) p2, 20_000);
@@ -740,7 +740,7 @@ public final class WeatherTest {
         check(q.alert("a5", 20_200, OK) instanceof SpeechAction.Wait && List.of("a4", "a5").equals(q.getWaitingAlerts()),
             "a second waits behind the first, not in its place: " + q.getWaitingAlerts());
         q.setGuidanceOn(false);
-        q.interrupt(org.openautoandroid.source.SpeechEnd.STOPPED, 20_300);
+        q.interrupt(com.jw6ventures.headlink.SpeechEnd.STOPPED, 20_300);
         check(skipped(q.waiting(20_300, OK), SpeechSkip.TOGGLE_OFF), "released into a toggle turned off");
         check(skipped(q.waiting(20_300, OK), SpeechSkip.TOGGLE_OFF) && q.waiting(20_300, OK) == null, "and the one behind it, then none");
         check(skipped(q.alert("a6", 21_000, OK), SpeechSkip.TOGGLE_OFF), "toggle off: not spoken");
@@ -765,13 +765,13 @@ public final class WeatherTest {
         SpeechAction b2 = two.alert("b2", 7, OK);
         check(b2 instanceof SpeechAction.Wait && List.of("b2").equals(two.getWaitingAlerts()), "the second waits behind the first");
         check(two.waiting(10, OK) == null, "not while the first is said");
-        two.finished(((SpeechAction.Speak) b1).getId(), org.openautoandroid.source.SpeechEnd.COMPLETED, 3000);
+        two.finished(((SpeechAction.Speak) b1).getId(), com.jw6ventures.headlink.SpeechEnd.COMPLETED, 3000);
         SpeechAction next = two.waiting(3000, OK);
         check(next instanceof SpeechAction.Speak && "b2".equals(((SpeechAction.Speak) next).getKey()) && two.getWaitingAlerts().isEmpty(),
             "then goes once the first completes");
         two.began((SpeechAction.Speak) next, 3000);
         check(two.waiting(3001, OK) == null, "nothing more waits");
-        two.finished(((SpeechAction.Speak) next).getId(), org.openautoandroid.source.SpeechEnd.COMPLETED, 6000);
+        two.finished(((SpeechAction.Speak) next).getId(), com.jw6ventures.headlink.SpeechEnd.COMPLETED, 6000);
         String twoReport = two.report();
         check(twoReport.contains("weather_alerts_started=2 ") && twoReport.contains("weather_alerts_completed=2 ")
             && twoReport.contains("weather_alerts_interrupted_by_alert=0") && twoReport.contains("weather_alerts_waited=1"),
@@ -782,7 +782,7 @@ public final class WeatherTest {
         three.began((SpeechAction.Speak) held, 0);
         for (String key : List.of("c1", "c2", "c3")) check(three.alert(key, 10, OK) instanceof SpeechAction.Wait, key + " waits for the prompt");
         check(List.of("c1", "c2", "c3").equals(three.getWaitingAlerts()), "in the order asked: " + three.getWaitingAlerts());
-        three.finished(((SpeechAction.Speak) held).getId(), org.openautoandroid.source.SpeechEnd.COMPLETED, 2000);
+        three.finished(((SpeechAction.Speak) held).getId(), com.jw6ventures.headlink.SpeechEnd.COMPLETED, 2000);
         List<String> said = new ArrayList<>();
         long at = 2000;
         for (int i = 0; i < 3; i++) {
@@ -792,7 +792,7 @@ public final class WeatherTest {
             three.began((SpeechAction.Speak) go, at);
             check(three.waiting(at + 1, OK) == null, "one at a time");
             at += 3000;
-            three.finished(((SpeechAction.Speak) go).getId(), org.openautoandroid.source.SpeechEnd.COMPLETED, at);
+            three.finished(((SpeechAction.Speak) go).getId(), com.jw6ventures.headlink.SpeechEnd.COMPLETED, at);
         }
         check(List.of("c1", "c2", "c3").equals(said) && three.waiting(at, OK) == null, "all three, in order: " + said);
         String threeReport = three.report();

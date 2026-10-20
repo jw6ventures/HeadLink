@@ -366,7 +366,7 @@ service only for an app holding `CONTROL_INCALL_EXPERIENCE` (privileged) or
 | Permission | protectionLevel | Meaning here |
 | --- | --- | --- |
 | `CALL_COMPANION_APP` | `0x0` normal | Granted at install, but **no longer gets the service bound** (Android 11+). |
-| `MANAGE_ONGOING_CALLS` | `0x42` signature + app-op | Not granted to an ordinary app, but the app-op can be allowed **once, from a computer**: `adb shell appops set --user 0 org.openautoandroid.source MANAGE_ONGOING_CALLS allow`. Android also grants it to watch-companion apps, which this app is not and won't claim to be. |
+| `MANAGE_ONGOING_CALLS` | `0x42` signature + app-op | Not granted to an ordinary app, but the app-op can be allowed **once, from a computer**: `adb shell appops set --user 0 com.jw6ventures.headlink MANAGE_ONGOING_CALLS allow`. Android also grants it to watch-companion apps, which this app is not and won't claim to be. |
 | `ANSWER_PHONE_CALLS` | `0x2001` dangerous + app-op | A runtime prompt; answer and end only. Not needed. |
 | `CONTROL_INCALL_EXPERIENCE` | signature/privileged | Out of reach. |
 
@@ -563,7 +563,7 @@ OsmAnd is the likeliest one to keep. Add-by-coordinates stays, as a secondary bu
 
 ### 6.5 Polish
 
-- The app name drops "POC": **OpenAutoAndroid**. The version stays visible in Diagnostics.
+- The app name drops "POC": **HeadLink**. The version stays visible in Diagnostics.
 - A current platform theme, `Theme.DeviceDefault.DayNight` or the Material platform
   equivalent, with edge-to-edge insets, which already work.
 - Route summary in words: "Routing to Home · 12 mi · 18 min · arrive 6:40", not
@@ -618,7 +618,7 @@ It also closes two P6 open ends as a side effect: the first favourite tapped on 
    **P7.9 is the exception:** it declares `MANAGE_ONGOING_CALLS` (signature + app-op,
    decided by James on 24 September 2026). It is never granted by the install, only once
    from a computer with
-   `adb shell appops set --user 0 org.openautoandroid.source MANAGE_ONGOING_CALLS allow`
+   `adb shell appops set --user 0 com.jw6ventures.headlink MANAGE_ONGOING_CALLS allow`
    (`--user 0` because the Pixel has more than one user). It also adds a
    disabled-by-default `InCallService` behind `BIND_INCALL_SERVICE`, enabled only by the
    operator's Call controls setting, only while projecting, and only when the app-op is

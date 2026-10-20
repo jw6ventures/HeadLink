@@ -27,7 +27,7 @@ podman_run --network=none \
     work=$(mktemp -d)
     mkdir -p "$work/classes" "$work/dex"
     javac -source 11 -target 11 -Xlint:all,-options -Werror -classpath "$android" -d "$work/classes" \
-        tools/lab-player/src/org/openautoandroid/labplayer/*.java
+        tools/lab-player/src/com/jw6ventures/headlink/labplayer/*.java
     "$bt/d8" --min-api 33 --lib "$android" --output "$work/dex" $(find "$work/classes" -name "*.class")
     "$bt/aapt2" link --manifest tools/lab-player/AndroidManifest.xml -I "$android" \
         --min-sdk-version 33 --target-sdk-version 33 -o "$work/unsigned.apk"

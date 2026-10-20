@@ -16,8 +16,8 @@ use std::{
 };
 
 /// Neutral identity sent in the request: no phone model, account, or user name.
-pub const DEVICE_NAME: &str = "OpenAutoAndroid";
-pub const DEVICE_BRAND: &str = "OpenAutoAndroid project";
+pub const DEVICE_NAME: &str = "HeadLink";
+pub const DEVICE_BRAND: &str = "HeadLink project";
 
 const ISSUE_LIMIT: usize = 16;
 const CHANNEL_LIMIT: usize = 64;

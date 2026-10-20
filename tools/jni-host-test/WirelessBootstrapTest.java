@@ -10,10 +10,10 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
 import java.util.regex.Pattern;
-import org.openautoandroid.source.ReportStore;
-import org.openautoandroid.source.WirelessBootstrap;
-import org.openautoandroid.source.WirelessProbe;
-import org.openautoandroid.source.WirelessStandby;
+import com.jw6ventures.headlink.ReportStore;
+import com.jw6ventures.headlink.WirelessBootstrap;
+import com.jw6ventures.headlink.WirelessProbe;
+import com.jw6ventures.headlink.WirelessStandby;
 
 public final class WirelessBootstrapTest {
     private static int passed;

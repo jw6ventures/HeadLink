@@ -5,8 +5,8 @@
 // resuming them (MediaPlayers) needs a phone or the emulator lab.
 import java.util.ArrayList;
 import java.util.List;
-import org.openautoandroid.source.Player;
-import org.openautoandroid.source.Players;
+import com.jw6ventures.headlink.Player;
+import com.jw6ventures.headlink.Players;
 
 public final class PlayersTest {
     private static int passed;

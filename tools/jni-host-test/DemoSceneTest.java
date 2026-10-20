@@ -2,8 +2,8 @@
 // and the session token. DemoScene is pure Kotlin with no Android API, so the same class
 // the app draws is checked here. It proves nothing about rendering or encoding.
 import java.util.List;
-import org.openautoandroid.source.DemoScene;
-import org.openautoandroid.source.SceneLayout;
+import com.jw6ventures.headlink.DemoScene;
+import com.jw6ventures.headlink.SceneLayout;
 
 public final class DemoSceneTest {
     private static int passed;

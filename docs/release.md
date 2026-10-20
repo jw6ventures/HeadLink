@@ -10,7 +10,7 @@ artifacts for 14 days.
 Pushing a tag `v<versionName>` runs `.github/workflows/release.yml`: the same build, then
 `tools/sign-release.sh` signs `app-release-unsigned.apk` with the release key, checks it
 (packaging invariants, not debuggable, signer), attaches a build-provenance attestation,
-and publishes a GitHub release with `OpenAutoAndroid-<versionName>.apk` and
+and publishes a GitHub release with `HeadLink-<versionName>.apk` and
 `SHA256SUMS`. A versionName with a hyphen (`0.5.0-beta1`) is published as a prerelease.
 The release notes are `fastlane/metadata/android/en-US/changelogs/<versionCode>.txt`.
 
@@ -21,8 +21,8 @@ The release notes are `fastlane/metadata/android/en-US/changelogs/<versionCode>.
    F-Droid or anywhere else.
 
    ```sh
-   keytool -genkeypair -keystore openautoandroid-release.jks -alias openautoandroid \
-       -keyalg RSA -keysize 4096 -validity 10000 -dname "CN=OpenAutoAndroid"
+   keytool -genkeypair -keystore headlink-release.jks -alias headlink \
+       -keyalg RSA -keysize 4096 -validity 10000 -dname "CN=HeadLink"
    ```
 
    `keytool` is in the Android image (`podman run --rm -it --userns=keep-id
@@ -34,15 +34,15 @@ The release notes are `fastlane/metadata/android/en-US/changelogs/<versionCode>.
 
    | Secret | Value |
    | --- | --- |
-   | `RELEASE_KEYSTORE_BASE64` | `base64 -w0 openautoandroid-release.jks` |
-   | `RELEASE_KEY_ALIAS` | `openautoandroid` |
+   | `RELEASE_KEYSTORE_BASE64` | `base64 -w0 headlink-release.jks` |
+   | `RELEASE_KEY_ALIAS` | `headlink` |
    | `RELEASE_KEYSTORE_PASSWORD` | the store password |
    | `RELEASE_KEY_PASSWORD` | the key password (the same, unless set differently) |
 
 3. Record the signing certificate's SHA-256 (F-Droid's `AllowedAPKSigningKeys` needs it):
 
    ```sh
-   keytool -list -v -keystore openautoandroid-release.jks -alias openautoandroid \
+   keytool -list -v -keystore headlink-release.jks -alias headlink \
        | grep SHA256
    ```
 
@@ -57,8 +57,8 @@ Signing locally gives the same APK, from the same unsigned artifact:
 
 ```sh
 ./tools/android-build.sh
-RELEASE_KEYSTORE=~/keys/openautoandroid-release.jks RELEASE_KEY_ALIAS=openautoandroid \
-RELEASE_KEYSTORE_PASSWORD=... ./tools/sign-release.sh dist/OpenAutoAndroid-0.5.0.apk
+RELEASE_KEYSTORE=~/keys/headlink-release.jks RELEASE_KEY_ALIAS=headlink \
+RELEASE_KEYSTORE_PASSWORD=... ./tools/sign-release.sh dist/HeadLink-0.5.0.apk
 ```
 
 A release-signed APK will not install over a debug-key build on a phone (different
@@ -69,7 +69,7 @@ signer): uninstall first, which clears the app's settings and imported identity.
 F-Droid builds from source on its own build server; it does not take our APK. The
 listing text and changelogs come from `fastlane/metadata/` in this repository. Getting
 listed means a merge request to [fdroiddata](https://gitlab.com/fdroid/fdroiddata)
-adding `metadata/org.openautoandroid.source.yml`. Not done yet:
+adding `metadata/com.jw6ventures.headlink.yml`. Not done yet:
 
 - **A build recipe that runs without Podman.** F-Droid's build server is a Debian VM, so
   the recipe has to install Rust 1.85.1 with the `aarch64-linux-android` target (via the
@@ -89,7 +89,7 @@ adding `metadata/org.openautoandroid.source.yml`. Not done yet:
   the app ships no credential, and does nothing until the operator imports one that
   their head unit trusts.
 - **Trademarks.** The listing says "Android Auto head units" descriptively and disclaims
-  any affiliation; the name OpenAutoAndroid itself contains "Android", which F-Droid has
+  any affiliation; the name HeadLink itself contains "Android", which F-Droid has
   accepted for other apps but Google's brand rules discourage.
 
 ## Google Play

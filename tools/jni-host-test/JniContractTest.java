@@ -24,10 +24,10 @@ import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import org.openautoandroid.source.NativeBridge;
-import org.openautoandroid.source.NativeBridgeKt;
-import org.openautoandroid.source.SessionCallback;
-import org.openautoandroid.source.SessionSettings;
+import com.jw6ventures.headlink.NativeBridge;
+import com.jw6ventures.headlink.NativeBridgeKt;
+import com.jw6ventures.headlink.SessionCallback;
+import com.jw6ventures.headlink.SessionSettings;
 
 public final class JniContractTest {
     private static final NativeBridge BRIDGE = NativeBridge.INSTANCE;
@@ -262,13 +262,13 @@ public final class JniContractTest {
         Path candidate = dir.resolve("candidate");
         String supplied = BRIDGE.ensureIdentity(candidate.toString(), false);
         byte[] suppliedPem = Files.readAllBytes(candidate.resolve("source-identity.pem"));
-        String imported = org.openautoandroid.source.IdentityImport.INSTANCE.install(
+        String imported = com.jw6ventures.headlink.IdentityImport.INSTANCE.install(
                 identity.toFile(), new java.io.ByteArrayInputStream(suppliedPem));
         check(fingerprint(imported).equals(fingerprint(supplied)), "supplied identity installed");
         check(!imported.contains("PRIVATE KEY"), "import report excludes key");
         for (byte[] invalid : List.of(new byte[0], new byte[65537], "not PEM".getBytes(StandardCharsets.US_ASCII))) {
             try {
-                org.openautoandroid.source.IdentityImport.INSTANCE.install(
+                com.jw6ventures.headlink.IdentityImport.INSTANCE.install(
                         identity.toFile(), new java.io.ByteArrayInputStream(invalid));
                 throw new AssertionError("invalid identity imported");
             } catch (IOException expected) {

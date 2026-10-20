@@ -9,17 +9,17 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import kotlin.Unit;
-import org.openautoandroid.source.DashNotification;
-import org.openautoandroid.source.NotificationFacts;
-import org.openautoandroid.source.NotificationFeed;
-import org.openautoandroid.source.NotificationRules;
-import org.openautoandroid.source.NotificationVerdict;
+import com.jw6ventures.headlink.DashNotification;
+import com.jw6ventures.headlink.NotificationFacts;
+import com.jw6ventures.headlink.NotificationFeed;
+import com.jw6ventures.headlink.NotificationRules;
+import com.jw6ventures.headlink.NotificationVerdict;
 
 public final class NotificationFeedTest {
     private static int passed;
     private static final NotificationRules RULES = NotificationRules.INSTANCE;
     private static final NotificationFeed FEED = NotificationFeed.INSTANCE;
-    private static final String OWN = "org.openautoandroid.source";
+    private static final String OWN = "com.jw6ventures.headlink";
 
     public static void main(String[] args) {
         onlyAlertingMessagesPass();

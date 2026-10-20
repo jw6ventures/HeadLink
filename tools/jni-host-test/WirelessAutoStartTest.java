@@ -2,9 +2,9 @@
 // truck connecting over Bluetooth does or does not start wireless projection.
 // WirelessAutoStart is pure Kotlin; Android's companion-device wake-up, the Nearby devices
 // grant and the link itself need a phone and the truck.
-import org.openautoandroid.source.AutoStart;
-import org.openautoandroid.source.Stage;
-import org.openautoandroid.source.WirelessAutoStart;
+import com.jw6ventures.headlink.AutoStart;
+import com.jw6ventures.headlink.Stage;
+import com.jw6ventures.headlink.WirelessAutoStart;
 
 public final class WirelessAutoStartTest {
     private static int passed;

@@ -14,7 +14,7 @@ Android Auto button, and W3's switch is now **Link the truck for wireless**; see
 1. Asks for Nearby devices, if not already granted.
 2. Picks the head unit as Home's Connect wirelessly does: the one used last, or the only paired
    car or hands-free device, or asks.
-3. Shows **Android's own dialog** asking to let OpenAutoAndroid manage that device. This is the
+3. Shows **Android's own dialog** asking to let HeadLink manage that device. This is the
    companion-device link. It's needed once, and it has to be accepted from the screen.
 4. Asks Android to watch for that device.
 
@@ -64,7 +64,7 @@ From AOSP source (android16-qpr2) and GrapheneOS's branch 17, not yet from a pho
 - **Build:** `verify-apk.sh` pins the two new permissions, the unexported `connectedDevice` link
   service, and the companion service guarded by `BIND_COMPANION_DEVICE_SERVICE`.
 - **Emulator (API 36), 16 October 2026.** There's no Bluetooth head unit in the emulator. So
-  the link was made with `adb shell cmd companiondevice associate 0 org.openautoandroid.source
+  the link was made with `adb shell cmd companiondevice associate 0 com.jw6ventures.headlink
   02:11:22:33:44:55`, and the debug build's `lab_wireless_observe` intent extra started watching
   it. Then `cmd companiondevice simulate-device-event 1 2` faked "Bluetooth connected". That
   event runs the same system path as a real ACL connection (`onBluetoothCompanionDeviceConnected`).
@@ -104,7 +104,7 @@ Before the drive, at home with the truck off:
 
 1. Install the APK. Open the app, go to **Settings**, and turn on **Start wirelessly when the
    truck connects**. Accept Android's dialog naming the truck.
-2. Phone Wi-Fi on. Bluetooth on. VPN still excluding OpenAutoAndroid.
+2. Phone Wi-Fi on. Bluetooth on. VPN still excluding HeadLink.
 
 The drive:
 

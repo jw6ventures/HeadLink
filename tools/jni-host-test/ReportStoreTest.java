@@ -8,7 +8,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
-import org.openautoandroid.source.ReportStore;
+import com.jw6ventures.headlink.ReportStore;
 
 public final class ReportStoreTest {
     private static int passed;

@@ -607,7 +607,7 @@ podman run -d --pod "$pod" --name "$pod-receiver" --security-opt label=disable \
   -v "$work:/receiver" -v "$out:/out" "$RECEIVER_IMAGE" sh -ec '
     cd /out
     openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 7 \
-        -subj "/CN=OpenAutoAndroid lab receiver" \
+        -subj "/CN=HeadLink lab receiver" \
         -keyout receiver-key.pem -out receiver-cert.pem 2>/dev/null
     export OAA_LAB_CERT_PEM=/out/receiver-cert.pem OAA_LAB_KEY_PEM=/out/receiver-key.pem
     # Caught rather than left to -e: a failed check is when the frames matter most.
@@ -669,7 +669,7 @@ podman run --rm --pod "$pod" --name "$name" --security-opt label=disable \
   -e CONGESTION_EXPECT="$CONGESTION_EXPECT" -e CONGESTION_RESTART="$CONGESTION_RESTART" \
   $LAB_APK_MOUNT $LAB_NATIVE_MOUNT \
   $LAB_DATA_MOUNTS -v "$out:/out" "$EMULATOR_IMAGE" sh -eu -c '
-    package=org.openautoandroid.source
+    package=com.jw6ventures.headlink
     log() { echo "emulator-lab: $*"; }
     # The newest *session* report. Wireless probe and link reports share the folder and
     # can start in the same second as a session, when the name alone no longer orders them.
@@ -778,7 +778,7 @@ with zipfile.ZipFile(sys.argv[1], \"a\") as apk:
         adb shell pm grant $package $breezy.READ_PROVIDER || fail "grant $breezy.READ_PROVIDER"
         case $WEATHER_MODE in stale|unsupported) breezy_scenario $WEATHER_MODE ;; *) breezy_scenario show ;; esac
     fi
-    labplayer=org.openautoandroid.labplayer
+    labplayer=com.jw6ventures.headlink.labplayer
     if [ -f /out/lab-player.apk ]; then
         adb install /out/lab-player.apk > /out/install-lab-player.txt 2>&1 || { cat /out/install-lab-player.txt >&2; fail "lab player install"; }
         adb shell pm grant $labplayer android.permission.POST_NOTIFICATIONS

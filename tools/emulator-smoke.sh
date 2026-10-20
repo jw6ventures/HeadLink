@@ -28,7 +28,7 @@ podman_run --name "$name" --network=none --device /dev/kvm \
   -v "$CACHE_ROOT/emulator-avd:/cache/avd" -e ANDROID_AVD_HOME=/cache/avd \
   -e ANDROID_EMULATOR_HOME=/cache/avd -e ANDROID_SDK_ROOT=/opt/android-sdk \
   -v "$out:/out" "$EMULATOR_IMAGE" sh -eu -c '
-    package=org.openautoandroid.source
+    package=com.jw6ventures.headlink
     log() { echo "emulator-smoke: $*"; }
     # adb waits forever for a device that is gone, so every capture here is bounded.
     fail() { echo "emulator-smoke: FAIL $*" >&2; timeout 20 adb logcat -d > /out/logcat.txt 2>&1 || true; exit 1; }

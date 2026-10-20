@@ -3,7 +3,7 @@
 // 17.6, which start requests start projection, the automatic-start loop guard and the
 // reconnect pacing. Holding the RFCOMM link open on the truck, the button press itself and
 // the wake lock need a phone and the truck.
-import org.openautoandroid.source.WirelessStandby;
+import com.jw6ventures.headlink.WirelessStandby;
 
 public final class WirelessStandbyTest {
     private static int passed;

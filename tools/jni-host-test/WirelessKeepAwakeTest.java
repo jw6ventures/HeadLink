@@ -3,8 +3,8 @@
 // Wi-Fi link readings, with Android's "unknown" values skipped. KeepAwakeStats and
 // WifiLinkStats are pure Kotlin; the ICMP socket, the screen and the truck need a phone.
 import java.util.List;
-import org.openautoandroid.source.KeepAwakeStats;
-import org.openautoandroid.source.WifiLinkStats;
+import com.jw6ventures.headlink.KeepAwakeStats;
+import com.jw6ventures.headlink.WifiLinkStats;
 
 public final class WirelessKeepAwakeTest {
     private static int passed;

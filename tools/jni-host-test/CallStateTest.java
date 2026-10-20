@@ -4,11 +4,11 @@
 // CallRules is pure Kotlin; whether Telecom binds the companion at all is for the Pixel
 // (docs/p7-backends-results.md section 4.2).
 import java.util.List;
-import org.openautoandroid.source.CallPhase;
-import org.openautoandroid.source.CallRoute;
-import org.openautoandroid.source.CallRules;
-import org.openautoandroid.source.CallSource;
-import org.openautoandroid.source.CallState;
+import com.jw6ventures.headlink.CallPhase;
+import com.jw6ventures.headlink.CallRoute;
+import com.jw6ventures.headlink.CallRules;
+import com.jw6ventures.headlink.CallSource;
+import com.jw6ventures.headlink.CallState;
 
 public final class CallStateTest {
     private static int passed;

@@ -129,7 +129,7 @@ demo)
         mkdir -p credentials
         # Fresh generated receiver (TLS client) identity; never a copied key.
         openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 7 \
-            -subj "/CN=OpenAutoAndroid lab receiver" \
+            -subj "/CN=HeadLink lab receiver" \
             -keyout credentials/receiver-key.pem -out credentials/receiver-cert.pem 2>/dev/null
         export OAA_LAB_CERT_PEM=/receiver/credentials/receiver-cert.pem
         export OAA_LAB_KEY_PEM=/receiver/credentials/receiver-key.pem

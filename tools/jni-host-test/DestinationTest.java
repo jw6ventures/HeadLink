@@ -4,10 +4,10 @@
 // DestinationParser is pure Kotlin, so this is the class the app runs. It proves nothing
 // about what OsmAnd actually puts in an intent on the Pixel; only a real share does.
 import java.util.Set;
-import org.openautoandroid.source.Destination;
-import org.openautoandroid.source.DestinationParser;
-import org.openautoandroid.source.ParsedDestination;
-import org.openautoandroid.source.Refusal;
+import com.jw6ventures.headlink.Destination;
+import com.jw6ventures.headlink.DestinationParser;
+import com.jw6ventures.headlink.ParsedDestination;
+import com.jw6ventures.headlink.Refusal;
 
 public final class DestinationTest {
     private static int passed;

@@ -69,7 +69,7 @@ fn fixture(text: &str) -> Vec<u8> {
 }
 
 /// Class whose natives are registered, and the callback method invoked on it.
-pub const BRIDGE_CLASS: &CStr = c"org/openautoandroid/source/NativeBridge";
+pub const BRIDGE_CLASS: &CStr = c"com/jw6ventures/headlink/NativeBridge";
 pub const CALLBACK_METHOD: &CStr = c"onNativeEvent";
 pub const CALLBACK_SIGNATURE: &CStr = c"(JI[B)V";
 
@@ -128,7 +128,7 @@ unsafe fn register(vm: *mut JavaVM) -> jint {
         ),
         (
             c"nativeStart",
-            c"(I[BLorg/openautoandroid/source/SessionCallback;)J",
+            c"(I[BLcom/jw6ventures/headlink/SessionCallback;)J",
             native_start as *mut c_void,
         ),
         (c"nativeStop", c"(J)V", native_stop as *mut c_void),

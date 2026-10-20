@@ -176,7 +176,7 @@
 # See each test for scope; neither proves anything about ART or Android storage.
 set -eu
 classes=app/build/intermediates/built_in_kotlinc/release/compileReleaseKotlin/classes
-[ -f "$classes/org/openautoandroid/source/NativeBridge.class" ] || { echo "jni-host-test: build the app first" >&2; exit 1; }
+[ -f "$classes/com/jw6ventures/headlink/NativeBridge.class" ] || { echo "jni-host-test: build the app first" >&2; exit 1; }
 brouter=vendor/brouter/build/libs/brouter.jar
 [ -f "$brouter" ] || { echo "jni-host-test: $brouter missing; build the app first" >&2; exit 1; }
 stdlib=$(find "$GRADLE_USER_HOME/caches/modules-2" -name kotlin-stdlib-2.2.10.jar | head -n 1)

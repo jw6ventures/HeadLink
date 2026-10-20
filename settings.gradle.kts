@@ -11,7 +11,7 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "OpenAutoAndroid"
+rootProject.name = "HeadLink"
 include(":app")
 // BRouter's routing engine, vendored as source rather than resolved as a dependency:
 // it publishes no Maven Central artifact at all. See vendor/brouter/README.md.

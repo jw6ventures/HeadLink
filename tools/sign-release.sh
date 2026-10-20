@@ -2,7 +2,7 @@
 # Signs the reproducible unsigned release APK with the project's release key, inside the
 # pinned Android image, and checks the result. Run after tools/android-build.sh.
 #
-#   RELEASE_KEYSTORE=/path/release.jks RELEASE_KEY_ALIAS=openautoandroid \
+#   RELEASE_KEYSTORE=/path/release.jks RELEASE_KEY_ALIAS=headlink \
 #   RELEASE_KEYSTORE_PASSWORD=... RELEASE_KEY_PASSWORD=... tools/sign-release.sh OUT.apk
 #
 # The passwords reach apksigner through the environment, never a command line. The

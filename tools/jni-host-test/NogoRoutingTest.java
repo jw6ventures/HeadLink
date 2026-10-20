@@ -22,14 +22,14 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
-import org.openautoandroid.source.Nogo;
-import org.openautoandroid.source.Route;
-import org.openautoandroid.source.RouteOptions;
-import org.openautoandroid.source.RoutePlanner;
-import org.openautoandroid.source.RouteRequest;
-import org.openautoandroid.source.Router;
-import org.openautoandroid.source.RoutingData;
-import org.openautoandroid.source.TrafficCost;
+import com.jw6ventures.headlink.Nogo;
+import com.jw6ventures.headlink.Route;
+import com.jw6ventures.headlink.RouteOptions;
+import com.jw6ventures.headlink.RoutePlanner;
+import com.jw6ventures.headlink.RouteRequest;
+import com.jw6ventures.headlink.Router;
+import com.jw6ventures.headlink.RoutingData;
+import com.jw6ventures.headlink.TrafficCost;
 
 public final class NogoRoutingTest {
     private static int passed;

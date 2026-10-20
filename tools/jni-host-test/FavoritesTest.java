@@ -4,7 +4,7 @@
 // a device.
 import java.util.ArrayList;
 import java.util.List;
-import org.openautoandroid.source.Favorite;
+import com.jw6ventures.headlink.Favorite;
 
 public final class FavoritesTest {
     private static int passed;

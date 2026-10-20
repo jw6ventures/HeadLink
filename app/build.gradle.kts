@@ -8,13 +8,13 @@ val rustJniLibs: File = rootProject.file("target/android-jniLibs")
 val requiredNativeLibrary: File = rustJniLibs.resolve("arm64-v8a/libaap_jni.so")
 
 android {
-    namespace = "org.openautoandroid.source"
+    namespace = "com.jw6ventures.headlink"
     compileSdk = 36
     buildToolsVersion = "36.1.0"
     ndkVersion = "29.0.14206865"
 
     defaultConfig {
-        applicationId = "org.openautoandroid.source"
+        applicationId = "com.jw6ventures.headlink"
         minSdk = 33
         targetSdk = 36
         versionCode = 21

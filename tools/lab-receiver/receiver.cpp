@@ -1,4 +1,4 @@
-// Controlled lab receiver for OpenAutoAndroid (GPL-3.0-only). Accepts one TCP
+// Controlled lab receiver for HeadLink (GPL-3.0-only). Accepts one TCP
 // connection and runs the pinned OpenAuto Prodigy receiver session over it, requesting
 // a configurable protocol version and recording receiver-side state and message traces.
 // TCP is a lab transport to an instrumented receiver, not wireless Android Auto.
@@ -257,7 +257,7 @@ void lumaStats(const QByteArray& luma, double& mean, double& stddev)
 }
 
 /// Two rectangles of the projected dashboard (P5.5), mirroring `DashboardLayout` in
-/// app/src/main/kotlin/org/openautoandroid/source/Dashboard.kt field for field.
+/// app/src/main/kotlin/com/jw6ventures/headlink/Dashboard.kt field for field.
 ///
 /// The second one is the point. A check that only watched the map pane would pass on a
 /// picture where every pixel changes every frame — a broken encoder, a flashing scene,
@@ -1459,7 +1459,7 @@ int main(int argc, char** argv)
 {
     QCoreApplication app(argc, argv);
     QCommandLineParser parser;
-    parser.setApplicationDescription("OpenAutoAndroid controlled lab receiver (Prodigy protocol library)");
+    parser.setApplicationDescription("HeadLink controlled lab receiver (Prodigy protocol library)");
     parser.addHelpOption();
     QCommandLineOption listenOption("listen", "Address and port to accept one source on.", "host:port", "127.0.0.1:5288");
     QCommandLineOption connectOption("connect", "Connect to this address instead of listening.", "host:port");
