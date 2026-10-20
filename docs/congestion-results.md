@@ -44,7 +44,7 @@ finished it. A keyframe, the largest frame, holds back everything behind it.
 
 All runs below used 500 kbps and 8 ms a frame, at 800x480 and 30 fps, against Prodigy's
 window of 10. That decoder keeps up with one keyframe a second but not with two. The "old"
-run is the 8 October debug APK (`LAB_APK`) with the native library built from 19db2ed
+run is the 8 October debug APK (`LAB_APK`) with the native library built from 33bd769
 (`LAB_NATIVE_TREE`), whose `core/` is the code that was in the truck.
 
 | While the head unit was slow (45 s) | Old (20261011T232748Z) | New (20261011T232548Z) | New, restart off (20261011T233017Z) |

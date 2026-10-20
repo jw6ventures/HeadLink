@@ -1,6 +1,6 @@
 # W2 results: joined SYNC's Wi-Fi, but the socket couldn't use it, 15 October 2026
 
-**Run 1 (report `17549b53`, build `293cd27`): `outcome=tcp_failed`.** The Bluetooth bootstrap
+**Run 1 (report `17549b53`, build `aec655f`): `outcome=tcp_failed`.** The Bluetooth bootstrap
 and the Wi-Fi join both worked. The TCP socket was refused permission to use the joined
 network, by Android rather than by SYNC, so no packet reached the truck. The cause was a VPN
 on the phone (below; James confirmed one was on).

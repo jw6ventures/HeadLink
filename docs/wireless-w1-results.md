@@ -3,7 +3,7 @@
 **Run 2 (15 October): `outcome=wifi_details`.** With a reply in Android Auto 17.6's shape,
 SYNC 4.0 sent where to connect and its Wi-Fi details. The bootstrap works with this app.
 
-## Run 1 (report `3964af1f`, build `1dcdf07`)
+## Run 1 (report `3964af1f`, build `d7d2a2c`)
 
 The [W1 procedure](wireless-w1-procedure.md) ran right after a fresh W0 (`a0affc5f`,
 `advertised`, HFP and A2DP connected).
@@ -70,7 +70,7 @@ paragraph is revised to match. `WirelessBootstrapTest` checks the exact bytes (8
   the W1 run (21:35 UTC on 14 October) and projected for 27 minutes. It ended in the
   ordinary `IO_ERROR` of an unplug.
 
-## Run 2 (report `2d89e925`, build `02a1930`): the Wi-Fi details
+## Run 2 (report `2d89e925`, build `0619055`): the Wi-Fi details
 
 W0 (`a3d7d5e1`) gave `advertised` ten seconds before. James: SYNC "prompted and said
 connecting".

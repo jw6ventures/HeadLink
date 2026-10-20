@@ -1,9 +1,9 @@
 # Review fixes in the lab, 2 October 2026
 
-Lab evidence for the fixes in commit 573bc68 (the October 2026 review's items 3–6). All runs
+Lab evidence for the fixes in commit 2ff5611 (the October 2026 review's items 3–6). All runs
 used the emulator lab at 1920x1080 with the Massachusetts map and W75_N40.rd5. They prove
 nothing about the Pixel or the truck. Each new check was run against the fixed build and
-against the same tree with the five app files put back to 24c8bc7 (the pre-fix build), to
+against the same tree with the five app files put back to 73e90df (the pre-fix build), to
 show that the check catches the bug and not just that the fix passes it.
 
 | Run | Fixed build | Pre-fix build |

@@ -12,7 +12,7 @@ Report `report-20261014T204105Z-a783868a` (saved-reports export, 14 October 2026
 
 | | |
 | --- | --- |
-| Build | 0.4.5-lab release (`debuggable=false`), branch `wireless` at `d3a77ee` |
+| Build | 0.4.5-lab release (`debuggable=false`), branch `wireless` at `1859a8d` |
 | Phone | Pixel 9, GrapheneOS 2026090701, Android 17 (SDK 37) |
 | Truck link | `hfp=connected`, `a2dp=connected`: the truck was up and connected as usual |
 | Device | `device_class=0x0408 (handsfree)`, `device_type=dual` (classic and LE) |
