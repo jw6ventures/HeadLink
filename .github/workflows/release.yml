@@ -47,7 +47,10 @@ jobs:
           rm -f "$RELEASE_KEYSTORE"
           (cd dist && sha256sum *.apk > SHA256SUMS && cat SHA256SUMS)
 
+      # GitHub stores attestations only for public repositories (or Enterprise plans), so
+      # this step waits until the repository is made public.
       - uses: actions/attest-build-provenance@v2
+        if: ${{ !github.event.repository.private }}
         with:
           subject-path: dist/*.apk
 
