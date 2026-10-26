@@ -159,6 +159,9 @@ Incomplete from a previous run: %3$s</string>
     <string name="setup_tile_needed">%1$s It needs %2$s.</string>
     <string name="maps_title">Maps</string>
     <string name="routing_title">Routing data</string>
+    <string name="maps_where">Where to get maps</string>
+    <string name="routing_where">Where to get routing data</string>
+    <string name="no_browser">No browser to open %1$s</string>
     <string name="drop_folder_title">Drop folder</string>
     <string name="settings_dashboard">Dashboard</string>
     <string name="settings_connecting">Connecting</string>
@@ -183,7 +186,7 @@ Incomplete from a previous run: %3$s</string>
     <string name="call_controls_help">Answer, decline and hang up calls from the dashboard. Turned off, the app never sees a call. With a one-time grant from a computer, mute and a keypad work too; without it, the phone\'s own call notification is used, which needs notification access. Callers, numbers and keypad digits are never saved or reported.</string>
     <!-- P8.1: speech (docs/p8-plan.md §7). -->
     <string name="read_aloud_label">Read aloud when tapped</string>
-    <string name="read_aloud_help">A notification tapped on the dashboard is read aloud: the sender and the text, never the app. The full text is fetched from the phone at the moment of the tap and handed to the speech engine; it is not saved, logged or reported. Speech plays only while the phone is connected to Bluetooth audio, and is heard in the truck only while Bluetooth audio is its selected source. Tap the row again to stop it.</string>
+    <string name="read_aloud_help">A notification tapped on the dashboard is read aloud: the sender and the text, never the app. The full text is fetched from the phone at the moment of the tap and handed to the speech engine; it is not saved, logged or reported. Speech plays only while the phone is connected to Bluetooth audio, and is heard in the car only while Bluetooth audio is its selected source. Tap the row again to stop it.</string>
     <string name="settings_speech">Speech</string>
     <string name="speech_media_label">While speaking</string>
     <string name="speech_media_help">What playing media does while the phone speaks, for read-aloud notifications and turn prompts alike. Pause media asks the player to pause for a moment; well-behaved players resume by themselves afterwards, and one that ignores it keeps playing under the voice. Lower volume has Android turn the player down while the phone speaks; podcast and audiobook players often pause instead.</string>
@@ -239,12 +242,12 @@ Incomplete from a previous run: %3$s</string>
     <string name="route_eta_help">Adds to or takes from every time the route estimates: the time to the destination, the arrival time, and the time to each turn. Use it if arrivals are always early or late by about the same share. It changes no route.</string>
     <string name="route_learn_pace_label">Learn my pace</string>
     <string name="route_show_alternatives_label">Show other routes on the map</string>
-    <string name="route_show_alternatives_help">While a route is followed on the truck\'s screen, the phone looks for up to two other ways to the destination about every five minutes and draws them in grey, each with how much longer it is (\"+6 min\"). Tap a bubble on the truck\'s screen to take that route. One goes away once you pass the point where it leaves your route. Routes more than ten minutes longer (or a quarter of the time left) are not shown. Looking takes the phone some seconds of work each time, and never holds up a re-route.</string>
+    <string name="route_show_alternatives_help">While a route is followed on the car\'s screen, the phone looks for up to two other ways to the destination about every five minutes and draws them in grey, each with how much longer it is (\"+6 min\"). Tap a bubble on the car\'s screen to take that route. One goes away once you pass the point where it leaves your route. Routes more than ten minutes longer (or a quarter of the time left) are not shown. Looking takes the phone some seconds of work each time, and never holds up a re-route.</string>
     <string name="route_learn_pace_help">As you drive, the time still to go is corrected by how your drive so far compared with its estimate: slow traffic makes the arrival later, a clear road earlier. It starts after about two minutes of driving, counts in full after ten, never takes off more than a third or adds more than half, and starts afresh for each new destination. It is not used for the time to the next turn.</string>
     <!-- P8.3: Maps & routing → Voice guidance (docs/p8-plan.md §7). -->
     <string name="voice_title">Voice guidance</string>
     <string name="voice_guidance_label">Speak turn prompts</string>
-    <string name="voice_guidance_help">Turn prompts are spoken while a route is followed. This is the same switch as the speaker button beside End route on the dashboard: turning either one changes both, and it stays as it was left for the next drive. Prompts are spoken only over Bluetooth audio, and are heard in the truck only while Bluetooth audio is its selected source.</string>
+    <string name="voice_guidance_help">Turn prompts are spoken while a route is followed. This is the same switch as the speaker button beside End route on the dashboard: turning either one changes both, and it stays as it was left for the next drive. Prompts are spoken only over Bluetooth audio, and are heard in the car only while Bluetooth audio is its selected source.</string>
     <string name="voice_prompts_label">Prompts</string>
     <string name="voice_prompts_help">Up to three prompts for each turn. Early comes about 50 seconds ahead, and never less than half a mile, and only on long stretches. Prepare comes about 15 seconds ahead. At the turn comes a few seconds before it. The faster you drive, the further ahead each one comes. Untick any you do not want to hear.</string>
     <string name="voice_early">Early</string>
@@ -266,10 +269,10 @@ Incomplete from a previous run: %3$s</string>
     <string name="voice_announce_arrival_label">Announce arrival</string>
     <string name="voice_announce_arrival_help">Says \"You have arrived\" once at the destination.</string>
     <string name="voice_sample">Play a sample</string>
-    <string name="voice_sample_help">Says \"In 500 feet, turn right onto Main Street\" the way a turn prompt is said: over Bluetooth audio only, with media paused or lowered as While speaking is set, and not during a call. It is played even with turn prompts switched off, so you can check the truck hears the phone before a drive. With no projection running, the speech engine is started for the sample and stopped after it.</string>
+    <string name="voice_sample_help">Says \"In 500 feet, turn right onto Main Street\" the way a turn prompt is said: over Bluetooth audio only, with media paused or lowered as While speaking is set, and not during a call. It is played even with turn prompts switched off, so you can check the car hears the phone before a drive. With no projection running, the speech engine is started for the sample and stopped after it.</string>
     <string name="voice_sample_playing">Playing the sample…</string>
     <string name="voice_sample_busy">A sample is still playing.</string>
-    <string name="voice_sample_spoken">Spoken over Bluetooth audio. If the truck was silent, check that Bluetooth audio is its selected source.</string>
+    <string name="voice_sample_spoken">Spoken over Bluetooth audio. If the car was silent, check that Bluetooth audio is its selected source.</string>
     <string name="voice_sample_spoken_lab">Spoken (lab Bluetooth override: no Bluetooth device was checked).</string>
     <string name="voice_sample_no_engine">Not spoken: no text-to-speech engine is installed, or it failed to start. Choose one in Text-to-speech settings on Home.</string>
     <string name="voice_sample_no_english">Not spoken: the speech engine has no English voice. Add one in Text-to-speech settings on Home.</string>

@@ -17,6 +17,8 @@ enum class StatusAction(val label: String) {
     TRUST_AND_CONNECT("Trust and connect"),
     /** Claims an accessory that did not match the filter: still the operator's choice. */
     USE_LISTED("Use it anyway"),
+    /** Opens the source identity import, for a head unit that refused the generated one. */
+    IMPORT_IDENTITY("Import identity"),
 }
 
 /** How the card is coloured: the sentence says what, the colour says whether to worry. */
@@ -66,6 +68,8 @@ object StatusText {
      * that did not match the filter. [destination] is what the route is to, if any.
      * [identityPreparing] is the source identity still loading or passing its self-test,
      * when Connect is off and a plug-in start is held: idle says so rather than "Ready".
+     * [trusted] says a head unit is pinned: with none, plugging in starts nothing on its
+     * own ([AutoStart.NO_PINS]), so an idle Home says to trust one first.
      */
     @JvmOverloads
     fun of(
@@ -77,8 +81,9 @@ object StatusText {
         unplugged: Boolean = false,
         mismatch: Boolean = false,
         identityPreparing: Boolean = false,
+        trusted: Boolean = true,
     ): Status = when (stage) {
-        Stage.IDLE -> idle(finalCategory, authStatus, autoStart, unplugged, identityPreparing)
+        Stage.IDLE -> idle(finalCategory, authStatus, autoStart, unplugged, identityPreparing, trusted)
         Stage.ARMED ->
             if (mismatch) {
                 Status("A USB device is connected, but it doesn't look like a head unit", StatusAction.USE_LISTED, StatusTone.PROBLEM)
@@ -103,21 +108,30 @@ object StatusText {
     private fun projecting(destination: String?): String =
         if (destination.isNullOrBlank()) "Projecting" else "Projecting · routing to $destination"
 
-    private fun idle(category: String, authStatus: String?, autoStart: Boolean, unplugged: Boolean, identityPreparing: Boolean): Status = when {
+    private fun idle(
+        category: String,
+        authStatus: String?,
+        autoStart: Boolean,
+        unplugged: Boolean,
+        identityPreparing: Boolean,
+        trusted: Boolean,
+    ): Status = when {
         // An unplug ends a session as a stop, an I/O error, or a missing accessory,
         // depending on when it lands; all of them are the same thing to the driver.
         unplugged || category == "NO_ACCESSORY" -> Status("Unplugged", StatusAction.NONE, StatusTone.QUIET)
         // Connect is off until the identity is ready, so "Ready to connect" would be wrong.
         category in ORDINARY_ENDINGS && identityPreparing -> Status("Getting ready to connect…", StatusAction.NONE, StatusTone.BUSY)
         category in ORDINARY_ENDINGS ->
-            if (autoStart) {
+            if (!trusted) {
+                Status("First time with this car? Tap Trust and connect, then plug in the USB cable", StatusAction.TRUST_AND_CONNECT, StatusTone.QUIET)
+            } else if (autoStart) {
                 Status("Plug in to start projecting", StatusAction.NONE, StatusTone.QUIET)
             } else {
                 Status("Ready to connect", StatusAction.CONNECT, StatusTone.QUIET)
             }
         category == "USB_PERMISSION_DENIED" -> Status("USB access was refused", StatusAction.TRY_AGAIN, StatusTone.PROBLEM)
         category == "AUTH_FAILED" && authStatus == AUTH_REJECTED ->
-            Status("The head unit didn't accept this phone's identity", StatusAction.OPEN_DIAGNOSTICS, StatusTone.PROBLEM)
+            Status("The head unit didn't accept this phone's identity. It may need one you import", StatusAction.IMPORT_IDENTITY, StatusTone.PROBLEM)
         category == CERT_POLICY -> Status("This head unit isn't trusted yet", StatusAction.TRUST_AND_CONNECT, StatusTone.PROBLEM)
         else -> Status("Ended: $category", StatusAction.OPEN_DIAGNOSTICS, StatusTone.PROBLEM)
     }

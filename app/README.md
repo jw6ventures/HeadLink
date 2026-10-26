@@ -10,6 +10,7 @@ handshake), `SessionController` (main-thread attempt and identity state), the pr
 native session),
 `SourceApplication`/`ReportPersistence`/`IdentityWork` (saved reports, JVM crash
 capture, identity preparation off the main thread), and the pure-JVM `NativeBridge`,
-`ReportStore`, and `TrustStore` (tested by tools/jni-host-test). Projection has run on ART only in the emulator lab
-(`tools/emulator-lab.sh`), never on a device or a head unit. Build with
+`ReportStore`, and `TrustStore` (tested by tools/jni-host-test). Projection has run on a
+Pixel 9 against a 2024 Ford SYNC 4.0 head unit, as well as in the emulator lab
+(`tools/emulator-lab.sh`). Build with
 `tools/android-build.sh`; see ../README.md.

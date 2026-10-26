@@ -102,7 +102,7 @@ object WirelessAuto {
         if (WirelessStandby.isUser(reason)) return
         quickAutoStarts = WirelessStandby.quickAfter(quickAutoStarts, ms)
         if (quickAutoStarts >= WirelessStandby.QUICK_AUTO_LIMIT) {
-            SessionController.note("wireless standby: $quickAutoStarts automatic starts in a row ended within ${WirelessStandby.QUICK_PROJECTION_MS / 1000} s; only the truck's button starts now")
+            SessionController.note("wireless standby: $quickAutoStarts automatic starts in a row ended within ${WirelessStandby.QUICK_PROJECTION_MS / 1000} s; only the car's button starts now")
         }
     }
 
@@ -182,7 +182,7 @@ object WirelessAuto {
             data?.getParcelableExtra(CompanionDeviceManager.EXTRA_ASSOCIATION, AssociationInfo::class.java)
                 ?.let { observe(context, it) }
         } else {
-            SessionController.note("start wirelessly when the truck connects: Android's link dialog was cancelled")
+            SessionController.note("start wirelessly when the car connects: Android's link dialog was cancelled")
         }
         refresh(context)
     }
@@ -199,9 +199,9 @@ object WirelessAuto {
             }
             on = true
             // The address is the operator's own head unit and stays out of the note (§10).
-            SessionController.note("start wirelessly when the truck connects: on, linked and watching")
+            SessionController.note("start wirelessly when the car connects: on, linked and watching")
         } catch (e: Exception) {
-            failed(context, "watching for the truck failed: $e")
+            failed(context, "watching for the car failed: $e")
         }
     }
 
@@ -218,7 +218,7 @@ object WirelessAuto {
         associations(context).forEach { remove(manager, it) }
         on = false
         present = null
-        WirelessLink.stopWaiting("the truck link was removed in Settings")
+        WirelessLink.stopWaiting("the car link was removed in Settings")
     }
 
     private fun remove(manager: CompanionDeviceManager, info: AssociationInfo) {
@@ -240,7 +240,7 @@ object WirelessAuto {
     }
 
     private fun failed(context: Context, why: String) {
-        SessionController.note("start wirelessly when the truck connects: $why")
+        SessionController.note("start wirelessly when the car connects: $why")
         Toast.makeText(context, context.getString(R.string.wireless_auto_failed, why), Toast.LENGTH_LONG).show()
         refresh(context)
     }

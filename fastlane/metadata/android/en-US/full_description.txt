@@ -10,7 +10,7 @@ HeadLink is an independent, open-source app that drives a car's Android Auto hea
 </ul>
 
 <b>Before you install</b>
-Head units only talk to a phone that presents a certificate they trust. HeadLink does not ship one: you import a source identity you have obtained yourself (the project's documentation describes how). Without it the app cannot connect.
+Head units only talk to a phone that presents a certificate they trust. HeadLink generates its own identity, which some head units reject (the 2024 Ford SYNC 4.0 among them). For those you need to import a source identity you have obtained yourself. The project does not provide one or explain how to get one, and without one such a head unit will not connect.
 
 Tested on a 2024 Ford SYNC 4.0 head unit. Other head units may not work. No certification or vehicle compatibility is claimed. Do not operate the phone while driving.
 

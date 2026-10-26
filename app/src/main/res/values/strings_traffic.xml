@@ -5,7 +5,7 @@
     <string name="traffic_title">Live traffic</string>
     <string name="traffic_caption">Traffic from HERE, with your own HERE API key, while a route is being followed. With this off, the app makes no network connection at all.</string>
     <string name="traffic_switch">Use live traffic</string>
-    <string name="traffic_switch_help">Asks HERE for traffic on the road ahead while a route is followed on the truck\'s screen, to colour the route, add the delay to the arrival time and offer a faster way round. It needs your own HERE API key, saved below, before it can be turned on. The first time you turn it on, the phone shows exactly what it sends. Off, nothing is sent and nothing connects.</string>
+    <string name="traffic_switch_help">Asks HERE for traffic on the road ahead while a route is followed on the car\'s screen, to colour the route, add the delay to the arrival time and offer a faster way round. It needs your own HERE API key, saved below, before it can be turned on. The first time you turn it on, the phone shows exactly what it sends. Off, nothing is sent and nothing connects.</string>
     <string name="traffic_disclosure_title">What live traffic sends</string>
     <string name="traffic_disclosure">While a route is being followed, every 10 minutes (or as set), the rectangle around the next 30 km of the route, and your key. That shows HERE roughly where you are. HERE also sees your IP address and when you asked. It does not receive your destination or the route itself.</string>
     <string name="traffic_terms">HERE\'s End User Terms: https://legal.here.com/us-en/terms/here-end-user-terms\nHERE\'s Privacy Policy: https://legal.here.com/us-en/privacy</string>
