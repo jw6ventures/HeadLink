@@ -7,6 +7,7 @@ import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.graphics.RectF
 import android.graphics.Typeface
+import java.util.Locale
 
 /**
  * Paints the dashboard chrome — header, tiles, media controls, and the map pane's
@@ -463,7 +464,10 @@ object DashboardDrawing {
         paint.color = if (alert) palette.warning else palette.dim
         paint.textSize = tile.height / 12f * (if (alert) 1.25f else 1f)
         if (alert) paint.typeface = Typeface.DEFAULT_BOLD
-        canvas.drawText(label, (tile.x + layout.margin).toFloat(), (tile.y + tile.height / 9f) + tile.height / 24f, paint)
+        // Labels are kept lowercase as data (the report and tests name them so) and drawn
+        // in sentence case, like every other title on the dashboard.
+        val shown = label.replaceFirstChar { it.titlecase(Locale.ROOT) }
+        canvas.drawText(shown, (tile.x + layout.margin).toFloat(), (tile.y + tile.height / 9f) + tile.height / 24f, paint)
         paint.typeface = typeface
     }
 
