@@ -2,12 +2,15 @@ package com.jw6ventures.headlink
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.res.ColorStateList
+import android.graphics.Color
 import android.graphics.Typeface
 import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -153,14 +156,32 @@ class PhoneViews(private val activity: Activity) {
         views.forEach { addView(it, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)) }
     }
 
-    /** The one large button on Home: Connect, Stop or the status's own action. */
+    /**
+     * The one large button on Home: Connect, Stop or the status's own action. A flat tint
+     * would replace the platform's disabled look, so disabled gets its own colours: the
+     * primary text colour faint on a faint fill, as Material's disabled buttons are.
+     */
     fun primaryButton(action: () -> Unit): Button = Button(activity).apply {
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
         minHeight = dp(64)
-        backgroundTintList = activity.getColorStateList(R.color.accent)
-        setTextColor(activity.getColor(R.color.on_accent))
+        val attributes = activity.obtainStyledAttributes(intArrayOf(android.R.attr.textColorPrimary))
+        val onSurface = attributes.getColorStateList(0)?.defaultColor ?: Color.BLACK
+        attributes.recycle()
+        val disabled = intArrayOf(-android.R.attr.state_enabled)
+        backgroundTintList = ColorStateList(
+            arrayOf(disabled, intArrayOf()),
+            intArrayOf(withAlpha(onSurface, 0x1F), activity.getColor(R.color.accent)),
+        )
+        setTextColor(
+            ColorStateList(
+                arrayOf(disabled, intArrayOf()),
+                intArrayOf(withAlpha(onSurface, 0x61), activity.getColor(R.color.on_accent)),
+            ),
+        )
         setOnClickListener { action() }
     }
+
+    private fun withAlpha(color: Int, alpha: Int): Int = (color and 0x00FFFFFF) or (alpha shl 24)
 
     /**
      * The tab bar along the bottom, where a thumb reaches it: equal-width labels, the
@@ -180,12 +201,31 @@ class PhoneViews(private val activity: Activity) {
                 isClickable = true
                 isFocusable = true
                 setOnClickListener { onSelect(index) }
+                // Read by TalkBack as a tab, "selected" from isSelected, and its place in the bar.
+                accessibilityDelegate = object : View.AccessibilityDelegate() {
+                    override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfo) {
+                        super.onInitializeAccessibilityNodeInfo(host, info)
+                        info.className = TAB_CLASS
+                        info.collectionItemInfo = AccessibilityNodeInfo.CollectionItemInfo.Builder()
+                            .setRowIndex(0).setRowSpan(1).setColumnIndex(index).setColumnSpan(1)
+                            .setSelected(host.isSelected)
+                            .build()
+                    }
+                }
             }
         }
         val bar = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             setBackgroundResource(R.color.tab_bar)
             tabs.forEach { addView(it, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)) }
+            accessibilityDelegate = object : View.AccessibilityDelegate() {
+                override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfo) {
+                    super.onInitializeAccessibilityNodeInfo(host, info)
+                    info.className = TAB_BAR_CLASS
+                    val shown = tabs.count { it.visibility == View.VISIBLE }
+                    info.collectionInfo = AccessibilityNodeInfo.CollectionInfo(1, shown, false)
+                }
+            }
         }
         return bar to tabs
     }
@@ -198,5 +238,11 @@ class PhoneViews(private val activity: Activity) {
             tab.setTextColor(activity.getColor(if (on) R.color.accent else R.color.tab_text))
             tab.isSelected = on
         }
+    }
+
+    private companion object {
+        /** The class names TalkBack reads as a tab and a tab bar; these views only stand in for them. */
+        const val TAB_CLASS = "android.app.ActionBar\$Tab"
+        const val TAB_BAR_CLASS = "android.widget.TabWidget"
     }
 }

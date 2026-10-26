@@ -207,7 +207,7 @@ public final class DashboardTripTest {
         }
         check(size * 1.3f + size <= list.getHeight(), at + "both lines fit its height");
         check(size >= 10, at + "and are at least 10 px: " + size);
-        check(DashboardLayout.Companion.getEMPTY_FAVORITES().equals(List.of("No favourites yet", "Add them on the phone")),
+        check(DashboardLayout.Companion.getEMPTY_FAVORITES().equals(List.of("No favorites yet", "Add them on the phone")),
             "the plan's wording");
     }
 

@@ -64,7 +64,10 @@ object StatusText {
      * accessory detached, which is how an unplug mid-session ends (as a stop, so its
      * category alone cannot say so). [mismatch] is an armed attempt holding an accessory
      * that did not match the filter. [destination] is what the route is to, if any.
+     * [identityPreparing] is the source identity still loading or passing its self-test,
+     * when Connect is off and a plug-in start is held: idle says so rather than "Ready".
      */
+    @JvmOverloads
     fun of(
         stage: Stage,
         finalCategory: String,
@@ -73,8 +76,9 @@ object StatusText {
         destination: String?,
         unplugged: Boolean = false,
         mismatch: Boolean = false,
+        identityPreparing: Boolean = false,
     ): Status = when (stage) {
-        Stage.IDLE -> idle(finalCategory, authStatus, autoStart, unplugged)
+        Stage.IDLE -> idle(finalCategory, authStatus, autoStart, unplugged, identityPreparing)
         Stage.ARMED ->
             if (mismatch) {
                 Status("A USB device is connected, but it doesn't look like a head unit", StatusAction.USE_LISTED, StatusTone.PROBLEM)
@@ -99,10 +103,12 @@ object StatusText {
     private fun projecting(destination: String?): String =
         if (destination.isNullOrBlank()) "Projecting" else "Projecting · routing to $destination"
 
-    private fun idle(category: String, authStatus: String?, autoStart: Boolean, unplugged: Boolean): Status = when {
+    private fun idle(category: String, authStatus: String?, autoStart: Boolean, unplugged: Boolean, identityPreparing: Boolean): Status = when {
         // An unplug ends a session as a stop, an I/O error, or a missing accessory,
         // depending on when it lands; all of them are the same thing to the driver.
         unplugged || category == "NO_ACCESSORY" -> Status("Unplugged", StatusAction.NONE, StatusTone.QUIET)
+        // Connect is off until the identity is ready, so "Ready to connect" would be wrong.
+        category in ORDINARY_ENDINGS && identityPreparing -> Status("Getting ready to connect…", StatusAction.NONE, StatusTone.BUSY)
         category in ORDINARY_ENDINGS ->
             if (autoStart) {
                 Status("Plug in to start projecting", StatusAction.NONE, StatusTone.QUIET)
@@ -180,11 +186,19 @@ object StatusText {
 }
 
 /**
- * One thing missing before a drive works (§6.1's Setup checklist), in the order the
- * plan lists them. Each has exactly one button that fixes it, which [ConnectionActivity]
- * owns; this only says which are missing.
+ * One thing missing before a drive works (§6.1's Setup checklist): the head unit's trust
+ * first, since nothing connects without it, then the plan's order. Each has exactly one
+ * button that fixes it, which [ConnectionActivity] owns; this only says which are missing.
+ *
+ * [optional] items are listed under their own heading and do not keep Setup from saying
+ * Ready: a drive works without them, and an operator who declines one has decided.
  */
-enum class SetupItem(val title: String, val detail: String, val fix: String) {
+enum class SetupItem(val title: String, val detail: String, val fix: String, val optional: Boolean = false) {
+    NO_PINS(
+        "No head unit trusted yet",
+        "Plug the phone into the head unit's USB port, then tap Trust and connect.",
+        "Trust and connect",
+    ),
     NO_MAP("No map installed", "The dashboard's map pane has nothing to draw.", "Import map"),
     NO_ROUTING("No routing data installed", "Routes and favorites need a BRouter tile.", "Import routing data"),
     /** Routing data is installed, but none for where the phone last was. */
@@ -198,11 +212,6 @@ enum class SetupItem(val title: String, val detail: String, val fix: String) {
         "The car can't show what's playing or list players.",
         "Grant access",
     ),
-    LOCATION(
-        "Location is off",
-        "Routes start from the vehicle's position. Allowed, the phone's own position works too.",
-        "Allow location",
-    ),
     /**
      * P10 (docs/p10-plan.md §4): Show weather is on, but Breezy Weather has not granted its
      * provider permission. Never listed with Show weather off: weather adds nothing then.
@@ -212,12 +221,18 @@ enum class SetupItem(val title: String, val detail: String, val fix: String) {
         "Weather is on, but Breezy Weather's data can't be read.",
         "Grant",
     ),
-    NO_PINS("No head unit trusted yet", "Plug in and tap Trust.", "Trust and connect"),
+    LOCATION(
+        "Location is off",
+        "Routes start from the vehicle's position. Allowed, the phone's own position works too.",
+        "Allow location",
+        optional = true,
+    ),
     /** Not in the plan's list: the session's own notification, which holds its Stop. */
     SESSION_NOTIFICATIONS(
         "Notifications are blocked",
         "A session still runs, but its notification may be hidden; use Stop on Home.",
         "Allow notifications",
+        optional = true,
     ),
 }
 
@@ -231,7 +246,8 @@ object SetupCheck {
         mediaInfo || dashboardNotifications || (callControls && !fullCalls)
 
     /**
-     * What is missing, in the plan's order; empty means Ready.
+     * What is missing, required items first in [SetupItem]'s order, then the optional
+     * ones; none required means Ready.
      *
      * [tiles] are the installed routing tiles' names and [hereTile] the tile the phone's
      * last known position needs, or null when there is no position to ask about. Routing
@@ -239,9 +255,8 @@ object SetupCheck {
      * its own rather than a condition of the routing ones.
      *
      * [weatherWanted] is Show weather (P10) and [weatherPermission] whether Breezy
-     * Weather's permission is held; the item follows the phone's own permissions, after
-     * location. Both default to asking nothing, so a caller that predates P10 lists what
-     * it always did.
+     * Weather's permission is held; the item follows notification access. Both default
+     * to asking nothing, so a caller that predates P10 lists what it always did.
      */
     @JvmOverloads
     fun items(
@@ -256,13 +271,13 @@ object SetupCheck {
         weatherWanted: Boolean = false,
         weatherPermission: Boolean = true,
     ): List<SetupItem> = buildList {
+        if (pins == 0) add(SetupItem.NO_PINS)
         if (maps == 0) add(SetupItem.NO_MAP)
         if (tiles.isEmpty()) add(SetupItem.NO_ROUTING)
         else if (hereTile != null && hereTile !in tiles) add(SetupItem.NO_ROUTING_HERE)
         if (notificationAccessWanted && !notificationAccess) add(SetupItem.NOTIFICATION_ACCESS)
-        if (!location) add(SetupItem.LOCATION)
         if (weatherWanted && !weatherPermission) add(SetupItem.WEATHER_PERMISSION)
-        if (pins == 0) add(SetupItem.NO_PINS)
+        if (!location) add(SetupItem.LOCATION)
         if (!sessionNotifications) add(SetupItem.SESSION_NOTIFICATIONS)
     }
 }

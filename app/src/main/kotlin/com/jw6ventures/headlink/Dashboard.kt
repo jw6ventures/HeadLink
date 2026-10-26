@@ -901,7 +901,7 @@ class DashboardLayout @JvmOverloads constructor(
         const val PLAYER_ROWS = 2
 
         /** The empty favourites tile's two lines (plan §5.7), centred. */
-        val EMPTY_FAVORITES = listOf("No favourites yet", "Add them on the phone")
+        val EMPTY_FAVORITES = listOf("No favorites yet", "Add them on the phone")
 
         /** A generous width of one character, in ems, for sizing text that must not be cut. */
         const val EM_PER_CHARACTER = 0.62f

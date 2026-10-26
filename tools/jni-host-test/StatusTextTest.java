@@ -81,6 +81,16 @@ public final class StatusTextTest {
         check(TEXT.of(Stage.PROJECTING, "-", null, true, null, false, false).getTone() == StatusTone.GOOD, "projecting is good");
         check(idle("USB_PERMISSION_DENIED", true).getTone() == StatusTone.PROBLEM, "a refusal is a problem");
         check(TEXT.of(Stage.ARMED, "-", null, true, null, false, false).getTone() == StatusTone.BUSY, "waiting is busy");
+        // Beyond the table: Connect is off while the identity prepares, so idle does not say Ready.
+        for (boolean auto : new boolean[] {true, false}) {
+            Status preparing = TEXT.of(Stage.IDLE, "-", null, auto, null, false, false, true);
+            is(preparing, "Getting ready to connect\u2026", StatusAction.NONE, "identity preparing, auto-start " + auto);
+            check(preparing.getTone() == StatusTone.BUSY, "preparing is busy");
+        }
+        is(TEXT.of(Stage.IDLE, "USB_PERMISSION_DENIED", null, true, null, false, false, true), "USB access was refused",
+                StatusAction.TRY_AGAIN, "a refusal still shows while the identity prepares");
+        is(TEXT.of(Stage.IDLE, "-", null, true, null, true, false, true), "Unplugged", StatusAction.NONE,
+                "so does an unplug");
     }
 
     /** Nothing gets less visible than it was: an unknown category keeps its raw name. */
@@ -193,8 +203,8 @@ public final class StatusTextTest {
         Set<String> tiles = Set.of("W100_N30.rd5");
         check(items(1, tiles, "W100_N30.rd5", true, true, true, 1, true).isEmpty(), "everything in place is Ready");
         check(items(0, Set.of(), null, true, false, false, 0, false).equals(List.of(
-                SetupItem.NO_MAP, SetupItem.NO_ROUTING, SetupItem.NOTIFICATION_ACCESS, SetupItem.LOCATION,
-                SetupItem.NO_PINS, SetupItem.SESSION_NOTIFICATIONS)), "everything missing, in the plan's order");
+                SetupItem.NO_PINS, SetupItem.NO_MAP, SetupItem.NO_ROUTING, SetupItem.NOTIFICATION_ACCESS,
+                SetupItem.LOCATION, SetupItem.SESSION_NOTIFICATIONS)), "everything missing: trust first, optional last");
         check(items(1, tiles, "W75_N40.rd5", true, true, true, 1, true).equals(List.of(SetupItem.NO_ROUTING_HERE)),
                 "tiles, but none for where the phone is");
         check(items(1, tiles, null, true, true, true, 1, true).isEmpty(), "no position: nothing to say about it");
@@ -207,12 +217,20 @@ public final class StatusTextTest {
         check(weather(true, true, true).isEmpty(), "weather on with the permission is Ready");
         check(weather(true, false, false).isEmpty(), "weather off adds nothing, permission or not");
         check(weather(true, false, true).isEmpty(), "weather off with the permission adds nothing either");
-        check(weather(false, true, false).equals(List.of(SetupItem.LOCATION, SetupItem.WEATHER_PERMISSION)),
-                "it follows location");
+        check(weather(false, true, false).equals(List.of(SetupItem.WEATHER_PERMISSION, SetupItem.LOCATION)),
+                "it comes before the optional location");
         check(SETUP.items(0, Set.of(), null, true, false, false, 0, false, true, false).equals(List.of(
-                SetupItem.NO_MAP, SetupItem.NO_ROUTING, SetupItem.NOTIFICATION_ACCESS, SetupItem.LOCATION,
-                SetupItem.WEATHER_PERMISSION, SetupItem.NO_PINS, SetupItem.SESSION_NOTIFICATIONS)),
+                SetupItem.NO_PINS, SetupItem.NO_MAP, SetupItem.NO_ROUTING, SetupItem.NOTIFICATION_ACCESS,
+                SetupItem.WEATHER_PERMISSION, SetupItem.LOCATION, SetupItem.SESSION_NOTIFICATIONS)),
                 "everything missing with weather on, in order");
+        // Declining location or the session notification still leaves Setup Ready.
+        for (SetupItem item : SetupItem.values()) {
+            boolean optional = item == SetupItem.LOCATION || item == SetupItem.SESSION_NOTIFICATIONS;
+            check(item.getOptional() == optional, item + (optional ? " is optional" : " is required"));
+        }
+        List<SetupItem> declined = items(1, tiles, null, true, true, false, 1, false);
+        check(declined.size() == 2 && declined.stream().allMatch(SetupItem::getOptional),
+                "only optional items left");
         check(SetupItem.WEATHER_PERMISSION.getTitle().equals("Weather permission not granted")
                 && SetupItem.WEATHER_PERMISSION.getFix().equals("Grant"), "the plan's words and one Grant button");
         check(SETUP.notificationAccessWanted(true, false, false, false), "media info wants it");

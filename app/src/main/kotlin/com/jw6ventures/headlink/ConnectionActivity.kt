@@ -1636,8 +1636,10 @@ class ConnectionActivity : Activity() {
             // Events are cleared when an attempt begins, so this is this attempt's unplug.
             unplugged = SessionController.events.any { it.contains("accessory detached") },
             mismatch = stage == Stage.ARMED && attempt?.mismatchCandidate != null,
+            identityPreparing = identityState() == AutoStart.Identity.LOADING,
         )
-        statusSentence.text = status.sentence
+        // A live region announces every setText, and every session event renders.
+        if (statusSentence.text.toString() != status.sentence) statusSentence.text = status.sentence
         statusCard.backgroundTintList = getColorStateList(
             when (status.tone) {
                 StatusTone.QUIET -> R.color.status_quiet
@@ -1828,16 +1830,21 @@ class ConnectionActivity : Activity() {
             // Saved rather than the switch: the lab may have changed it before this render.
             weatherWanted = AppSettings.load(this).weather.enabled, weatherPermission = weatherPermitted(),
         )
-        tabs[TAB_SETUP].text = if (items.isEmpty()) getString(R.string.tab_setup) else getString(R.string.tab_setup_count, items.size)
+        // Only what a drive needs counts; optional items wait under their own heading.
+        val required = items.count { !it.optional }
+        tabs[TAB_SETUP].text = if (required == 0) getString(R.string.tab_setup) else getString(R.string.tab_setup_count, required)
         if (items != shownSetup || here != shownHereTile) {
             shownSetup = items
             shownHereTile = here
             setupList.removeAllViews()
             setupButtons.clear()
-            if (items.isEmpty()) {
+            if (required == 0) {
                 setupList.addView(ui.card(ui.title(R.string.setup_ready), ui.caption().apply { setText(R.string.setup_ready_detail) }))
             }
-            for (item in items) {
+            for ((index, item) in items.withIndex()) {
+                if (item.optional && (index == 0 || !items[index - 1].optional)) {
+                    setupList.addView(ui.title(R.string.setup_optional))
+                }
                 val fix = Button(this).apply {
                     text = item.fix
                     setOnClickListener { fix(item) }
@@ -2792,7 +2799,11 @@ class ConnectionActivity : Activity() {
         loadSaved()
 
         // Home: what someone who is not debugging sees (§6.1).
-        statusSentence = ui.primary(TextView(this)).apply { setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f) }
+        statusSentence = ui.primary(TextView(this)).apply {
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
+            // Connecting, projecting and failures are announced, not only drawn.
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        }
         statusActionButton = Button(this).apply { setOnClickListener { onCardAction() } }
         statusCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -2928,6 +2939,7 @@ class ConnectionActivity : Activity() {
                 ui.labelled(R.string.day_night_label, R.string.day_night_help, dayNightSpinner),
             ),
             ui.card(
+                ui.title(R.string.settings_connecting),
                 ui.withHelp(autoStartCheck, R.string.auto_start_label, R.string.auto_start_help),
                 ui.withHelp(wirelessLinkCheck, R.string.wireless_link_label, R.string.wireless_link_help),
                 ui.withHelp(wirelessAutoCheck, R.string.wireless_auto_label, R.string.wireless_auto_help),
