@@ -31,7 +31,7 @@ test record.
    wirelessly** and Settings' wireless link become available.
 4. **If the car refuses the phone's identity.** Some head units, the 2024 Ford SYNC 4.0
    among them, reject the identity the app generates. Home then offers **Import
-   identity**. You need a source identity of your own for that; this project does not
+   identity**, which is also on the **Settings** tab under **Source identity**. You need a source identity of your own for that; this project does not
    provide one and cannot help you obtain one. See [Source identity](#source-identity-pem).
 5. **Add maps and routing** for the dashboard map and navigation. Projection works
    without them. The **Maps** tab has links to where the files are published, and
@@ -277,7 +277,7 @@ a route is being followed.
 
 The app generates its own source identity. Some head units accept it and some reject it: the 2024 Ford SYNC 4.0 answered with `AUTH_COMPLETE -3` (see the
 [authentication investigation](docs/ford-auth-investigation.md)). For a head unit like
-that, use **Import source identity** on the **Diagnostics** tab. Pick one PEM file that contains the source
+that, use **Import source identity** in the **Source identity** card on the **Settings** tab. Pick one PEM file that contains the source
 certificate, then any intermediate certificates in issuer order, then the matching
 unencrypted RSA-2048 private key. A valid import replaces the current identity and keeps
 the head-unit pins. Use only an identity you are authorized to use. This repository

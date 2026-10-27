@@ -99,6 +99,7 @@ class ConnectionActivity : Activity() {
     private lateinit var resultText: TextView
     private lateinit var savedText: TextView
     private lateinit var trustText: TextView
+    private lateinit var identityStatusText: TextView
     private lateinit var reportText: TextView
     private lateinit var projectionText: TextView
     private lateinit var profileSpinner: Spinner
@@ -1605,6 +1606,13 @@ class ConnectionActivity : Activity() {
             identity["tls_self_test"] ?: "-",
             if (pins.isEmpty()) getString(R.string.no_pins) else pins.joinToString("\n"),
         )
+        val fingerprint = identity["source_identity_fingerprint_sha256"]
+        identityStatusText.text = when {
+            SessionController.identityBusy -> getString(R.string.identity_status_busy)
+            identity["identity_error"] != null -> getString(R.string.identity_status_error, identity["identity_error"])
+            fingerprint != null -> getString(R.string.identity_status_ready, fingerprint.take(16))
+            else -> getString(R.string.identity_status_busy)
+        }
         stopButton.isEnabled = stage != Stage.IDLE && stage != Stage.STOPPING
         useListedButton.visibility =
             if (stage == Stage.ARMED && attempt?.mismatchCandidate != null) View.VISIBLE else View.GONE
@@ -2559,6 +2567,7 @@ class ConnectionActivity : Activity() {
         }
         stageText = text().apply { textSize = 18f }
         trustText = text(monospace = true)
+        identityStatusText = ui.body(selectable = true)
         notificationText = text().apply { setText(R.string.notifications_denied) }
         accessoryText = text(monospace = true)
         resultText = text()
@@ -2974,6 +2983,14 @@ class ConnectionActivity : Activity() {
                 ui.withHelp(wirelessLinkCheck, R.string.wireless_link_label, R.string.wireless_link_help),
                 ui.withHelp(wirelessAutoCheck, R.string.wireless_auto_label, R.string.wireless_auto_help),
             ),
+            // The identity is the user's to supply where a car refuses the generated one, so
+            // its import is a setting; replacing it and the pins stay under Diagnostics.
+            ui.card(
+                ui.title(R.string.settings_identity),
+                ui.caption().apply { setText(R.string.settings_identity_caption) },
+                identityStatusText,
+                importIdentityButton,
+            ),
             ui.card(
                 ui.title(R.string.settings_media),
                 ui.withHelp(mediaInfoCheck, R.string.media_info_label, R.string.media_info_help),
@@ -3063,7 +3080,6 @@ class ConnectionActivity : Activity() {
                 ui.title(R.string.diagnostics_identity),
                 trustText,
                 ui.row(forgetPinsButton, replaceIdentityButton),
-                importIdentityButton,
                 noticesButton,
             ),
             reportText,
