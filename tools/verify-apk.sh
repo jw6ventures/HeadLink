@@ -170,7 +170,14 @@ printf '%s\n' "$filter" | grep -q 'model="Android Auto"' || fail "accessory filt
 # build failure rather than a silent APK growth.
 [ "$(unzip -Z1 "$apk" | grep '^lib/' | LC_ALL=C sort | tr '\n' ' ')" = "lib/arm64-v8a/libaap_jni.so lib/arm64-v8a/libvtm-jni.so " ] \
     || fail "native library set: $(unzip -Z1 "$apk" | grep '^lib/' | tr '\n' ' ')"
-unzip -p "$apk" assets/NOTICES.txt | grep -q '^   OpenSSL 3.5.8' || fail "third-party notices asset"
+notices=$(unzip -p "$apk" assets/NOTICES.txt)
+grep -q '^   OpenSSL 3.5.8' <<<"$notices" || fail "third-party notices asset"
+# Every component's license text must travel with the APK, not only its name.
+for heading in '^   BRouter ' '^MIT License' '^Apache License 2.0' '^SGI Free Software License B 2.0' \
+    '^GNU Lesser General Public License 3.0' '^GNU General Public License 3.0' \
+    'GNU LESSER GENERAL PUBLIC LICENSE' 'END OF TERMS AND CONDITIONS'; do
+    grep -q -- "$heading" <<<"$notices" || fail "third-party notices: $heading"
+done
 for library in libaap_jni.so libvtm-jni.so; do
     unzip -v "$apk" "lib/arm64-v8a/$library" | grep -q ' Stored ' || fail "library is compressed: $library"
 done

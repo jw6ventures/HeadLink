@@ -40,6 +40,8 @@ test record.
 No certification or vehicle compatibility is claimed. Do not operate the phone while
 driving.
 
+What the app stores and sends is described in the [privacy policy](PRIVACY.md).
+
 ## Project status
 
 **Phone audio goes over Bluetooth A2DP**, not over USB. The USB audio channel (P5.3) is for
