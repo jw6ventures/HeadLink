@@ -219,7 +219,7 @@ object WirelessLink {
         main.post {
             val current = link ?: return@post
             if (!current.device?.address.equals(address, ignoreCase = true)) return@post
-            if (current.waiting) current.finish("the truck's Bluetooth disconnected", final = true)
+            if (current.waiting) current.finish("the car's Bluetooth disconnected", final = true)
         }
     }
 
@@ -443,7 +443,7 @@ object WirelessLink {
             aclFilter.addAction(BluetoothDevice.ACTION_ACL_CONNECTED)
             app.registerReceiver(acl, aclFilter, null, handler, Context.RECEIVER_EXPORTED)
             if (auto) note("started automatically: the linked head unit connected over Bluetooth (W3)")
-            if (standby) note("standby: this link waits for the truck between projections; automatic starts ${if (acceptAuto()) "taken" else "held"}")
+            if (standby) note("standby: this link waits for the car between projections; automatic starts ${if (acceptAuto()) "taken" else "held"}")
             status(app.getString(if (waiting) R.string.wireless_link_waiting else R.string.wireless_link_bootstrap))
             Thread({ rfcommLoop() }, "wireless-rfcomm").start()
         }
@@ -474,7 +474,7 @@ object WirelessLink {
                     // Standing by, a start that did not reach the Wi-Fi details goes back to
                     // waiting: at once if the truck asked for it, after the retries if Home did.
                     if (standby && !waiting && (fromWaiting || round > BOOTSTRAP_RETRIES)) {
-                        backToWaiting("the truck did not finish its wireless setup")
+                        backToWaiting("the car did not finish its wireless setup")
                     }
                     if (!standby && round > BOOTSTRAP_RETRIES) break
                     val outcomeKey = synchronized(session) { session.outcome().key }
@@ -484,7 +484,7 @@ object WirelessLink {
                         status(app.getString(R.string.wireless_link_waiting))
                         if (!pause(gap)) return
                         if (!WirelessAuto.isPresent(device.address)) {
-                            endSelf("the truck's Bluetooth is not connected", final = true)
+                            endSelf("the car's Bluetooth is not connected", final = true)
                             return
                         }
                     } else {
@@ -502,7 +502,7 @@ object WirelessLink {
                     shortInARow++
                     if (failedInARow >= WirelessStandby.CONNECT_FAILURE_LIMIT) {
                         outcome = WirelessBootstrap.Outcome.CONNECT_FAILED.key
-                        endSelf("standby: the truck's bootstrap service did not answer $failedInARow times in a row", final = true)
+                        endSelf("standby: the car's bootstrap service did not answer $failedInARow times in a row", final = true)
                         return
                     }
                     continue
@@ -511,7 +511,7 @@ object WirelessLink {
                 WirelessAuto.markPresent(app, device.address)
                 if (!standby && WirelessAuto.standbyFor(app, device.address)) {
                     standby = true
-                    note("standby: the linked truck answered; this link will wait for it between projections")
+                    note("standby: the linked car answered; this link will wait for it between projections")
                 }
                 val began = SystemClock.elapsedRealtime()
                 val deadline = waiting && acceptAuto() && silentWaits < BOOTSTRAP_RETRIES
@@ -538,7 +538,7 @@ object WirelessLink {
             fromWaiting = false
             synchronized(session) { waiting = true }
             if (wake.isHeld) wake.release()
-            note("standby: $why; waiting for the truck's start request")
+            note("standby: $why; waiting for the car's start request")
             status(app.getString(R.string.wireless_link_waiting))
         }
 
@@ -760,7 +760,7 @@ object WirelessLink {
             fromWaiting = true
             wake.acquire(SETUP_WAKE_MS)
             val user = WirelessStandby.isUser(reason)
-            note("standby: the truck asked to start (${WirelessStandby.reasonName(reason)}); setting up")
+            note("standby: the car asked to start (${WirelessStandby.reasonName(reason)}); setting up")
             status(app.getString(if (user) R.string.wireless_link_button else R.string.wireless_link_bootstrap))
             main.post { if (at == epoch && !ended.get()) WirelessLinkService.start(app) }
         }
@@ -1071,7 +1071,7 @@ object WirelessLink {
         fun rearm(why: String) {
             epoch++
             projectionEnded()
-            note("projection ended: $why; standby: waiting for the truck's next start request")
+            note("projection ended: $why; standby: waiting for the car's next start request")
             closeProjection()
             handler.removeCallbacksAndMessages(null)
             lastExtra = projectionExtra()

@@ -922,7 +922,7 @@ class ConnectionActivity : Activity() {
         wirelessLinkCheck.isChecked = WirelessAuto.isOn(this)
         if (!wanted) {
             WirelessAuto.unlink(this)
-            SessionController.note("link the truck for wireless: off")
+            SessionController.note("link the car for wireless: off")
             renderState()
             return
         }
@@ -1612,7 +1612,7 @@ class ConnectionActivity : Activity() {
         // part of a render, and every session event renders.
         if (currentTab == TAB_DIAGNOSTICS) reportText.text = SessionReport.compose(this, usb, filter)
         projectionText.text = SessionController.projectionReport.ifEmpty { getString(R.string.no_projection) }
-        renderHome(stage, attempt)
+        renderHome(stage, attempt, pins.size)
         renderSetup(idle, maps.size, tiles.map { it.name }.toSet(), pins.size, notificationsGranted, mediaAccess)
         renderSettings()
         renderTraffic()
@@ -1624,9 +1624,10 @@ class ConnectionActivity : Activity() {
     /**
      * Home (§6.1): the status in words, the one large button, the route in words and the
      * favorites. The status card's own button carries only the actions the large button
-     * does not: the large one is Connect (or Try again) while idle and Stop otherwise.
+     * does not: the large one is Connect (or Try again, or Trust and connect with no head
+     * unit trusted yet) while idle and Stop otherwise.
      */
-    private fun renderHome(stage: Stage, attempt: Attempt?) {
+    private fun renderHome(stage: Stage, attempt: Attempt?, pins: Int) {
         val status = StatusText.of(
             stage,
             SessionController.finalCategory,
@@ -1637,6 +1638,7 @@ class ConnectionActivity : Activity() {
             unplugged = SessionController.events.any { it.contains("accessory detached") },
             mismatch = stage == Stage.ARMED && attempt?.mismatchCandidate != null,
             identityPreparing = identityState() == AutoStart.Identity.LOADING,
+            trusted = pins > 0,
         )
         // A live region announces every setText, and every session event renders.
         if (statusSentence.text.toString() != status.sentence) statusSentence.text = status.sentence
@@ -1649,7 +1651,7 @@ class ConnectionActivity : Activity() {
             },
         )
         cardAction = when (status.action) {
-            StatusAction.OPEN_DIAGNOSTICS, StatusAction.TRUST_AND_CONNECT, StatusAction.USE_LISTED -> status.action
+            StatusAction.OPEN_DIAGNOSTICS, StatusAction.USE_LISTED, StatusAction.IMPORT_IDENTITY -> status.action
             else -> StatusAction.NONE
         }
         statusActionButton.visibility = if (cardAction == StatusAction.NONE) View.GONE else View.VISIBLE
@@ -1657,6 +1659,9 @@ class ConnectionActivity : Activity() {
         primaryAction = when {
             stage != Stage.IDLE -> StatusAction.STOP
             status.action == StatusAction.TRY_AGAIN -> StatusAction.TRY_AGAIN
+            // No head unit trusted yet, or this one isn't: the first-use path is the large
+            // button, since a plain Connect or a plug-in would only fail the pin check.
+            status.action == StatusAction.TRUST_AND_CONNECT -> StatusAction.TRUST_AND_CONNECT
             else -> StatusAction.CONNECT
         }
         primaryButton.text = when (primaryAction) {
@@ -1673,11 +1678,14 @@ class ConnectionActivity : Activity() {
         val settingUp = WirelessLink.settingUp
         wirelessLinkCheck.isChecked = WirelessAuto.isOn(this)
         wirelessAutoCheck.isEnabled = wirelessLinkCheck.isChecked
-        wirelessButton.visibility = if (stage == Stage.IDLE) View.VISIBLE else View.GONE
+        // Wireless only works with a head unit already trusted over USB, so until one is
+        // pinned the button is hidden and its line says to connect over USB first.
+        wirelessButton.visibility = if (stage == Stage.IDLE && (pins > 0 || linking)) View.VISIBLE else View.GONE
         wirelessButton.setText(if (settingUp) R.string.home_wireless_cancel else R.string.home_wireless_connect)
         wirelessButton.isEnabled = settingUp || connectButton.isEnabled
         wirelessText.visibility = if (stage == Stage.IDLE || linking) View.VISIBLE else View.GONE
-        wirelessText.text = WirelessLink.lastStatus ?: getString(R.string.home_wireless_hint)
+        wirelessText.text = WirelessLink.lastStatus
+            ?: getString(if (pins > 0) R.string.home_wireless_hint else R.string.home_wireless_needs_usb)
 
         // P8.1 (plan §7): which engine speaks, flagged if it can reach the network.
         val engine = speechEngine
@@ -1925,7 +1933,11 @@ class ConnectionActivity : Activity() {
     }
 
     private fun onPrimary() {
-        if (primaryAction == StatusAction.STOP) stop() else connect()
+        when (primaryAction) {
+            StatusAction.STOP -> stop()
+            StatusAction.TRUST_AND_CONNECT -> trustAndConnect()
+            else -> connect()
+        }
     }
 
     private fun onCardAction() {
@@ -1935,8 +1947,8 @@ class ConnectionActivity : Activity() {
                 selectTab(TAB_DIAGNOSTICS)
                 renderState()
             }
-            StatusAction.TRUST_AND_CONNECT -> trustAndConnect()
             StatusAction.USE_LISTED -> useListed()
+            StatusAction.IMPORT_IDENTITY -> importIdentityButton.performClick()
             else -> {}
         }
     }
@@ -2037,6 +2049,18 @@ class ConnectionActivity : Activity() {
             SampleOutcome.ERROR -> getString(R.string.voice_sample_error)
         }
         return if (guidanceOn) said else said + "\n" + getString(R.string.voice_sample_guidance_off)
+    }
+
+    /**
+     * Where maps and routing tiles come from, opened in the phone's browser. The download
+     * is the browser's; this app still fetches no map or routing data itself (APP10).
+     */
+    private fun openLink(url: String) {
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        } catch (e: android.content.ActivityNotFoundException) {
+            Toast.makeText(this, getString(R.string.no_browser, url), Toast.LENGTH_LONG).show()
+        }
     }
 
     /** Android's text-to-speech settings: engine, voice and rate are chosen there (plan §7). */
@@ -2863,8 +2887,14 @@ class ConnectionActivity : Activity() {
 
         // Maps & routing: import, the drop folder, the installed files, removal.
         val mapsPage = page(
-            ui.card(ui.title(R.string.maps_title), mapText, importMapButton),
-            ui.card(ui.title(R.string.routing_title), routingText, importRoutingButton),
+            ui.card(
+                ui.title(R.string.maps_title), mapText, importMapButton,
+                quietButton(R.string.maps_where) { openLink(MAPS_DOWNLOAD) },
+            ),
+            ui.card(
+                ui.title(R.string.routing_title), routingText, importRoutingButton,
+                quietButton(R.string.routing_where) { openLink(ROUTING_DOWNLOAD) },
+            ),
             ui.card(ui.title(R.string.drop_folder_title), folderText, ui.row(chooseFolderButton, checkFolderButton)),
             ui.card(
                 ui.title(R.string.route_prefs_title),
@@ -3366,6 +3396,8 @@ class ConnectionActivity : Activity() {
         private const val TAB_SETTINGS = 3
         private const val TAB_DIAGNOSTICS = 4
         private const val STATE_TAB = "tab"
+        private const val MAPS_DOWNLOAD = "https://download.mapsforge.org/maps/v5/"
+        private const val ROUTING_DOWNLOAD = "https://brouter.de/brouter/segments4/"
 
         /** Map side choices, in the order [AttemptSettings.mapOnLeft] reads them. */
         val MAP_SIDES = listOf("map left", "map right")

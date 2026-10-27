@@ -22,6 +22,7 @@ public final class StatusTextTest {
 
     public static void main(String[] args) {
         theTable();
+        firstUse();
         unknownCategories();
         unplugOverridesTheEnding();
         everyStageSaysSomething();
@@ -62,7 +63,8 @@ public final class StatusTextTest {
                 "Projecting", StatusAction.STOP, "PROJECTING with a blank destination");
         is(idle("USB_PERMISSION_DENIED", true), "USB access was refused", StatusAction.TRY_AGAIN, "USB_PERMISSION_DENIED");
         is(TEXT.of(Stage.IDLE, "AUTH_FAILED", "-3", true, null, false, false),
-                "The head unit didn't accept this phone's identity", StatusAction.OPEN_DIAGNOSTICS, "AUTH_FAILED -3");
+                "The head unit didn't accept this phone's identity. It may need one you import",
+                StatusAction.IMPORT_IDENTITY, "AUTH_FAILED -3");
         is(idle("NO_ACCESSORY", false), "Unplugged", StatusAction.NONE, "NO_ACCESSORY");
         is(idle("TLS_CERT_POLICY", true), "This head unit isn't trusted yet", StatusAction.TRUST_AND_CONNECT,
                 "certificate policy failure");
@@ -91,6 +93,32 @@ public final class StatusTextTest {
                 StatusAction.TRY_AGAIN, "a refusal still shows while the identity prepares");
         is(TEXT.of(Stage.IDLE, "-", null, true, null, true, false, true), "Unplugged", StatusAction.NONE,
                 "so does an unplug");
+    }
+
+    /**
+     * With no head unit pinned, a plug-in starts nothing (AutoStart.NO_PINS), so an idle
+     * Home says to trust one first, whatever auto-start is set to; failures still say
+     * what they are, and every other stage is unchanged.
+     */
+    private static void firstUse() {
+        String first = "First time with this car? Tap Trust and connect, then plug in the USB cable";
+        for (String ending : List.of("-", "CANCELLED", "PROJECTION_COMPLETE", "PEER_SHUTDOWN", "HOLD_COMPLETE", "STAGE_LIMIT")) {
+            for (boolean auto : new boolean[] {true, false}) {
+                Status status = TEXT.of(Stage.IDLE, ending, null, auto, null, false, false, false, false);
+                is(status, first, StatusAction.TRUST_AND_CONNECT, ending + " untrusted, auto-start " + auto);
+                check(status.getTone() == StatusTone.QUIET, ending + " untrusted is not a problem");
+            }
+        }
+        is(TEXT.of(Stage.IDLE, "USB_PERMISSION_DENIED", null, true, null, false, false, false, false),
+                "USB access was refused", StatusAction.TRY_AGAIN, "a refusal untrusted");
+        is(TEXT.of(Stage.IDLE, "TLS_CERT_POLICY", null, true, null, false, false, false, false),
+                "This head unit isn't trusted yet", StatusAction.TRUST_AND_CONNECT, "pin failure untrusted");
+        is(TEXT.of(Stage.IDLE, "-", null, true, null, true, false, false, false), "Unplugged", StatusAction.NONE, "unplug untrusted");
+        is(TEXT.of(Stage.ARMED, "-", null, true, null, false, false, false, false),
+                "Waiting for the head unit \u2014 plug in the USB cable", StatusAction.STOP, "ARMED untrusted");
+        // An identity still loading says so before anything else: Connect is off meanwhile.
+        is(TEXT.of(Stage.IDLE, "-", null, true, null, false, false, true, false),
+                "Getting ready to connect\u2026", StatusAction.NONE, "identity preparing, untrusted");
     }
 
     /** Nothing gets less visible than it was: an unknown category keeps its raw name. */

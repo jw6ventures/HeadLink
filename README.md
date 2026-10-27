@@ -15,6 +15,33 @@ owned map, turn-by-turn on the instrument cluster, and offline navigation with a
 have not been done. See [P4 lab results](docs/p4-lab-results.md) and the
 [G4/G5 procedure](docs/g4-g5-procedure.md).
 
+## Getting started
+
+This section is for using the app. Everything after it is the project's build, lab and
+test record.
+
+1. **Check the phone.** Android 13 or later, with USB accessory support. Pair it with the
+   car over Bluetooth as usual: phone audio stays on Bluetooth.
+2. **Install.** Download `HeadLink-<version>.apk` from
+   [Releases](https://github.com/jw6ventures/headlink/releases), check it against
+   `SHA256SUMS`, and install it.
+3. **Connect the first time.** Open HeadLink and tap **Trust and connect** on Home, then
+   plug the phone into the car's USB port. The car's certificate is pinned, so later
+   drives start on their own when you plug in. Once that has worked, **Connect
+   wirelessly** and Settings' wireless link become available.
+4. **If the car refuses the phone's identity.** Some head units, the 2024 Ford SYNC 4.0
+   among them, reject the identity the app generates. Home then offers **Import
+   identity**. You need a source identity of your own for that; this project does not
+   provide one and cannot help you obtain one. See [Source identity](#source-identity-pem).
+5. **Add maps and routing** for the dashboard map and navigation. Projection works
+   without them. The **Maps** tab has links to where the files are published, and
+   [Data to download and import](#data-to-download-and-import) explains each one.
+
+No certification or vehicle compatibility is claimed. Do not operate the phone while
+driving.
+
+## Project status
+
 **Phone audio goes over Bluetooth A2DP**, not over USB. The USB audio channel (P5.3) is for
 audio this app generates, and it is off by default. See spec §2.2 and the
 [A2DP proposal](docs/a2dp-supersedes-usb-audio-proposal.md).
@@ -248,8 +275,7 @@ a route is being followed.
 
 ### Source identity: PEM
 
-The app generates its own source identity, and most testing needs nothing more. Some
-head units reject it: the 2024 Ford SYNC 4.0 answered with `AUTH_COMPLETE -3` (see the
+The app generates its own source identity. Some head units accept it and some reject it: the 2024 Ford SYNC 4.0 answered with `AUTH_COMPLETE -3` (see the
 [authentication investigation](docs/ford-auth-investigation.md)). For a head unit like
 that, use **Import source identity** on the **Diagnostics** tab. Pick one PEM file that contains the source
 certificate, then any intermediate certificates in issuer order, then the matching
