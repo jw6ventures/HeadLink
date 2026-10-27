@@ -2,6 +2,11 @@
 <resources>
     <string name="source_auth_rejected">The head unit rejected source authentication after TLS completed. It may require an identity from an issuer it trusts. Trusting the head unit or regenerating a self-signed identity does not establish that trust.</string>
     <string name="import_identity">Import source identity</string>
+    <string name="settings_identity">Source identity</string>
+    <string name="settings_identity_caption">The certificate this phone shows the car. Many cars accept the one HeadLink makes. Some, such as the 2024 Ford SYNC 4.0, need one you supply yourself; HeadLink does not provide one.</string>
+    <string name="identity_status_ready">In use: %1$s…</string>
+    <string name="identity_status_busy">Preparing the identity…</string>
+    <string name="identity_status_error">Not ready: %1$s</string>
     <string name="import_identity_description">Select a PEM file containing your source certificate, any intermediate certificates in issuer order, and matching unencrypted RSA-2048 private key. Use an identity you are authorized to use. A valid import replaces the current source identity; head-unit pins stay in place. Importing does not guarantee that the vehicle will accept it.</string>
     <string name="app_name">HeadLink</string>
     <string name="connect">Connect</string>
