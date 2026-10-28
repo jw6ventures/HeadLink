@@ -277,8 +277,9 @@ barely audible while turn prompts were fine, which is why both now use
 
 Each change saves at once, but most of these choices are read when a projection starts
 (`ProjectionService.startProjection`, `Speaker.bind`), so they take effect at the next
-connection. That includes Read aloud and While speaking. Three things reach a running
-projection at once: Hidden apps, the Weather card (`Weather.settings`), and Day/night
+connection. That includes Read aloud and While speaking. Four things reach a running
+projection at once: Hidden apps, the Weather card (`Weather.settings`), the Home Assistant
+button's switch, and Day/night
 when changed from the dashboard's own ☀/☾. The Maps tab's Route preferences and Voice
 guidance also apply at once. Controls that configure the session itself (media, audio,
 cluster) are enabled only while idle with Stop after = projection.
@@ -353,9 +354,22 @@ player and Telecom. Neither the Pixel nor the truck is recorded.
 
 A caption explains how to tick HeadLink under Breezy's own "update notifier" module so new
 weather arrives straight away. That is Breezy's notifier. HeadLink has no update checker of
-its own: it makes no network connection except for live traffic. See
+its own: it makes no network connection except for live traffic and the Home Assistant
+button. See
 [dashboard.md](dashboard.md) and [data.md](data.md). **Verified:** host tests and the lab
 stand-in. Breezy's real field names have not been checked on the Pixel.
+
+**Home Assistant** (`HomeAssistantCard`, its own `home_assistant` preferences file)
+
+One dashboard button that calls a Home Assistant service. Server address (https only),
+long-lived access token (masked, never shown again, stored AES-GCM sealed with an Android
+Keystore key), service as `domain.service`, and an optional target (entity ids, comma
+separated). **Save** checks every field and saves them together; **Check** sends only GETs
+(the API, the service list, each target's state) and says what is wrong, with a nearest
+match for a mistyped service. *Show the Home Assistant button* can be on only while the
+address, token and service are saved, and reaches a running projection at once. See
+[data.md](data.md#home-assistant-button) and [dashboard.md](dashboard.md#header).
+**Verified:** host tests (`HomeAssistantTest`). Not yet tried against a real server.
 
 **OsmAnd maps** (`OsmAndMapsCard`, its own `poi` preferences file)
 
@@ -463,7 +477,8 @@ Further cards:
 - **Not settings fields**, so no screen write resets them:
   - `last_resolved_night`: the palette the last projection ended in.
   - `wireless_device`: the car's Bluetooth address.
-- **Separate files:** `traffic` (holds the key), `poi`, `favorites`, `map` (map
+- **Separate files:** `traffic` (holds the key), `home_assistant` (holds the sealed
+  token), `poi`, `favorites`, `map` (map
   orientation) and `played_players`.
 - **Lab intents never touch saved settings.** In debug builds `handleLabIntent` builds its
   attempt from intent extras, so a lab run can't leave the truck with lab settings. The

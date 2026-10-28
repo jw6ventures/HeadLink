@@ -125,6 +125,11 @@
 #   a report. It also parses the lab stand-in's own scenarios (tools/breezy-standin/), whose
 #   pure Scenarios.java is compiled here too. Fixtures are in Breezy's shape from its source;
 #   no real blob from a phone has been read yet (docs/verification.md, "Feature status").
+# * HomeAssistantTest: the Home Assistant button - the settings' cleaning, repair and stored
+#   form, nothing sent while it is off or not set up, a press as exactly one POST with the
+#   token only in its header, Check as GETs only, the words for each answer, the button in the
+#   header or, where it does not fit, over the map, clear of every other control at 1080p,
+#   726x480 and 800x480, and a press handed out once.
 # * ObfTest: P11.2-P11.3's OBF reader - the wire walker (varints, zigzag, OsmAnd's wire type 6
 #   with 4- and 8-byte big-endian lengths, unknown fields of every wire type), tile arithmetic,
 #   the Gas/Food/Shop rules, and a synthetic .obf built from the vendored OBF.proto: contents,
@@ -221,6 +226,7 @@ java -cp "$out:$classes:$stdlib:$brouter:$vtm" DashboardTrafficTest
 java -cp "$out:$classes:$stdlib" DashboardPoiTest
 java -cp "$out:$classes:$stdlib:$brouter" TrafficFeedTest "${ROUTING_SEGMENTS:-}"
 java -cp "$out:$classes:$stdlib" WeatherTest tools/breezy-standin/scenarios
+java -cp "$out:$classes:$stdlib" HomeAssistantTest
 java -cp "$out:$classes:$stdlib" ObfTest "${OBF_DIR:-}"
 java -cp "$out:$classes:$stdlib" AddressSearchTest "${OBF_DIR:-}"
 java -cp "$out:$classes:$stdlib:$brouter" SearchAheadTest "${ROUTING_SEGMENTS:-}" "${OBF_DIR:-}"

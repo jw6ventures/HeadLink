@@ -274,10 +274,11 @@ code rule) and are enforced in the build where possible, mostly by
   issuance and no attestation. Map, routing and OsmAnd data are supplied by the operator
   (see [data.md](data.md)), never downloaded; VTM's networked module `vtm-http` is
   deliberately not a dependency. Weather reads Breezy Weather's provider on the phone.
-- **`INTERNET` only for opt-in live traffic.** It is the one networked integration, off
-  by default; with it off no socket opens (host-tested in `TrafficClientTest`). With it
-  on it contacts only HERE's traffic host with the operator's own key, only while a route
-  is followed. `INTERNET` cannot be revoked on stock Android, so the guarantee lives in
+- **`INTERNET` only for opt-in live traffic and the Home Assistant button.** Both are off
+  by default; with them off no socket opens (host-tested in `TrafficClientTest` and
+  `HomeAssistantTest`). Traffic contacts only HERE's traffic host with the operator's own
+  key, only while a route is followed. The Home Assistant button contacts only the
+  operator's own https server, only on a tap or the card's Check. `INTERNET` cannot be revoked on stock Android, so the guarantee lives in
   the code. Cleartext is allowed only in debug builds, for the lab's stand-in
   (`app/src/debug/`); `verify-apk.sh` checks a release build carries no network security
   config. The wireless link's Wi-Fi request is local-only and leaves the default network

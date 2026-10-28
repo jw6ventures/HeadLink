@@ -29,6 +29,8 @@ line "native-code: 'arm64-v8a'"
 # docs/navigation.md, "Live traffic (HERE)"):
 # off by default, and no socket opens unless the operator turns it on
 # with their own HERE key (host-tested in TrafficClientTest; this script cannot see that).
+# The opt-in Home Assistant button uses it too, only for a press or the card's Check
+# (host-tested in HomeAssistantTest).
 # W0 adds BLUETOOTH_CONNECT (spec §5.2 as amended 14 October 2026,
 # docs/connecting.md, "Diagnostics: the wireless probe"): the wireless probe's SDP query and, on a second tap
 # after an advertised verdict, W1's one RFCOMM bootstrap read; and W2's link below. Asked

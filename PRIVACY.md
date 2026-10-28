@@ -1,14 +1,14 @@
 # HeadLink privacy policy
 
-Effective 27 October 2026. Applies to the HeadLink Android app
+Effective 28 October 2026. Applies to the HeadLink Android app
 (`com.jw6ventures.headlink`) published by JW6 Ventures.
 
 ## The short version
 
 HeadLink has no account, no ads, no analytics, no crash reporting, and no server of its
-own. It keeps what it needs on your phone. The only time it sends anything over the
-internet is when you turn on live traffic, and then it sends only what is described under
-[Live traffic](#live-traffic-here).
+own. It keeps what it needs on your phone. It sends something over the internet only when
+you turn on one of two optional features, and then only what is described under
+[Live traffic](#live-traffic-here) and [Home Assistant button](#home-assistant-button).
 
 ## What stays on your phone
 
@@ -26,6 +26,9 @@ turned off for all of it, so none of it is copied to a cloud backup or a new pho
   location, destinations, routes, callers, phone numbers, or notification content. Device
   serial numbers are redacted and Wi-Fi network names are replaced by a salted hash.
 - **Your HERE API key**, if you enter one.
+- **Your Home Assistant server address, service, target and access token**, if you set up
+  the Home Assistant button. The token is encrypted with a key held in the Android
+  Keystore, is never shown again once saved, and is left out of diagnostic reports.
 
 Uninstalling HeadLink deletes all of it.
 
@@ -66,7 +69,23 @@ destination or the route itself. HeadLink keeps nothing it receives beyond the n
 response. HERE's handling of this data is governed by HERE's own privacy policy:
 <https://legal.here.com/us-en/privacy>.
 
-With live traffic off, HeadLink makes no internet connection.
+## Home Assistant button
+
+The Home Assistant button is off by default. You set it up with the address of your own
+Home Assistant server, a long-lived access token you create there, and the service and
+target to call. HeadLink then connects to that server, over https only, at two moments:
+
+- when you tap the button on the car's screen, it calls that one service on that target
+  once, and
+- when you tap **Check** in Settings, it reads from the server to confirm the token, that
+  the service exists and that each target is a known entity, without calling anything.
+
+Each request carries your token. Nothing is sent in the background, and HeadLink sends
+nothing about your location, route or phone. Your Home Assistant server is yours, so what
+it records is under your control.
+
+With live traffic and the Home Assistant button both off, HeadLink makes no internet
+connection.
 
 ## Other apps HeadLink works with
 

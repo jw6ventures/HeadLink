@@ -107,7 +107,8 @@ refresh.
 
 ## Live traffic: HERE API key
 
-Live traffic is off by default, and it is the only feature that uses the network.
+Live traffic is off by default. It and the [Home Assistant button](#home-assistant-button) are
+the only features that use the network.
 
 1. Create a HERE platform account at <https://platform.here.com/> and make an API key.
    The free Base Plan includes 5,000 transactions a month. HeadLink stays well under that.
@@ -118,6 +119,27 @@ The key belongs to you, and you are responsible for how it's used. It is stored 
 app's private preferences and is left out of backups and diagnostic reports. It is never
 in the APK or this repository. Requests go to `data.traffic.hereapi.com`, and only while
 a route is being followed.
+
+## Home Assistant button
+
+An optional button on the car's dashboard that calls one service on your own Home
+Assistant server, such as `cover.open_cover` on `cover.garage_door`, `switch.turn_on` on
+`switch.gate_opener`, or `automation.trigger` on `automation.im_home`. It is off by default.
+
+1. In Home Assistant, open your profile, then **Security**, and create a long-lived access
+   token. A token for a separate, non-admin user is safer.
+2. In the **Home Assistant** card on HeadLink's **Settings** tab, enter the server's https
+   address (the one that works away from home), the token, the service as
+   `domain.service`, and the target entity (or several, separated by commas, or none). Tap
+   **Save**, then **Check**. Check only reads from the server: it confirms the token, that
+   the service exists and that each target is a known entity, without calling anything.
+3. Turn on **Show the Home Assistant button**.
+
+One tap on the button calls the service once; it turns green with a tick or red with a
+cross to say how it went. Where it sits is under [the dashboard's header](dashboard.md#header).
+The token is stored encrypted with a key held in the Android Keystore, is left out of
+backups and diagnostic reports, and is sent only to the address you saved. Plain http is
+not supported: Android blocks it in release builds.
 
 ## Source identity: PEM
 

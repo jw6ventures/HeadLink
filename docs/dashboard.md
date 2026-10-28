@@ -160,7 +160,16 @@ the bearing, as in `NE 30°`. The compass, heading and bearing always stay, beca
 are the quick check on the map's arrow.
 
 Right to left: **battery**, **signal**, **☀/☾**, **Ⓟ**, then the **weather** item while
-*Show weather* is on. The middle of the header stays empty; the turn moved to the turn card.
+*Show weather* is on, then the **Home Assistant** button while it is set up and on. The
+middle of the header stays empty; the turn moved to the turn card.
+
+- **Home Assistant button.** `DashboardLayout.homeAssistant*`, `HomeAssistantClient`. A
+  header-height square a margin left of the weather item, or of Ⓟ while weather is off,
+  wherever the clock, speed and bearing still fit beside it (1080p and 800x480). Where they
+  would not (726x480), it is a bubble in the map pane's bottom row, right of recentre,
+  instead; the choice is fixed per layout so it never moves mid-drive (James, 28 October
+  2026). A tap calls the saved service once; the button shows an accent ring while
+  sending, then green with a tick or red with a cross for 4 s. `HomeAssistantTest`.
 
 - **Clock.** Setting *Clock*, `ClockFormat`: 24-hour, the default, or 12-hour. The 12-hour
   header clock is written `6:40`, with no AM/PM. The time now is never ambiguous, and

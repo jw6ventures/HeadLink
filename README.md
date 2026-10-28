@@ -6,7 +6,8 @@ HeadLink is an independent, open-source Android app that talks to an Android Aut
 unit directly, wired or wireless, and puts its own dashboard on the car's screen: an
 offline map with turn-by-turn directions, your media, notifications and calls. It needs no
 Google Play services and no account, and it works on de-Googled phones. The only internet
-connection it ever makes is for optional HERE live traffic, which is off by default.
+connections it ever makes are for optional HERE live traffic and an optional Home
+Assistant button, both off by default.
 
 ![The HeadLink dashboard on a car screen: a map with a highlighted route and a turn card, media controls, the arrival time, and notifications](docs/images/p9/p9-traffic-route-800-day.png)
 
@@ -32,8 +33,9 @@ connection it ever makes is for optional HERE live traffic, which is off by defa
 - **Notifications on the dashboard**, optionally read aloud when tapped, and **call
   controls** (answer, decline, hang up).
 - **Day and night** themes that follow the car's own day/night signal, or a fixed choice.
-- **Optional extras, off by default:** live traffic using your own free HERE key, and
-  weather from the Breezy Weather app.
+- **Optional extras, off by default:** live traffic using your own free HERE key,
+  weather from the Breezy Weather app, and a Home Assistant button that calls one service
+  on your own server (open the garage, trigger an automation).
 
 Phone audio (music, calls, spoken directions) stays on **Bluetooth**, the way it already
 works in your car. HeadLink does not send audio over USB unless you turn that on.
@@ -92,7 +94,7 @@ open those download pages in the phone's browser.
 
 [Setting up maps, routing and the optional extras](docs/data.md) has the details,
 including how to pick tiles, how to point HeadLink at OsmAnd's maps, and how to turn on
-weather and traffic.
+weather, traffic and the Home Assistant button.
 
 ### 3. Import your source identity (if your head unit needs one)
 
@@ -136,8 +138,10 @@ To set a destination, share a place to HeadLink from OsmAnd or a maps app, searc
 ## Privacy
 
 - No ads, no analytics, no account, no crash reporting service.
-- Nothing connects to the internet unless you turn on live traffic. Then the app talks
-  only to HERE, only while a route is being followed, using your own key.
+- Nothing connects to the internet unless you turn on live traffic or the Home Assistant
+  button. Traffic talks only to HERE, only while a route is being followed, using your own
+  key. The Home Assistant button talks only to the server you saved, only when you tap it
+  or use Check.
 - Weather is read from the Breezy Weather app on the same phone; HeadLink itself makes no
   connection for it.
 - Favorites, destinations and your location stay on the phone. Diagnostic reports stay on
