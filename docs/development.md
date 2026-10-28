@@ -41,8 +41,8 @@ Which gates have passed, and what is proven on the truck versus only in the lab,
   (session token, counters, four buttons, touch crosshair). Permissions: foreground
   service, connectedDevice, notifications, location, phone state and ongoing calls,
   Bluetooth connect, companion-device presence, wake lock, network state, Breezy
-  Weather's provider, and INTERNET. INTERNET is for opt-in live traffic only: with
-  traffic off, nothing connects, and maps and routing data are never downloaded (see
+  Weather's provider, and INTERNET. INTERNET is for opt-in live traffic and the opt-in Home
+  Assistant button only: with both off, nothing connects, and maps and routing data are never downloaded (see
   [setting up maps and data](data.md)).
 - `tools/source-harness`: offline plaintext inspector plus a TCP lab adapter
   (`--io poll|threads`) using the same engine, including a projection mode that renders the

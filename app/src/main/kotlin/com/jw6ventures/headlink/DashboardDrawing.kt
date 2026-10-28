@@ -74,7 +74,8 @@ object DashboardDrawing {
         // header rather than leaving a gap where the second line used to be.
         val baseline = layout.y + layout.header * (if (snapshot.diagnostics) 0.62f else 0.68f)
         // P10: short of the weather item while it is shown, else as far as Ⓟ.
-        val textRight = layout.headerTextRight(snapshot.weatherHeader != null).toFloat()
+        // And short of the Home Assistant button while it is in the header.
+        val textRight = layout.headerTextRight(snapshot.weatherHeader != null, snapshot.homeAssistant != null).toFloat()
         var cursor = (layout.x + layout.margin).toFloat()
 
         paint.color = palette.text
@@ -122,6 +123,12 @@ object DashboardDrawing {
         }
 
         drawHeaderIcons(canvas, paint, layout, snapshot, palette)
+        snapshot.homeAssistant?.let {
+            if (layout.homeAssistantInHeader) {
+                val box = layout.headerHomeAssistant(snapshot.weatherHeader != null)
+                drawHomeAssistant(canvas, paint, box, it, palette, header = true)
+            }
+        }
         snapshot.weatherHeader?.let { WeatherDrawing.drawHeaderItem(canvas, paint, layout, it, baseline, palette) }
         drawSignal(canvas, paint, layout, snapshot, palette)
         drawBattery(canvas, paint, layout, snapshot, palette)
@@ -1381,6 +1388,11 @@ object DashboardDrawing {
         // route (HERE's terms, 6.4 a; docs/navigation.md, "Live traffic (HERE)"). Outside the
         // `ok` branch, because the arrival time owes it even over a pane with no map in it.
         if (snapshot.trafficAttributed) drawTrafficAttribution(canvas, paint, layout, palette)
+        // Outside the `ok` branch too: the Home Assistant button has nothing to do with the
+        // map, and a phone with no map installed can still open the garage.
+        snapshot.homeAssistant?.let {
+            if (!layout.homeAssistantInHeader) drawHomeAssistant(canvas, paint, layout.homeAssistantBubble, it, palette, header = false)
+        }
         // Outside the map's `ok` branch: guidance does not need a map, and a driver
         // following a route with no map installed still needs to know the next turn.
         val offer = snapshot.offer
@@ -1837,6 +1849,96 @@ object DashboardDrawing {
             canvas.drawRect(cx - arm, cy - half, cx + arm, cy + half, paint)
             if (action == "zoom-in") canvas.drawRect(cx - half, cy - arm, cx + half, cy + arm, paint)
         }
+    }
+
+    /**
+     * The Home Assistant button: a house with a small circuit inside, after Home Assistant's
+     * own mark. In the header it sits like Ⓟ and ☀/☾, lit the same way when pressed; over
+     * the map it is a bubble. While a press is sending, an accent ring; once answered, green
+     * with a tick or red with a cross for [Dashboard.HOME_ASSISTANT_RESULT_MS], the answer
+     * and decline colours, with the shape saying it too for a driver who cannot tell the two
+     * apart.
+     */
+    private fun drawHomeAssistant(
+        canvas: Canvas,
+        paint: Paint,
+        box: Box,
+        button: HomeAssistantButton,
+        palette: DashboardPalette,
+        header: Boolean,
+    ) {
+        val cx = box.centerX.toFloat()
+        val cy = box.centerY.toFloat()
+        // In the header, the disc the other icons' glyphs would fit, so it reads as one of them.
+        val radius = if (header) box.height * 0.36f else box.width / 2f
+        val answered = when (button.state) {
+            HomeAssistantState.OK -> palette.answer
+            HomeAssistantState.FAILED -> palette.decline
+            else -> null
+        }
+        if (header) {
+            paint.style = Paint.Style.FILL
+            if (button.pressed) {
+                paint.color = palette.tilePressed
+                val inset = box.height / 20f
+                canvas.drawRoundRect(box.x + inset, box.y + inset, box.right - inset, box.bottom - inset, CORNER, CORNER, paint)
+            }
+        } else {
+            drawBubble(canvas, paint, box, button.pressed, palette)
+        }
+        if (answered != null) {
+            paint.color = answered
+            canvas.drawCircle(cx, cy, radius * 0.94f, paint)
+        }
+        paint.style = Paint.Style.STROKE
+        paint.strokeCap = Paint.Cap.ROUND
+        paint.strokeJoin = Paint.Join.ROUND
+        paint.strokeWidth = maxOf(2f, radius / 9f)
+        paint.color = if (answered != null) palette.onAction else palette.text
+        val r = radius * 0.5f
+        when (button.state) {
+            HomeAssistantState.OK -> {
+                val tick = Path()
+                tick.moveTo(cx - r * 0.8f, cy)
+                tick.lineTo(cx - r * 0.2f, cy + r * 0.6f)
+                tick.lineTo(cx + r * 0.85f, cy - r * 0.6f)
+                canvas.drawPath(tick, paint)
+            }
+            HomeAssistantState.FAILED -> {
+                canvas.drawLine(cx - r * 0.6f, cy - r * 0.6f, cx + r * 0.6f, cy + r * 0.6f, paint)
+                canvas.drawLine(cx + r * 0.6f, cy - r * 0.6f, cx - r * 0.6f, cy + r * 0.6f, paint)
+            }
+            else -> {
+                // The house: a roof to a point and walls down to a flat floor.
+                val house = Path()
+                house.moveTo(cx - r * 0.8f, cy + r * 0.85f)
+                house.lineTo(cx - r * 0.8f, cy - r * 0.1f)
+                house.lineTo(cx, cy - r * 0.9f)
+                house.lineTo(cx + r * 0.8f, cy - r * 0.1f)
+                house.lineTo(cx + r * 0.8f, cy + r * 0.85f)
+                house.close()
+                canvas.drawPath(house, paint)
+                // The circuit: a stem from the floor with a node at its top and one on each branch.
+                paint.strokeWidth = maxOf(1.5f, radius / 14f)
+                canvas.drawLine(cx, cy + r * 0.85f, cx, cy - r * 0.2f, paint)
+                canvas.drawLine(cx, cy + r * 0.45f, cx - r * 0.35f, cy + r * 0.15f, paint)
+                canvas.drawLine(cx, cy + r * 0.3f, cx + r * 0.35f, cy, paint)
+                paint.style = Paint.Style.FILL
+                val node = maxOf(1.5f, r * 0.13f)
+                canvas.drawCircle(cx, cy - r * 0.25f, node, paint)
+                canvas.drawCircle(cx - r * 0.38f, cy + r * 0.12f, node, paint)
+                canvas.drawCircle(cx + r * 0.38f, cy - r * 0.03f, node, paint)
+                if (button.state == HomeAssistantState.SENDING) {
+                    paint.style = Paint.Style.STROKE
+                    paint.strokeWidth = maxOf(2f, radius / 9f)
+                    paint.color = palette.accent
+                    canvas.drawCircle(cx, cy, radius - paint.strokeWidth / 2f, paint)
+                }
+            }
+        }
+        paint.strokeCap = Paint.Cap.BUTT
+        paint.strokeJoin = Paint.Join.MITER
+        paint.style = Paint.Style.FILL
     }
 
     /**

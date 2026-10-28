@@ -28,6 +28,12 @@ data class OfferCard(val id: Long, val label: String, val reason: String, val pr
 /** Take or Keep pressed on offer [id] (P9.6): [take] is Take. */
 data class OfferAnswer(val id: Long, val take: Boolean)
 
+/** Where the last Home Assistant press stands: none, waiting for the server, or its answer. */
+enum class HomeAssistantState { IDLE, SENDING, OK, FAILED }
+
+/** The Home Assistant bubble on this frame: whether a finger is on it, and [state]. */
+data class HomeAssistantButton(val pressed: Boolean, val state: HomeAssistantState)
+
 /**
  * How the turn card divides while a faster way round is offered (P9.6). The choice was left
  * to lab renders at the truck's pane size, so both are built.
@@ -200,6 +206,16 @@ class DashboardLayout @JvmOverloads constructor(
         ZOOM_ACTIONS.indices.firstOrNull { zoomBubble(it).contains(px, py) }?.let { ZOOM_ACTIONS[it] }
 
     /**
+     * The Home Assistant button where the header has no room for it (James, 28 October
+     * 2026): a bubble like the others, a margin right of recentre along the map pane's
+     * bottom edge, clear of the compass column's Gas, Food and Shop and of both credits.
+     */
+    val homeAssistantBubble: Box = run {
+        val recentre = mapBubble(0)
+        Box(recentre.right + margin, recentre.y, bubbleSize, bubbleSize)
+    }
+
+    /**
      * The battery at the header's right edge: a glyph that fills with the level, then the
      * percentage. Reserved at a fixed width so "100%" fits and the things to its left do
      * not move as the level changes.
@@ -261,6 +277,41 @@ class DashboardLayout @JvmOverloads constructor(
 
     /** How far right the header's text may run: short of the weather item while it is shown. */
     fun headerTextRight(weather: Boolean): Int = if (weather) headerWeather.x - margin else headerTextRight
+
+    /**
+     * The Home Assistant button in the header, a header-height square a margin left of the
+     * weather item, or of Ⓟ while weather is off: "near the weather button" (James).
+     */
+    fun headerHomeAssistant(weather: Boolean): Box {
+        val right = (if (weather) headerWeather.x else headerIcon(0).x) - margin
+        return Box(right - header, y, header, header)
+    }
+
+    /**
+     * Whether the header has room for the button with the weather shown: the clock, the
+     * speed, the compass and the bearing still fit left of it, by the generous
+     * [EM_PER_CHARACTER] estimate WeatherTest holds the weather item to. True at 1080p and
+     * 800x480; false at Ford's 726x480, whose header has a few pixels to spare, so there the
+     * button is [homeAssistantBubble] instead. Decided once for the layout, weather shown or
+     * not, so the button never moves between the header and the map mid-drive.
+     */
+    val homeAssistantInHeader: Boolean = run {
+        val big = header * 0.52f
+        val small = header * 0.24f
+        val text = margin + EM_PER_CHARACTER * big * 5 + 2 * margin + EM_PER_CHARACTER * big * 7 + 2 * margin + big +
+            EM_PER_CHARACTER * small * 8
+        x + text <= headerHomeAssistant(true).x - margin
+    }
+
+    /** Where the Home Assistant button is: in the header when it fits, else the map bubble. */
+    fun homeAssistant(weather: Boolean): Box = if (homeAssistantInHeader) headerHomeAssistant(weather) else homeAssistantBubble
+
+    /** Whether a point is on the Home Assistant button. Square, as [hitMapBubble] explains. */
+    fun hitHomeAssistant(px: Int, py: Int, weather: Boolean): Boolean = homeAssistant(weather).contains(px, py)
+
+    /** How far right the header's text may run with the weather item and the Home Assistant button as shown. */
+    fun headerTextRight(weather: Boolean, homeAssistant: Boolean): Int =
+        if (homeAssistant && homeAssistantInHeader) headerHomeAssistant(weather).x - margin else headerTextRight(weather)
 
     /** Whether a point is on the weather item. It cannot reach Ⓟ: a margin lies between them. */
     fun hitHeaderWeather(px: Int, py: Int): Boolean = headerWeather.contains(px, py)
@@ -1101,6 +1152,8 @@ data class DashboardChoices @JvmOverloads constructor(
     val alertLevel: AlertLevel = AlertLevel.DEFAULT,
     /** 12- or 24-hour: the header clock, the arrival time and the weather's times. */
     val clockFormat: ClockFormat = ClockFormat.DEFAULT,
+    /** The Home Assistant button, shown while it is set up and on. */
+    val homeAssistant: Boolean = false,
 )
 
 /**
@@ -1308,6 +1361,8 @@ class Dashboard @JvmOverloads constructor(
         val poiButtons: PoiButtons? = null,
         /** P11.5: the POI card, while the flex tile shows it. Names are drawn, never logged. */
         val poiCard: PoiCardView? = null,
+        /** The Home Assistant bubble; null while it is not shown. */
+        val homeAssistant: HomeAssistantButton? = null,
     ) {
         /** Leaves out everything drawn from the phone's own data, in case a snapshot is ever printed. */
         override fun toString(): String = "Snapshot(frame=$frame flex=${flex.key} keypad=$keypadOpen)"
@@ -1507,6 +1562,17 @@ class Dashboard @JvmOverloads constructor(
     private var offersWithdrawn = 0L
     private var offerFits = 0L
     private var offerRefollows = 0L
+
+    // The Home Assistant button: shown, pressed, a press waiting for the caller, and how
+    // the last one ended, shown on the bubble until [homeAssistantUntil].
+    private var homeAssistantOn = choices.homeAssistant
+    private var pressedHomeAssistant = false
+    private var homeAssistantRequested = false
+    private var homeAssistantState = HomeAssistantState.IDLE
+    private var homeAssistantUntil = 0L
+    private var homeAssistantPresses = 0L
+    private var homeAssistantOk = 0L
+    private var homeAssistantFailed = 0L
 
     // P10: weather (docs/dashboard.md, "Weather"). What the feed last read, held for drawing only;
     // the report counts how the item and the views were used, never what they said.
@@ -1908,6 +1974,37 @@ class Dashboard @JvmOverloads constructor(
     fun takeResumePick(): Player? = resumePick.also { resumePick = null }
 
     /**
+     * The Home Assistant button shown or hidden mid-session, from the phone's settings. A
+     * press already handed out still ends with [homeAssistantResult].
+     */
+    @Synchronized
+    fun homeAssistantShown(on: Boolean) {
+        homeAssistantOn = on
+        if (!on) pressedHomeAssistant = false
+    }
+
+    /**
+     * Whether the Home Assistant button was pressed since the last call, once. The caller
+     * calls the service off the dashboard's threads and reports back through
+     * [homeAssistantResult]; until then the bubble shows the press as sending and takes no
+     * other, so a second tap cannot call the service twice.
+     */
+    @Synchronized
+    fun takeHomeAssistantPress(): Boolean = homeAssistantRequested.also { homeAssistantRequested = false }
+
+    /**
+     * How the press ended: the bubble turns green or red for [HOME_ASSISTANT_RESULT_MS], so a
+     * press that did nothing is never silent.
+     */
+    @Synchronized
+    @JvmOverloads
+    fun homeAssistantResult(ok: Boolean, nowMillis: Long = System.currentTimeMillis()) {
+        if (ok) homeAssistantOk++ else homeAssistantFailed++
+        homeAssistantState = if (ok) HomeAssistantState.OK else HomeAssistantState.FAILED
+        homeAssistantUntil = nowMillis + HOME_ASSISTANT_RESULT_MS
+    }
+
+    /**
      * How a Resume ended (P7.5). A played one simply stops being pending: the pane turns
      * into now-playing when the player's session says so. A failure says so on its row
      * for [RESUME_FAILED_MS], so a press that did nothing is never silent.
@@ -2182,7 +2279,11 @@ class Dashboard @JvmOverloads constructor(
                     } else {
                         null
                     }
-                    val onControl = pressedMapBubble != null || pressedZoom != null || onCard || pressedPoiButton != null
+                    // The Home Assistant bubble, as the other bubbles are: never a pan.
+                    val onHomeAssistant = homeAssistantOn && !onCard && layout.hitHomeAssistant(px, py, weatherOn)
+                    pressedHomeAssistant = onHomeAssistant && homeAssistantState != HomeAssistantState.SENDING
+                    val onControl = pressedMapBubble != null || pressedZoom != null || onCard || pressedPoiButton != null ||
+                        onHomeAssistant
                     // Under the map's own bubbles: a control drawn over an alternative wins,
                     // and so does the card over one that has slid under it.
                     pressedAlternative = if (!onControl) hitAlternative(px, py) else null
@@ -2248,7 +2349,18 @@ class Dashboard @JvmOverloads constructor(
                 val voice = upcomingTurn != null && layout.hitVoiceToggle(px, py)
                 val player = if (mediaIdle()) layout.hitPlayer(px, py, players.size, !mediaAccess) else -1
                 val callAction = if (flexSource() == FlexSource.CALL) layout.hitCallAction(px, py, FlexRules.actions(call)) else null
-                val alternative = if (bubble == null && zoom == null && !onCard(px, py)) hitAlternative(px, py) else null
+                val homeAssistant = homeAssistantOn && !onCard(px, py) && layout.hitHomeAssistant(px, py, weatherOn)
+                val alternative = if (bubble == null && zoom == null && !homeAssistant && !onCard(px, py)) hitAlternative(px, py) else null
+                val wasHomeAssistant = pressedHomeAssistant
+                pressedHomeAssistant = false
+                if (homeAssistant && wasHomeAssistant && homeAssistantState != HomeAssistantState.SENDING) {
+                    // Press and release on the bubble, as on every button. Sent by the caller
+                    // through takeHomeAssistantPress(); shown as sending until it answers.
+                    homeAssistantPresses++
+                    homeAssistantRequested = true
+                    homeAssistantState = HomeAssistantState.SENDING
+                    homeAssistantUntil = nowMillis + HOME_ASSISTANT_SENDING_MS
+                }
                 val offer = shownOffer()
                 val offerHit = if (offer != null) layout.hitOfferButton(px, py) else null
                 val wasOffer = pressedOffer
@@ -2367,6 +2479,7 @@ class Dashboard @JvmOverloads constructor(
                 pressedPoiMarker = null
                 pressedPoiCardButton = null
                 pressedPoiRow = -1
+                pressedHomeAssistant = false
                 favoriteList.cancel()
                 notificationList.cancel()
             }
@@ -2659,6 +2772,10 @@ class Dashboard @JvmOverloads constructor(
         val arrow = if (moving) bearing?.let { Math.round(wrapDegrees(it - mapControl.rotation)).toInt() } else null
         val idle = mediaIdle()
         if (resumeFailed != null && nowMillis >= resumeFailedUntil) resumeFailed = null
+        // A result fades back to the plain bubble; a press never answered stops showing as sending.
+        if (homeAssistantState != HomeAssistantState.IDLE && nowMillis >= homeAssistantUntil) {
+            homeAssistantState = HomeAssistantState.IDLE
+        }
         playerRows = if (idle) minOf(players.size, DashboardLayout.PLAYER_ROWS) else 0
         playerRowsMax = maxOf(playerRowsMax, playerRows)
         val flex = flexSource(nowMillis)
@@ -2754,6 +2871,7 @@ class Dashboard @JvmOverloads constructor(
             weatherAlert = weatherAlert,
             poiButtons = PoiButtons(poiKinds(), pressedPoiButton, poiTop()),
             poiCard = if (flex == FlexSource.POI) poiCardView(nowMillis) else null,
+            homeAssistant = if (homeAssistantOn) HomeAssistantButton(pressedHomeAssistant, homeAssistantState) else null,
         )
     }
 
@@ -2929,6 +3047,10 @@ class Dashboard @JvmOverloads constructor(
             "weather_view_closes_timeout=$weatherClosesTimeout weather_view_closes_call=$weatherClosesCall " +
             "weather_taps_in_call=$weatherTapsInCall weather_alerts_shown=${shownAlerts.size} " +
             "weather_alerts_dismissed=$alertsDismissed weather_far=$weatherFar\n" +
+            // The Home Assistant button: shown, pressed and how the presses ended; never the
+            // server, the service or the target.
+            "home_assistant_shown=$homeAssistantOn home_assistant_presses=$homeAssistantPresses " +
+            "home_assistant_ok=$homeAssistantOk home_assistant_failed=$homeAssistantFailed\n" +
             // P11.5: how the POI buttons, markers and card were used; never a place or a name.
             "poi_on=${poiKinds().joinToString(",") { it.label }.ifEmpty { "-" }} " +
             "poi_button_presses=${PoiRules.ORDER.joinToString(",") { "${it.label}:${poiButtonPresses[it.ordinal]}" }} " +
@@ -2949,6 +3071,15 @@ class Dashboard @JvmOverloads constructor(
          * glance back at the screen, short enough that the row is pressable again soon.
          */
         const val RESUME_FAILED_MS = 4_000L
+
+        /** How long the Home Assistant bubble shows green or red after a press. */
+        const val HOME_ASSISTANT_RESULT_MS = 4_000L
+
+        /**
+         * How long a press with no answer shows as sending: past the client's own connect
+         * and read timeouts together, so only a lost answer ever reaches it.
+         */
+        const val HOME_ASSISTANT_SENDING_MS = 30_000L
 
         /**
          * How long a notification row stays lit after a tap asks for it to be read aloud

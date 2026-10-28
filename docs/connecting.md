@@ -233,8 +233,8 @@ bind any of the app's sockets to another network. The connection fails with
 `Binding socket to network … failed: EPERM`, before a single packet reaches the head unit,
 even though Android has already reported the network as available. There's no exception for
 local-only networks, and the app can't work around it. The fix is to exclude HeadLink from the
-VPN (split tunnelling). The app's only internet use is opt-in live traffic, which would then
-bypass the VPN. Whether Android's "Block connections without VPN" setting also blocks an
+VPN (split tunnelling). The app's only internet use is opt-in live traffic and the opt-in Home Assistant
+button, which would then bypass the VPN. Whether Android's "Block connections without VPN" setting also blocks an
 excluded app's local-only bind is untested. When this fails, logcat shows netd's
 `uid … can't select networks other than …`.
 
