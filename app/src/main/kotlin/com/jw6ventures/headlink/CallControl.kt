@@ -13,10 +13,10 @@ import android.telecom.Call
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
- * The optional call controls (P7.9, plan §5.8): answer, decline, hang up, mute and keypad
+ * The optional call controls (P7.9): answer, decline, hang up, mute and keypad
  * tones for the flex tile, through [CallCompanionService].
  *
- * **Two routes, chosen per session by [CallRules.route]** (docs/p7-backends-results.md §4):
+ * **Two routes, chosen per session by [CallRules.route]** (docs/dashboard.md):
  *
  *  * **Telecom**, when the operator has allowed `MANAGE_ONGOING_CALLS` once over adb
  *    ([GRANT_COMMAND], [fullControlsGranted]). The in-call service, declared disabled, is
@@ -80,7 +80,7 @@ object CallControl {
      * `OPSTR_` constant is not in the public SDK on API 33–36, and a platform that has no
      * op for the permission (null) is treated as not granted.
      *
-     * **The op decides, not the permission** (docs/p7-8-9-results.md §3.1). An app that is
+     * **The op decides, not the permission** (docs/dashboard.md). An app that is
      * not platform-signed is never granted `signature|appop` `MANAGE_ONGOING_CALLS`
      * itself — `pm` lists it as requested and nothing more, and `pm grant` refuses it —
      * yet with the op allowed over adb Telecom binds the in-call service all the same,
@@ -182,7 +182,7 @@ object CallControl {
     /**
      * From [SourceApplication] on every process start: no session can be running in a
      * process that has just started, so a component left enabled — a crash mid-drive, or
-     * the process killed — is turned off. Covers plan §5.8's "no background cost".
+     * the process killed — is turned off. Covers "no background cost".
      */
     fun resetAtStartup(context: Context) {
         if (SessionController.stage != Stage.IDLE) return

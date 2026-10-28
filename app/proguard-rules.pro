@@ -9,7 +9,7 @@
 # names ("---model:btools.router.KinematicModel" in car-vario.brf) with Class.forName and
 # its no-argument constructor. Renamed or removed, routing fails at the first route with
 # "Cannot create path-model". Kept for every model, not just the one car-vario names, so
-# a different profile cannot reintroduce the failure. (P6 plan §4.1.)
+# a different profile cannot reintroduce the failure.
 -keep class * extends btools.router.OsmPathModel {
     <init>();
 }

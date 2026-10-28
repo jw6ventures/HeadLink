@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Debug builds only (P9, docs/p9-plan.md §4, §8): lets live traffic reach the emulator
+<!-- Debug builds only (P9, docs/navigation.md, "Live traffic (HERE)"): lets live traffic reach the emulator
      lab's stand-in HERE server over plain HTTP on the lab host. The release manifest has
      no network security config, so a release build keeps Android's default of no
      cleartext at all (tools/verify-apk.sh checks both). -->

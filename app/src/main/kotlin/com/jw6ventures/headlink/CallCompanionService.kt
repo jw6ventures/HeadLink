@@ -5,7 +5,7 @@ import android.telecom.CallAudioState
 import android.telecom.InCallService
 
 /**
- * The optional call controls' companion in-call service (P7.9, plan §5.8).
+ * The optional call controls' companion in-call service (P7.9).
  *
  * **Draws nothing.** It declares neither `METADATA_IN_CALL_SERVICE_UI` nor the car-mode UI
  * metadata, so Telecom never treats it as the phone's call screen: the real dialer stays
@@ -17,15 +17,15 @@ import android.telecom.InCallService
  * any launch with no session, which covers a crash that left it on. With it disabled
  * Telecom has nothing to bind, so the app never sees a call.
  *
- * **Telecom binds it only with `MANAGE_ONGOING_CALLS` allowed** (docs/p7-backends-results.md
- * §4.2). Current Telecom binds a third-party non-UI in-call service only when its app holds
+ * **Telecom binds it only with `MANAGE_ONGOING_CALLS` allowed** (docs/dashboard.md).
+ * Current Telecom binds a third-party non-UI in-call service only when its app holds
  * that signature|appop permission (or the privileged `CONTROL_INCALL_EXPERIENCE`); the
  * `CALL_COMPANION_APP` route was removed from `InCallController` in Android 11. The app-op
  * is allowed once over adb ([CallControl.GRANT_COMMAND]); without it [CallControl] never
  * enables this component and uses the call-notification route instead.
  *
  * Every callback here arrives on the main thread, and all state lives in [CallControl].
- * Nothing about a call — number, name, digit — is logged (plan §5.8, spec §10).
+ * Nothing about a call — number, name, digit — is logged (spec §10).
  */
 class CallCompanionService : InCallService() {
     private val callbacks = HashMap<Call, Call.Callback>()

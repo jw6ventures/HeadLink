@@ -208,7 +208,7 @@ public final class DashboardTripTest {
         check(size * 1.3f + size <= list.getHeight(), at + "both lines fit its height");
         check(size >= 10, at + "and are at least 10 px: " + size);
         check(DashboardLayout.Companion.getEMPTY_FAVORITES().equals(List.of("No favorites yet", "Add them on the phone")),
-            "the plan's wording");
+            "the wording in docs/dashboard.md");
     }
 
     // --- glyphs ----------------------------------------------------------------------
@@ -702,7 +702,7 @@ public final class DashboardTripTest {
         Dashboard muted = new Dashboard(layout, "t", ZoneId.of("UTC"), SpeedUnit.MPH, MapOrientation.NORTH_UP, o -> kotlin.Unit.INSTANCE,
             new DashboardChoices(MarkerColour.BLUE, DayNightMode.AUTO, false, false, null, false));
         muted.upcomingTurn(guiding("Main Street", 4023.0, 600));
-        check(!muted.nextFrame(NOON).getTrip().getVoiceOn(), "a route started muted stays muted (decision 6)");
+        check(!muted.nextFrame(NOON).getTrip().getVoiceOn(), "a route started muted stays muted");
         check(muted.report().contains("dashboard_voice_guidance=off\n"), "and the report says so");
 
         Dashboard d = dashboard(1920, 1080);

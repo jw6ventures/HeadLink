@@ -1675,7 +1675,7 @@ fn sensor_value(sensor_type: i32, p: &Projection) -> Option<SensorEventIndicatio
 
 impl HeadUnit {
     /// The audio AV channel (P5.3): the same four messages as video, with its own session
-    /// and its own window, plus the underflow injection the plan asks for.
+    /// and its own window, plus the underflow injection that tests ask for.
     fn audio_message(&mut self, channel: u8, id: u16, body: Vec<u8>) {
         let p = self.config.projection.clone();
         match id {

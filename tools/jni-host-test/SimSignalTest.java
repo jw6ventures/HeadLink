@@ -1,7 +1,7 @@
 // P7.3's multi-SIM signal rules on a desktop JVM: which subscription leads the header,
 // how the others become dot rows, and the network type beside the bars. SimSignal is pure
 // Kotlin; the per-subscription TelephonyCallbacks that feed it need a phone, and a real
-// second subscription has only been reasoned about, not seen (plan section 5.2).
+// second subscription has only been reasoned about, not seen.
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -65,7 +65,7 @@ public final class SimSignalTest {
         SignalRows rows = RULES.arrange(subs, 10);
         check(rows.getSecondary().equals(List.of(3, 2, 1)), "three rows, in slot order, the fifth SIM dropped: " + rows);
         check(rows.getCount() == 5, "but all five are counted");
-        check(SimSignal.MAX_SECONDARY == 3, "the plan's three rows");
+        check(SimSignal.MAX_SECONDARY == 3, "three secondary rows");
     }
 
     private static void levelsAreClamped() {

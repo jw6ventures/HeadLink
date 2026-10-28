@@ -1,8 +1,9 @@
 package com.jw6ventures.headlink
 
 /**
- * What the phone's media does while it speaks: the **While speaking** setting (P8 plan
- * decision 10, §4, §7), one choice shared by notification reading and turn prompts.
+ * What the phone's media does while it speaks: the **While speaking** setting
+ * (docs/audio-and-speech.md, "Settings"), one choice shared by notification reading and
+ * turn prompts.
  *
  * [PAUSE] asks for transient focus, which well-behaved players answer by pausing and
  * then resuming by themselves; [DUCK] asks for may-duck focus, which the system enforces
@@ -24,20 +25,23 @@ enum class SpeechMedia(val key: String, val label: String) {
     }
 }
 
-/** The things the phone says (P8 plan §0, P10 plan §6), each with its report prefix. */
+/** The things the phone says, each with its report prefix. */
 enum class SpeechKind(val prefix: String) {
-    /** A dashboard notification row, tapped (§8). */
+    /** A dashboard notification row, tapped. */
     NOTIFICATION("notifications_read"),
 
-    /** A turn prompt from the followed route (§5), spoken through [Speaker.guide]. */
+    /** A turn prompt from the followed route, spoken through [Speaker.guide]. */
     GUIDANCE("voice_prompts"),
 
-    /** P10: a weather alert's headline, once per alert per session (docs/p10-plan.md §6). */
+    /**
+     * P10: a weather alert's headline, once per alert per session (docs/audio-and-speech.md,
+     * "Other things spoken").
+     */
     ALERT("weather_alerts"),
 }
 
 /**
- * Why something was not said. Each is counted under the kind it applies to (§9); the
+ * Why something was not said. Each is counted under the kind it applies to; the
  * [kinds] keep the report free of reasons that can never happen to that kind.
  */
 enum class SpeechSkip(val key: String, val kinds: Set<SpeechKind>) {
@@ -47,10 +51,10 @@ enum class SpeechSkip(val key: String, val kinds: Set<SpeechKind>) {
     /** The trip panel's voice toggle is off (wired by P8.2); P10's alerts heed it too. */
     TOGGLE_OFF("toggle_off", setOf(SpeechKind.GUIDANCE, SpeechKind.ALERT)),
 
-    /** A phone call is ringing or connected (plan §14.1; see [SpeechQueue.guide]). */
+    /** A phone call is ringing or connected (see [SpeechQueue.guide]). */
     IN_CALL("in_call", setOf(SpeechKind.GUIDANCE, SpeechKind.ALERT)),
 
-    /** A notification tapped while a turn prompt plays is dropped, not queued (decision 7). */
+    /** A notification tapped while a turn prompt plays is dropped, not queued. */
     GUIDANCE_PLAYING("guidance_playing", setOf(SpeechKind.NOTIFICATION)),
 
     /** P10: a notification tapped while a weather alert is spoken is dropped the same way. */
@@ -58,37 +62,37 @@ enum class SpeechSkip(val key: String, val kinds: Set<SpeechKind>) {
 
     /**
      * P10: an alert waiting its turn behind a turn prompt or another alert was still
-     * waiting when the projection ended (plan §6).
+     * waiting when the projection ended.
      */
     SESSION_END("session_end", setOf(SpeechKind.ALERT)),
 
-    /** No engine, one still initialising, or one without an English voice (§3). */
+    /** No engine, one still initialising, or one without an English voice. */
     NO_ENGINE("no_engine", SpeechKind.entries.toSet()),
 
-    /** No A2DP output at that moment: truck-only (decision 4). */
+    /** No A2DP output at that moment: truck-only. */
     NO_BLUETOOTH("no_bluetooth", SpeechKind.entries.toSet()),
 
     /** Android refused the audio focus request, as it does during a call. */
     NO_FOCUS("no_focus", SpeechKind.entries.toSet()),
 }
 
-/** How an utterance that started came to an end; counted per kind (§9). */
+/** How an utterance that started came to an end; counted per kind. */
 enum class SpeechEnd(val key: String) {
     COMPLETED("completed"),
 
-    /** A second tap on the notification being read (§8). */
+    /** A second tap on the notification being read. */
     STOPPED_BY_TAP("stopped_by_tap"),
 
-    /** A tap on a different notification: the newest tap wins (§4). */
+    /** A tap on a different notification: the newest tap wins. */
     REPLACED("replaced"),
 
-    /** Cut off by a turn prompt (decision 7), or a prompt by a newer prompt. */
+    /** Cut off by a turn prompt, or a prompt by a newer prompt. */
     INTERRUPTED_BY_GUIDANCE("interrupted_by_guidance"),
 
-    /** P10: a notification being read, cut off by a weather alert (plan §6). */
+    /** P10: a notification being read, cut off by a weather alert. */
     INTERRUPTED_BY_ALERT("interrupted_by_alert"),
 
-    /** The A2DP output went away mid-utterance (§4's race). */
+    /** The A2DP output went away mid-utterance (a race). */
     BLUETOOTH_LOST("bluetooth_lost"),
 
     /** Another app took audio focus away. */
@@ -110,7 +114,7 @@ enum class SpeechEnd(val key: String) {
 data class GuidePrompt(val text: String, val stage: String)
 
 /**
- * What pressing **Play a sample** came to (P8.3, plan §7), for the phone to say on screen.
+ * What pressing **Play a sample** came to (P8.3), for the phone to say on screen.
  * Each but [SPOKEN] is a reason nothing, or not all of it, was heard.
  */
 enum class SampleOutcome(val key: String) {
@@ -120,22 +124,22 @@ enum class SampleOutcome(val key: String) {
     /** No engine is installed, or the one there failed to start. */
     NO_ENGINE("no_engine"),
 
-    /** The engine started without an English voice (§3). */
+    /** The engine started without an English voice. */
     NO_ENGLISH("no_english"),
 
     /** The engine had not started within [SpeechQueue.SAMPLE_INIT_TIMEOUT_MS]. */
     ENGINE_TIMEOUT("engine_timeout"),
 
-    /** No A2DP output: the truck-only gate (decision 4). */
+    /** No A2DP output: the truck-only gate. */
     NO_BLUETOOTH("no_bluetooth"),
 
-    /** A call is ringing or connected (§14.1). */
+    /** A call is ringing or connected. */
     IN_CALL("in_call"),
 
     /** Android refused audio focus. */
     NO_FOCUS("no_focus"),
 
-    /** A turn prompt cut it off (decision 7). */
+    /** A turn prompt cut it off. */
     INTERRUPTED("interrupted"),
 
     /** The A2DP output went away while it was being said. */
@@ -173,7 +177,7 @@ enum class SampleOutcome(val key: String) {
     }
 }
 
-/** What is true at the moment of a request, read fresh each time by [Speaker] (§4). */
+/** What is true at the moment of a request, read fresh each time by [Speaker]. */
 data class SpeechConditions(
     /** The engine initialised with an English voice. */
     val engineReady: Boolean,
@@ -209,7 +213,7 @@ sealed interface SpeechAction {
     data class Skip(val reason: SpeechSkip) : SpeechAction
 
     /**
-     * P10: a weather alert that must wait its turn (plan §6): a turn prompt or another
+     * P10: a weather alert that must wait its turn: a turn prompt or another
      * alert is being spoken, or earlier alerts are already waiting. Held by the queue in
      * the order asked; [SpeechQueue.waiting] hands them out one at a time as each
      * utterance ends.
@@ -218,7 +222,7 @@ sealed interface SpeechAction {
 }
 
 /**
- * P8.1's decisions about speaking, with no Android in them (plan §4, §8, §9): the gate,
+ * P8.1's decisions about speaking, with no Android in them: the gate,
  * the priority between notifications and turn prompts, when audio focus is asked for and
  * given back, the silence lead-in, and the counts. [Speaker] is the thin Android glue
  * around one of these; SpeechQueueTest drives it directly.
@@ -247,7 +251,7 @@ class SpeechQueue {
     /** Whose attributes the focus grant was asked for with, or null while none is held. */
     private var focusFor: SpeechKind? = null
 
-    /** "Read aloud when tapped" (§7); on by default. */
+    /** "Read aloud when tapped"; on by default. */
     var readAloud = true
 
     /**
@@ -286,7 +290,7 @@ class SpeechQueue {
     val waitingAlerts: List<String>
         get() = pendingAlerts.toList()
 
-    /** The key of the notification being read, for its row to stay lit (§8); else null. */
+    /** The key of the notification being read, for its row to stay lit; else null. */
     val reading: String?
         get() = current?.takeIf { it.kind == SpeechKind.NOTIFICATION }?.key
 
@@ -299,10 +303,10 @@ class SpeechQueue {
         get() = focusFor != null
 
     /**
-     * A notification row was tapped (§4, §8). In this order:
+     * A notification row was tapped. In this order:
      *  * the one being read is tapped again: stop it;
      *  * reading is off: nothing;
-     *  * a turn prompt is playing: dropped, not queued (decision 7);
+     *  * a turn prompt is playing: dropped, not queued;
      *  * the gate;
      *  * otherwise speak it, cutting off any other notification (the newest tap wins).
      */
@@ -321,13 +325,13 @@ class SpeechQueue {
     }
 
     /**
-     * A turn prompt is due (§4, §5). It always wins: QUEUE_FLUSH cuts off whatever is
+     * A turn prompt is due. It always wins: QUEUE_FLUSH cuts off whatever is
      * being said, a notification included, and that notification is not resumed.
      */
     fun guide(stage: String, nowMillis: Long, conditions: SpeechConditions): SpeechAction {
         requests[SpeechKind.GUIDANCE.ordinal]++
         if (!guidanceOn) return skip(SpeechKind.GUIDANCE, SpeechSkip.TOGGLE_OFF)
-        // Plan §14.1, the plan's proposed answer, taken until James says otherwise: no turn
+        // A proposed answer, taken until James says otherwise: no turn
         // prompt during a call, ringing or connected. SYNC may drop A2DP for HFP, which
         // would lose it, or keep A2DP up, which would speak it over the call; either is
         // worse than silence. Counted as skipped_in_call. This is the one place that
@@ -338,10 +342,10 @@ class SpeechQueue {
     }
 
     /**
-     * P10: a weather alert newly in force (docs/p10-plan.md §6), asked for once per alert
+     * P10: a weather alert newly in force (docs/audio-and-speech.md, "Other things spoken"), asked for once per alert
      * per session by [WeatherFeed], and only with Speak weather alerts on. In this order:
      *  * the trip panel's voice toggle off: `toggle_off`, not retried when it is turned on;
-     *  * a call: `in_call`, as for turn prompts (§14.1);
+     *  * a call: `in_call`, as for turn prompts;
      *  * the gate: no engine or no A2DP output, not retried either;
      *  * a turn prompt or another alert being spoken, or alerts already waiting: it waits
      *    ([SpeechAction.Wait]) at the back of the line, and goes when its turn comes, as
@@ -389,7 +393,7 @@ class SpeechQueue {
     }
 
     /**
-     * **Play a sample** (P8.3, plan §7): the path a turn prompt takes — the call rule, the
+     * **Play a sample** (P8.3): the path a turn prompt takes — the call rule, the
      * engine, the Bluetooth gate, then focus, lead-in and QUEUE_FLUSH, cutting off a
      * notification as a prompt does and cut off by the next prompt — with two
      * differences, both deliberate:
@@ -479,8 +483,8 @@ class SpeechQueue {
 
     /**
      * Whether the grant should be given back now: nothing is being said and nothing has
-     * been for [FOCUS_LINGER_MS]. Utterances closer together than that share one grant
-     * (§4), so a player is not restarted and stopped again between "Rerouting" and the
+     * been for [FOCUS_LINGER_MS]. Utterances closer together than that share one grant,
+     * so a player is not restarted and stopped again between "Rerouting" and the
      * next prompt. Counts the abandon when it says yes.
      */
     fun abandonDue(nowMillis: Long): Boolean {
@@ -504,7 +508,7 @@ class SpeechQueue {
         return release()
     }
 
-    /** Where the words of a read came from (§8): counted, never kept. */
+    /** Where the words of a read came from: counted, never kept. */
     fun textFetched(full: Boolean, cut: Boolean) {
         if (full) fullTexts++ else fallbackTexts++
         if (cut) truncated++
@@ -512,7 +516,7 @@ class SpeechQueue {
 
     /**
      * `key=value` lines: counts, stages and settings only, never what was said, whose,
-     * from which app, or where (spec §10, plan §9). The existing `notifications_read_aloud`
+     * from which app, or where (spec §10). The existing `notifications_read_aloud`
      * is now reads *started*; `notifications_read_taps` is every tap that reached here.
      */
     fun report(): String = buildString {
@@ -556,7 +560,7 @@ class SpeechQueue {
         }
     }
 
-    /** The engine, then the truck-only gate, checked per utterance (§3, §4). */
+    /** The engine, then the truck-only gate, checked per utterance. */
     private fun gate(conditions: SpeechConditions): SpeechSkip? = when {
         !conditions.engineReady -> SpeechSkip.NO_ENGINE
         !conditions.bluetooth -> SpeechSkip.NO_BLUETOOTH
@@ -604,20 +608,20 @@ class SpeechQueue {
     companion object {
         /**
          * Silence before an utterance that follows [LEAD_IN_AFTER_IDLE_MS] of quiet, so an
-         * idle A2DP stream is running before the first syllable (§4). A starting figure;
+         * idle A2DP stream is running before the first syllable. A starting figure;
          * the truck decides it. A constant, not a setting.
          */
         const val LEAD_IN_MS = 300L
 
-        /** "More than a few seconds of silence" (§4). */
+        /** "More than a few seconds of silence". */
         const val LEAD_IN_AFTER_IDLE_MS = 3_000L
 
-        /** How long a grant outlives the utterance it was asked for, for the next to share (§4). */
+        /** How long a grant outlives the utterance it was asked for, for the next to share. */
         const val FOCUS_LINGER_MS = 1_000L
 
         /**
          * How long Play a sample waits for an engine it had to start (P8.3). Init is
-         * asynchronous and a prompt arriving before it is dropped (§3); a sample waits
+         * asynchronous and a prompt arriving before it is dropped; a sample waits
          * instead, since the press is the operator asking now. The engines seen so far were
          * ready within about 1.5 s; a slow first start loading a voice may take longer.
          */
@@ -626,8 +630,8 @@ class SpeechQueue {
 }
 
 /**
- * What a tapped notification says, as the listener reads it at tap time and only then
- * (§8). Held for the length of one call to [ReadAloudText.compose], never stored.
+ * What a tapped notification says, as the listener reads it at tap time and only then.
+ * Held for the length of one call to [ReadAloudText.compose], never stored.
  */
 data class NotificationWords(
     /** `EXTRA_TITLE`, else `EXTRA_TITLE_BIG`. */
@@ -642,9 +646,9 @@ data class NotificationWords(
     val text: String?,
 )
 
-/** The sentence a tapped notification becomes (decision 5, §8): sender and text, no app. */
+/** The sentence a tapped notification becomes: sender and text, no app. */
 object ReadAloudText {
-    /** About 30 s of speech (§8). The sender is not counted; it is short. */
+    /** About 30 s of speech. The sender is not counted; it is short. */
     const val MAX = 400
     const val TRUNCATED = "Message truncated."
 
@@ -655,7 +659,7 @@ object ReadAloudText {
      * [words] as the listener has them now, or null when the notification is gone from
      * the phone; then the tile's own first line is read, because that is what the driver
      * tapped. The text is `EXTRA_BIG_TEXT`, else the last `MessagingStyle` message, else
-     * `EXTRA_TEXT` (§8). Who is the message's sender when the text is the message's,
+     * `EXTRA_TEXT`. Who is the message's sender when the text is the message's,
      * else the title; failing both, the row's title unless the row fell back to the
      * app's name, which is never said.
      */

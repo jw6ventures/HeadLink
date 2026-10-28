@@ -203,7 +203,7 @@ class MediaControl(
         val controller = controller()
         // The grant itself, not "a session was read": with nothing playing there is no
         // session, and reporting that as no access put the idle pane's "notification
-        // access" hint up on a phone that had granted it (docs/p7-8-9-results.md §3.4).
+        // access" hint up on a phone that had granted it (docs/phone-app.md).
         access = MediaAccessService.enabled(context)
         val state = controller?.playbackState
         val metadata = controller?.metadata

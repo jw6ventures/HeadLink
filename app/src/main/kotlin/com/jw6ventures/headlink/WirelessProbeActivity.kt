@@ -33,7 +33,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * W0 of docs/wireless-investigation.md, opened from Diagnostics: pick a paired device,
+ * W0 (docs/connecting.md, "Diagnostics: the wireless probe"), opened from Diagnostics: pick a paired device,
  * run a fresh SDP query on it, and save whether it advertises the wireless Android Auto
  * bootstrap service. The only code that uses BLUETOOTH_CONNECT, asked for when this
  * screen opens. The verdict and report are [WirelessProbe]'s. The report goes into

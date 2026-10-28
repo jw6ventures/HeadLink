@@ -17,7 +17,7 @@ import kotlin.math.min
  *
  * [nogos] are live traffic's no-go points (P9.5), which the dashboard's live alternatives
  * search with ([LiveAlternatives]). They are never written to the preview's file: HERE's
- * data stays in memory (P9 plan §1), so the preview's own alternatives are without traffic.
+ * data stays in memory (P9), so the preview's own alternatives are without traffic.
  */
 class PreviewRequest @JvmOverloads constructor(
     val token: Long,
@@ -275,7 +275,7 @@ object RoutePreview {
             if (name != null) out.writeUTF(name)
         }
         // Version 3 (P9): whether traffic's no-go points shaped it, so "Traffic © HERE" is
-        // still owed after a restart (plan §6), and whether it goes through a closure. Two
+        // still owed after a restart, and whether it goes through a closure. Two
         // flags; nothing of HERE's.
         out.writeBoolean(route.trafficShaped)
         out.writeBoolean(route.closuresOpened)

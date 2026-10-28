@@ -1,4 +1,5 @@
-// P11.4's typed address search (docs/p11-plan.md §4, §5): the parser's readings of US-style
+// P11.4's typed address search (docs/navigation.md, "OsmAnd maps: search and places"):
+// the parser's readings of US-style
 // input, the canonical forms of street and road names, and the search over a synthetic
 // ObfSource - every SuggestionKind, odd/even/step/alphabetic ranges, the closest number on
 // another stretch of a split street, the order, the state filter, cancellation, a file that

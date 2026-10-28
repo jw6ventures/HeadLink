@@ -1,4 +1,5 @@
-// P11.5 on a desktop JVM (docs/p11-plan.md section 6): the map's Gas, Food and Shop buttons
+// P11.5 on a desktop JVM (docs/navigation.md, "OsmAnd maps: search and places"):
+// the map's Gas, Food and Shop buttons
 // along the top of the map pane at 1080p, Ford's 726x480 and 800x480 with the map on either
 // side, clear of the bubbles, the credits and both cards; their presses; a tapped marker's
 // card in the flex tile with Go and Close, and the three-place list P11.5a builds on with

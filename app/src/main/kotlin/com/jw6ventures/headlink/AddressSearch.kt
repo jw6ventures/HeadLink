@@ -10,7 +10,7 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * Counts for the report (plan §8): never a typed word, a place name or a position. Shared
+ * Counts for the report: never a typed word, a place name or a position. Shared
  * across threads; every method is synchronized.
  */
 class SearchStats {
@@ -71,8 +71,9 @@ class SearchStats {
 }
 
 /**
- * Typed address search over OsmAnd's files (plan §4 and §5). Pure JVM: the files come in as
- * [ObfSource]s, so the host tests drive it with a fake and with the real reader.
+ * Typed address search over OsmAnd's files (docs/navigation.md, "OsmAnd maps: search and
+ * places"). Pure JVM: the files come in as [ObfSource]s, so the host tests drive it with a
+ * fake and with the real reader.
  *
  * What was typed is read every plausible way ([AddressQuery.parse]); for each reading the
  * candidate cities are found by name (or ZIP, or nearest the phone when no city was typed),
@@ -265,7 +266,7 @@ class AddressSearch(private val sources: () -> List<ObfSource>) {
         }
     }
 
-    /** Plan §5: exact, then an interpolation range holding the number, then the nearest below and above. */
+    /** Exact, then an interpolation range holding the number, then the nearest below and above. */
     private fun numberOn(source: ObfSource, g: StreetGroup, n: HouseNumber, run: Run) {
         val name = g.name
         val city = g.city.name
@@ -660,7 +661,7 @@ class AddressSearch(private val sources: () -> List<ObfSource>) {
         /**
          * Addresses before places; then the street match (as typed, full, prefix) before the
          * kind, so a closest real number on the street typed beats an estimate on a street
-         * that only shares its name (the lead's change to plan §4, for "1101 Congress Ave");
+         * that only shares its name (changed from the first design, for "1101 Congress Ave");
          * within one street match exact, estimated, closest, then streets and cities.
          */
         private val ORDER: Comparator<Candidate> = compareBy<Candidate> { if (it.kindRank == RANK_POI) 1 else 0 }

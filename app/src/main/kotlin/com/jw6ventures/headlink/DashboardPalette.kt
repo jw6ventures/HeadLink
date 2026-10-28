@@ -1,7 +1,7 @@
 package com.jw6ventures.headlink
 
 /**
- * The dashboard chrome's colours, one set for day and one for night (P7 plan §5.6).
+ * The dashboard chrome's colours, one set for day and one for night (docs/dashboard.md, "Day and night").
  *
  * Pure Kotlin with plain ARGB integers, out of [DashboardDrawing] so the host tests can
  * hold both sets to the same contrast rules without Android's graphics classes.
@@ -46,7 +46,7 @@ data class DashboardPalette(
          *
          * Before P7.6 "day" was a slightly lighter dark scheme, and every recorded Ford
          * session drew the night one anyway, because the truck's display was pinned dark
-         * (§1 item 16). In sunlight a dark screen is a mirror, which is the case for a
+         * (docs/dashboard.md, "Day and night"). In sunlight a dark screen is a mirror, which is the case for a
          * light one.
          *
          * Not white: the tiles are the lightest thing, a cool grey under them, so the
@@ -78,7 +78,7 @@ data class DashboardPalette(
         )
 
         /**
-         * The dark scheme: until P7.6 this was `DAY`, and the plan (§5.6) keeps it as the
+         * The dark scheme: until P7.6 this was `DAY`, and it stays as the
          * night baseline.
          *
          * The pre-P7.6 `NIGHT` set was dimmer still (text `#D8DEE4`, dim `#6C7884` on

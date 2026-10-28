@@ -21,7 +21,7 @@ class Maneuver(
  * own source; the cluster's is `ManeuverTypeEnum.proto`, which upstream marks
  * `confidence: unverified` and says maps 1:1 onto Android's `Maneuver.TYPE_*`. Nothing
  * branches on the names, the report carries the raw values, and whether Ford draws the
- * icon these values ask for is the P6 plan §10 question a drive answers.
+ * icon these values ask for is an open P6 question a drive answers.
  *
  * Choices worth stating:
  *
@@ -99,8 +99,8 @@ object Maneuvers {
         }
 
     /**
-     * How the dashboard draws the maneuver whose raw `ManeuverType` value is [type] (P7.4,
-     * plan §5.3): the turn card and the trip panel read the **same value the cluster is
+     * How the dashboard draws the maneuver whose raw `ManeuverType` value is [type] (P7.4):
+     * the turn card and the trip panel read the **same value the cluster is
      * sent**, never the instruction text, so the projected icon and the cluster's can only
      * disagree if Ford draws a value differently from how it is named.
      *

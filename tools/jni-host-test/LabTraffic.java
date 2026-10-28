@@ -1,7 +1,7 @@
-// Writes the stand-in HERE server's scenarios for the emulator lab's LAB_TRAFFIC runs (P9
-// plan §8), and the drive the lab receiver plays: BRouter's route from the lab's parked
-// position to Boston Common, and hand-written flow and incident responses in HERE's shape
-// (plan §4) laid along the OSM roads that route takes. Computed with the app's own Router,
+// Writes the stand-in HERE server's scenarios for the emulator lab's LAB_TRAFFIC runs (P9),
+// and the drive the lab receiver plays: BRouter's route from the lab's parked position to
+// Boston Common, and hand-written flow and incident responses in HERE's shape laid along
+// the OSM roads that route takes. Computed with the app's own Router,
 // TrafficMatch, TrafficNogos and AlternativeSearch over W75_N40.rd5, so the lab's numbers can
 // be checked against what the same code finds on the host:
 //
@@ -301,7 +301,7 @@ public final class LabTraffic {
         throw new IllegalStateException("no side road clear of every route");
     }
 
-    // ---- HERE's shape (plan §4), as TrafficFeedTest writes it --------------------------------
+    // ---- HERE's shape, as TrafficFeedTest writes it --------------------------------
 
     private static String result(String description, double[][] line, int functionalClass, double speed, double free, double jamFactor,
             String traversability) {

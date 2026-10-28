@@ -1,13 +1,13 @@
-// P9.2 on a desktop JVM (docs/p9-plan.md sections 4 to 7 and 9): the boxes asked of HERE
+// P9.2 on a desktop JVM (docs/navigation.md, "Live traffic (HERE)"): the boxes asked of HERE
 // around the route ahead, HERE's roads laid on the route, the delay they add, and where the
 // no-go points go and how heavy they are. TrafficArea, TrafficMatch and TrafficNogos are pure
 // Kotlin.
 //
 // Every HERE stretch here is hand-written in HERE's shape (points to five decimals, roughly
 // 20 m apart, spans laid end to end by their lengths) and laid along a route: never a real
-// response (plan section 1, 6.4 h). The scenario - the same carriageway a few metres off, the other
-// carriageway 30 m away and reversed, a frontage road 25 m away, a cross street on an
-// overpass, a stretch with subSegments, a no-data gap, a closure - runs on a curving
+// response (HERE's Platform Terms, 6.4h). The scenario - the same carriageway a few metres
+// off, the other carriageway 30 m away and reversed, a frontage road 25 m away, a cross
+// street on an overpass, a stretch with subSegments, a no-data gap, a closure - runs on a curving
 // synthetic route always, and with a directory holding W100_N30.rd5 as the first argument
 // also on BRouter's route along I-35E (Stemmons Freeway) in Dallas.
 import java.io.File;
@@ -74,7 +74,7 @@ public final class TrafficMatchTest {
         System.out.println("jni-host-test: ok " + passed + " traffic match checks; " + real);
     }
 
-    // ---- Boxes (plan section 4) ----
+    // ---- Boxes ----
 
     private static void theBoxIsPaddedOnEverySide() {
         Route north = line(30.0, -97.0, 0.0, 10_000.0, 100.0, 30.0);
@@ -148,7 +148,7 @@ public final class TrafficMatchTest {
         check(!AREA.covers(fetched, east, 0.0, 15_000.0), "nor a new route that turns away from it");
     }
 
-    // ---- Matching (plan sections 5 and 6) on a route with a hand-written HERE response laid along it ----
+    // ---- Matching on a route with a hand-written HERE response laid along it ----
 
     /**
      * From [c] metres along the route: the same carriageway a few metres off it, in spans
@@ -205,7 +205,7 @@ public final class TrafficMatchTest {
         for (int i = 1; i < runs.size(); i++) check(runs.get(i).getFromM() >= runs.get(i - 1).getToM() - 1e-6, what + ": runs do not overlap");
         check(nothingFrom(runs, c + 1_250.0, c + 1_450.0), what + ": the gap has no run, frontage road beside it or not (no data, not free)");
 
-        // Delay (plan section 6): HERE's time less BRouter's, positive only; closures none.
+        // Delay: HERE's time less BRouter's, positive only; closures none.
         TrafficRun free = runs.get(0);
         check(free.getDelaySeconds() == 0.0 && Math.abs(free.getSpeedMps() - 40.0) < 1e-6, what + ": faster than BRouter is no delay, never negative");
         double total = 0.0;
@@ -239,7 +239,7 @@ public final class TrafficMatchTest {
                 && RouteFollower.Companion.distance(lats[lats.length - 1], lons[lons.length - 1], end[0], end[1]) < 0.01,
                 what + ": a run's own line starts and ends at its metres");
 
-        // No-go points (plan section 7) for the same response.
+        // No-go points for the same response.
         List<Nogo> nogos = NOGOS.of(flow, incidents, route);
         int touching = 0;
         int hardTouching = 0;
@@ -267,7 +267,8 @@ public final class TrafficMatchTest {
     }
 
     /**
-     * The orchestrator's change to plan section 6 (docs/p9-4-5-runtime-results.md): HERE's free
+     * The orchestrator's change to the traffic design (docs/navigation.md, "Live traffic (HERE)"):
+     * HERE's free
      * flow a little under BRouter's model is not traffic. On P9.0's real Dallas routes that alone
      * made 17 and 36 s, a "+1 min traffic" on empty roads. Only slow and queuing runs carry delay.
      */
@@ -302,7 +303,7 @@ public final class TrafficMatchTest {
         double[][] far = laid(route, along, 1_000.0, 2_000.0, 200.0, false);
         RouteTraffic away = MATCH.match(route, List.of(new FlowStretch("Elsewhere", 1_000.0, far[0], far[1], 2, List.of(span(0.0, 1_000.0, 2.0, 30.0, 9.0)))), List.of());
         check(away.getRuns().isEmpty(), "a jam 200 m away is not on the route");
-        check(TrafficMatch.NEAR_M == 15.0 && TrafficMatch.HEADING_DEG == 30.0, "the plan's first guesses, 15 m and 30 deg");
+        check(TrafficMatch.NEAR_M == 15.0 && TrafficMatch.HEADING_DEG == 30.0, "the first guesses, 15 m and 30 deg");
     }
 
     /** A 30 km route of 3,000 points against 500 stretches either way, 0 to 60 m off it. */
@@ -335,7 +336,7 @@ public final class TrafficMatchTest {
                 + traffic.getRuns().size() + " match_ms=" + ms + " nogos=" + nogos.size() + " nogo_ms=" + nogoMs);
     }
 
-    // ---- No-go points (plan section 7) on plain geometry ----
+    // ---- No-go points on plain geometry ----
 
     private static void pointsAreSpacedAndKeptFromTheEnds() {
         double[][] s = straight(30.0, -97.0, 0.0, 1_000.0, 20.0);
@@ -530,7 +531,7 @@ public final class TrafficMatchTest {
     }
 
 
-    // ---- Code review fixes (docs/p9-lab-results.md) ----
+    // ---- Code review fixes (docs/verification.md) ----
 
     /**
      * Fix 4: a reversible or managed lane beside the route, the same way, is no data on the

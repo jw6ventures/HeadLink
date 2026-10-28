@@ -23,7 +23,7 @@ import kotlin.math.roundToInt
  * drive's report says what guidance did even when the cluster showed nothing.
  *
  * **Nothing about where the vehicle is or is going reaches the report or the event log**
- * (P6 plan §9.6): no coordinates, no instruction text. Offsets and distances are how far,
+ * (P6): no coordinates, no instruction text. Offsets and distances are how far,
  * not where.
  *
  * **Spoken prompts (P8.2).** Everything published also goes through [VoicePrompts], which
@@ -50,8 +50,8 @@ object Guide {
 
     /**
      * How long "You have arrived" stays on the dashboard before the route ends itself
-     * (P7.4). The plan has the favourites come back when a trip is ended **or reached**
-     * (§5.4) and the turn card go away with the route (§5.3), while End route is never
+     * (P7.4). The favourites are to come back when a trip is ended **or reached**
+     * and the turn card to go away with the route, while End route is never
      * hidden while a route exists; ending the route a little after arrival is what makes
      * all three true. Long enough to read while pulling in and parking; the cluster
      * already went `INACTIVE` at arrival, so ending the route changes nothing on the wire.
@@ -114,13 +114,13 @@ object Guide {
     private var lastSource = "-"
     /** The newest fix, kept only to place a new route at once; never reported. */
     private var lastFix: Pair<Double, Double>? = null
-    /** The newest fix's speed, metres a second, for prompt timing only (P8 §5.1); never reported. */
+    /** The newest fix's speed, metres a second, for prompt timing only (P8); never reported. */
     private var lastSpeed: Double? = null
 
     /**
      * When turn prompts are spoken and what they say (P8.2). Its own
      * [VoiceSettings.enabled] stays on: the trip panel's toggle is [Speaker]'s gate, which
-     * counts every prompt it holds back as `toggle_off` (plan §9), and stage progress is
+     * counts every prompt it holds back as `toggle_off`, and stage progress is
      * tracked either way, so turning the toggle on releases no backlog.
      */
     private val voice = VoicePrompts()
@@ -200,7 +200,7 @@ object Guide {
     }
 
     /**
-     * The phone's Voice guidance screen saved [settings] (P8.3, plan §7): taken at once by
+     * The phone's Voice guidance screen saved [settings] (P8.3): taken at once by
      * the prompts, in the unit the projection started with, so a change mid-drive needs no
      * restart. On or off is the trip panel's toggle too: it goes to [Speaker]'s gate, and
      * to the dashboard through [voiceListener], only when it changed. Unlike a press on the
@@ -215,7 +215,7 @@ object Guide {
     }
 
     /**
-     * The trip panel's voice toggle was pressed (plan §6). Off stops a prompt being spoken
+     * The trip panel's voice toggle was pressed. Off stops a prompt being spoken
      * at once. On says the current step's prompt straight away, as confirmation, and
      * prompts carry on as normal from there; with no step to confirm (no route, re-routing,
      * arrived) it says nothing.
@@ -315,7 +315,7 @@ object Guide {
     }
 
     /**
-     * Live traffic found the route ahead closed (P9.5, plan §7): re-route now, from the
+     * Live traffic found the route ahead closed (P9.5): re-route now, from the
      * vehicle, with the closures as no-go points, as leaving the route does. False, and
      * nothing asked, while a re-route is already in flight, or with no route or
      * destination. [Traffic] makes sure it is asked once a closure.
@@ -361,7 +361,7 @@ object Guide {
     /**
      * One position fix, from the vehicle (or the phone, while the vehicle has none).
      * [source] is `vehicle` or `phone`, for the report. [speedMps] is the head unit's
-     * `car_speed`, else its `gps_speed`, else the phone's own, else null (P8 plan §5.1):
+     * `car_speed`, else its `gps_speed`, else the phone's own, else null (P8):
      * used to time spoken prompts, never reported.
      */
     fun onFix(context: Context, latitude: Double, longitude: Double, source: String, speedMps: Double? = null) {
@@ -384,7 +384,7 @@ object Guide {
         last = result
         // Learned whether or not it is shown, so turning it on mid-drive has a pace to use.
         // BRouter's own seconds, never the shown ones with traffic in: the pace and the
-        // delay must not count the same jam twice (P9.4, plan §6).
+        // delay must not count the same jam twice (P9.4).
         pace.onFix(generation, result.step?.destinationSeconds?.takeIf { result.state == FollowState.ON_ROUTE }, now)
         Traffic.onPosition(follower.route, result)
         // Past the chosen alternative's via point, or at a stop added from search ahead
@@ -574,7 +574,7 @@ object Guide {
  * (P7.4): the next thing the driver does, and how the trip stands.
  *
  * Null when there is no route at all; the trip panel shows exactly while one of these
- * exists, so End route is never hidden while a route does (plan §5.4).
+ * exists, so End route is never hidden while a route does.
  *
  * `@JvmOverloads` so the host tests can build the plain two-argument form.
  */

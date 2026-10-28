@@ -19,7 +19,7 @@ import java.util.concurrent.atomic.AtomicLong
  * Before P7.6 the theme was set once, before any tile was read, so this never happened.
  * The first lab run with day/night switching hit it on the switch at session start, when
  * the loaders were busy with the first tiles: 108 failed reads from one loader over the
- * following twelve seconds (docs/p7-6-map-results.md).
+ * following twelve seconds (docs/verification.md).
  *
  * Two things, both on the loader thread around each query:
  *

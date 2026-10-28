@@ -3,7 +3,7 @@
      10.0.2.2 (the emulator's alias for the host) and the loopback address an
      `adb reverse` port arrives on. Everything else keeps the defaults: HTTPS only, the
      system's certificate authorities only. TrafficClient honours its base URL override
-     in a debuggable build only (plan §4). -->
+     in a debuggable build only. -->
 <network-security-config>
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="false">10.0.2.2</domain>

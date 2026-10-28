@@ -56,12 +56,12 @@ interface TrafficHost {
     /** The dashboard's view of traffic changed. */
     fun display(display: TrafficDisplay)
 
-    /** A line for the event log. Counts, minutes and booleans only (P6 plan §9.6). */
+    /** A line for the event log. Counts, minutes and booleans only (spec §10). */
     fun note(text: String)
 }
 
 /**
- * The traffic loop (P9 plan §4, §6, §7): fetches HERE's flow and incidents for the route
+ * The traffic loop (P9): fetches HERE's flow and incidents for the route
  * ahead while a route is followed, lays them on the route, adds the delay to the time to
  * the destination, hands the closures and jams to every route search as no-go points,
  * re-routes at once round a closure ahead, and offers a faster way round a jam.
@@ -72,7 +72,7 @@ interface TrafficHost {
  * routing thread, which is BRouter's. Their answers come back through [TrafficHost.main]
  * and are used only if nothing was dropped or replaced in the meantime.
  *
- * **When it fetches** (plan §4, decision 5). Only while a route is being followed: a route,
+ * **When it fetches**. Only while a route is being followed: a route,
  * and a fix that placed the vehicle on it or joining it (not after arriving). The first
  * fetch is at the first such fix, then every [TrafficSettings.refreshMinutes]. After the
  * followed route changes (a re-route, a new destination, a choice) the last fetch's boxes
@@ -83,8 +83,8 @@ interface TrafficHost {
  * [TrafficHost.fetch] is never called: that is the client's gate too, and the host test
  * holds both to it.
  *
- * **What is kept** (plan §1, §4). One response set (a [TrafficSnapshot] per box, one box in
- * every case the plan expects), used until the next replaces it whole, never merged with
+ * **What is kept**. One response set (a [TrafficSnapshot] per box, one box in
+ * every case the design expects), used until the next replaces it whole, never merged with
  * it, and never re-labelled for another box. A failed or refused refresh keeps it, but
  * only until [staleMs] after it arrived (twice the refresh interval): old traffic is worse
  * than none. Everything is dropped the moment the route ends, traffic is turned off or the
@@ -96,17 +96,17 @@ interface TrafficHost {
  * a refresh, not one a minute. At the monthly limit the client sends nothing, and the loop
  * asks again at the next refresh.
  *
- * **The time** (P9.4, plan §6): [delaySeconds] is the followed route's delay ahead of the
+ * **The time** (P9.4): [delaySeconds] is the followed route's delay ahead of the
  * vehicle ([RouteTraffic.delayAheadSeconds]), which [Guide] adds to BRouter's time after
  * the pace factor ([ArrivalTime]); the display's delay is the same number.
  *
- * **Routing** (P9.5, plan §7): [withNogos] puts the points on every new route, re-route and
+ * **Routing** (P9.5): [withNogos] puts the points on every new route, re-route and
  * alternatives search while traffic is on and a response is held ([TrafficNogos.forRoute],
  * priced at the request's own top speed). A closure matched on the route ahead starts a
  * re-route at once, once for each closure a trip, and never on a route BRouter could only
  * find by opening the closures ([Route.closuresOpened]), which would loop.
  *
- * **The offer** (plan §7, P9.6): see [assess].
+ * **The offer** (P9.6): see [assess].
  *
  * Nothing about where the vehicle is, the route, HERE's roads or the offer's reason reaches
  * [report] or [TrafficHost.note]: counts, minutes, seconds and booleans only.
@@ -220,7 +220,7 @@ class TrafficFeed(private val host: TrafficHost) {
         tick()
     }
 
-    /** No route any more (ended, cleared or arrived and held): drop everything (plan §4). */
+    /** No route any more (ended, cleared or arrived and held): drop everything. */
     fun onRouteEnded() {
         route = null
         routeAlong = DoubleArray(0)
@@ -268,7 +268,7 @@ class TrafficFeed(private val host: TrafficHost) {
             host.changed()
         }
         val at = state ?: return
-        // Followed (plan §4, decision 5): on the route or joining it, at a fix recent enough to
+        // Followed: on the route or joining it, at a fix recent enough to
         // say the vehicle is still there. Off the route, arrived, or with no fix for
         // [FIX_FRESH_MS] (the projection ended and the phone was put away, say), nothing is
         // fetched: the route is kept, and a fix that places the vehicle on it again resumes.
@@ -293,7 +293,7 @@ class TrafficFeed(private val host: TrafficHost) {
     fun delaySeconds(route: Route): Int = if (route === this.route) delaySeconds else 0
 
     /**
-     * [request] with the points for the traffic held (P9.5, plan §7), priced at its own top
+     * [request] with the points for the traffic held (P9.5), priced at its own top
      * speed; [request] itself when traffic is off or nothing is held.
      */
     fun withNogos(request: RouteRequest): RouteRequest {
@@ -319,7 +319,7 @@ class TrafficFeed(private val host: TrafficHost) {
 
     /**
      * The live alternatives' search found [alternatives] from [ahead], the followed route
-     * from [aheadAlongM] metres along it on (P9.6, plan §7). Each is laid on the traffic
+     * from [aheadAlongM] metres along it on (P9.6). Each is laid on the traffic
      * held, off the main thread; then, on the main thread, [done] is given each one's
      * traffic delay less [ahead]'s (for its bubble's "+N min", in seconds), and the
      * alternative now on offer if it is one of them, to be left out of the bubbles.
@@ -371,7 +371,7 @@ class TrafficFeed(private val host: TrafficHost) {
     }
 
     /**
-     * **Take** or **Keep** on offer [id] (plan §7). Take follows it through the host, as a
+     * **Take** or **Keep** on offer [id]. Take follows it through the host, as a
      * live alternative's bubble is followed. Keep records the way round, so it is not offered
      * again this trip unless it saves [OFFER_REGROW_S] more. Either way it goes from the
      * display. An answer to an offer no longer up does nothing.
@@ -602,7 +602,7 @@ class TrafficFeed(private val host: TrafficHost) {
     }
 
     /**
-     * A closure matched on the followed route ahead of the vehicle: re-route now (plan §7),
+     * A closure matched on the followed route ahead of the vehicle: re-route now,
      * unless this route was found only by opening closures, or this closure was already
      * re-routed round this trip.
      */
@@ -659,7 +659,7 @@ class TrafficFeed(private val host: TrafficHost) {
             if (splitM <= alongM + LiveAlternatives.PASSED_M) return@mapNotNull null
             val ownDelay = own.delayAheadSeconds(0.0)
             val saving = (ahead.seconds + aheadDelay - alternative.seconds - ownDelay).roundToInt()
-            // Plan §7: the pop-up is only for a way round faster *because of traffic*. The part
+            // The pop-up is only for a way round faster *because of traffic*. The part
             // of the saving traffic accounts for (the delay it misses, but never more than it
             // saves) must itself be worth an offer, so a route merely faster in BRouter's model,
             // with a little traffic besides, is left to the bubbles.
@@ -697,10 +697,10 @@ class TrafficFeed(private val host: TrafficHost) {
             (RoutePreview.duplicate(routeA, listOf(routeB)) || RoutePreview.duplicate(routeB, listOf(routeA)))
 
     /**
-     * Why, in words (plan §7): what is ahead on the followed route past where the way round
+     * Why, in words: what is ahead on the followed route past where the way round
      * leaves it. A closure first, else the heaviest jam. The road is named from the map
      * ([Route.roadAt], [StreetNames]), not from HERE's `description`, which is as often an
-     * exit or a cross street as the road (docs/p9-2-results.md §3).
+     * exit or a cross street as the road (docs/navigation.md, "Live traffic (HERE)").
      */
     private fun reason(followed: Route, held: RouteTraffic, splitM: Double): String {
         val from = max(splitM, alongM)
@@ -773,10 +773,10 @@ class TrafficFeed(private val host: TrafficHost) {
         /** No fetch for a new route sooner than this after the last began: a burst of re-routes is one fetch. */
         const val REFETCH_GAP_MS = 60_000L
 
-        /** Plan §7: an alternative is offered when it saves at least this, seconds. */
+        /** An alternative is offered when it saves at least this, seconds. */
         const val OFFER_SAVING_S = 180
 
-        /** Plan §7: a way round kept away from is offered again only when it saves this much more. */
+        /** A way round kept away from is offered again only when it saves this much more. */
         const val OFFER_REGROW_S = 180
 
         /** Two ways round leaving the route within this, metres, may be the same one. */
@@ -788,7 +788,7 @@ class TrafficFeed(private val host: TrafficHost) {
         /** The reason when the map names no road there. */
         const val GENERIC_REASON = "Traffic ahead"
 
-        /** A fix older than this does not keep a route followed: nothing is fetched for it (plan §4). */
+        /** A fix older than this does not keep a route followed: nothing is fetched for it. */
         const val FIX_FRESH_MS = 2 * 60_000L
 
         /** A response is dropped this long after it arrived, whatever happened since: twice the refresh interval. */
@@ -841,7 +841,7 @@ class TrafficFeed(private val host: TrafficHost) {
 /**
  * The time to the destination as shown everywhere (the cluster, the trip panel, Home): BRouter's
  * time ahead, with the drive's pace when Learn my pace is on, and then the traffic delay
- * ahead (P9.4, plan §6).
+ * ahead (P9.4).
  *
  * The pace is learned from BRouter's own estimate only ([PaceTracker.onFix] is given
  * BRouter's seconds, never these), and the delay is added after it, not scaled by it: a jam

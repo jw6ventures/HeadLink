@@ -12,28 +12,28 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 /*
- * P10: weather from Breezy Weather (docs/p10-plan.md). This file is the pure half, with no
+ * P10: weather from Breezy Weather (docs/dashboard.md, "Weather"). This file is the pure half, with no
  * Android in it, so tools/jni-host-test checks all of it: the settings, what the provider's
  * cursor and gzipped JSON become, which location is read, which alerts count, and every
  * word the header and the flex tile show. [WeatherProvider] is the Android half.
  *
- * Written against Breezy's source (provider 0.2, docs/weather-research.md §1.2), not a
- * capture from the phone: plan §1 says every field name here is unconfirmed until P10.0
+ * Written against Breezy's source (provider 0.2), not a
+ * capture from the phone: every field name here is unconfirmed until P10.0
  * reads a real blob, and the parser is lenient about everything it does not need.
  */
 
-/** Settings → Weather (plan §4). Off by default (APP09); stored with [SavedSettings]. */
+/** Settings → Weather. Off by default (APP09); stored with [SavedSettings]. */
 data class WeatherSettings(
     /** Show weather: the header item, the tapped view and alerts. Needs Breezy's permission. */
     val enabled: Boolean = false,
-    /** Speak weather alerts, heard only while the trip panel's voice toggle is on (plan §6). */
+    /** Speak weather alerts, heard only while the trip panel's voice toggle is on. */
     val speakAlerts: Boolean = true,
     /** Alerts shown from: the lowest severity that takes the tile and is spoken. */
     val alertLevel: AlertLevel = AlertLevel.DEFAULT,
 )
 
 /**
- * Breezy's alert severities that can take the tile (plan §4): 1 minor to 4 extreme. Breezy's
+ * Breezy's alert severities that can take the tile: 1 minor to 4 extreme. Breezy's
  * 0, unknown, never qualifies by itself; it still shows in the weather view's strip.
  */
 enum class AlertLevel(val key: String, val label: String, val severity: Int) {
@@ -50,7 +50,7 @@ enum class AlertLevel(val key: String, val label: String, val severity: Int) {
     }
 }
 
-/** Breezy's twelve weather codes (its `WeatherCode.id`), one glyph each (plan §5.1). */
+/** Breezy's twelve weather codes (its `WeatherCode.id`), one glyph each. */
 enum class WeatherCode(val key: String) {
     CLEAR("clear"),
     PARTLY_CLOUDY("partly_cloudy"),
@@ -100,7 +100,7 @@ data class WeatherAlert(
     val colour: Int?,
 )
 
-/** What one `weather` blob says, trimmed to the fields plan §1 lists. */
+/** What one `weather` blob says, trimmed to the fields the tile and view use. */
 data class WeatherData(
     val refreshMillis: Long?,
     val text: String?,
@@ -132,8 +132,8 @@ data class WeatherPlace(
 )
 
 /**
- * Why there is no reading, or [OK]. Each has the settings card's status line (plan §4) and
- * the report's `weather_provider` word (§7).
+ * Why there is no reading, or [OK]. Each has the settings card's status line and
+ * the report's `weather_provider` word.
  */
 enum class WeatherStatus(val key: String) {
     /** Show weather is off, or nothing has been read yet this session. */
@@ -150,7 +150,7 @@ enum class WeatherStatus(val key: String) {
 }
 
 /**
- * The latest read (plan §3): held in memory only, replaced by the next, dropped when the
+ * The latest read: held in memory only, replaced by the next, dropped when the
  * projection ends. [reading] is the last good one; a later failure keeps it and says why
  * in [status], so a truck that loses Breezy mid-drive still shows how old its weather is.
  */
@@ -177,7 +177,7 @@ class WeatherReadException(val status: WeatherStatus, val major: Int? = null) : 
  * their defaults (`isDaylight` true, `severity` 0), so a missing one takes that default.
  */
 object WeatherJson {
-    /** The current hour and the next ones kept: the view shows 4 after the current (plan §5.2). */
+    /** The current hour and the next ones kept: the view shows 4 after the current. */
     const val HOURS_KEPT = 7
 
     /** The largest blob taken: a year of hourly data is well under this. Larger is refused. */
@@ -393,10 +393,10 @@ object WeatherJson {
 
 /** P10's pure decisions: which place, which alerts, whose provider, and when to read. */
 object WeatherRules {
-    /** The provider major version this is written for (plan §1). Any other is refused. */
+    /** The provider major version this is written for. Any other is refused. */
     const val SUPPORTED_MAJOR = 0
 
-    /** Breezy's release package; the only owner of the authority accepted (plan §3). */
+    /** Breezy's release package; the only owner of the authority accepted. */
     const val PACKAGE = "org.breezyweather"
 
     /** Breezy's debug build, accepted only by a debug build of this app, for the lab. */
@@ -409,39 +409,39 @@ object WeatherRules {
     /** Breezy's own id for its current-position location. */
     const val CURRENT_POSITION_ID = "CURRENT_POSITION"
 
-    /** The backstop re-read while projecting (plan §3). */
+    /** The backstop re-read while projecting. */
     const val READ_EVERY_MS = 15 * 60_000L
 
-    /** A reading older than this is drawn dimmed with "old" (plan §2). */
+    /** A reading older than this is drawn dimmed with "old". */
     const val STALE_MS = 3 * 3_600_000L
 
-    /** A place further than this from the vehicle is labelled with its distance (plan §2). */
+    /** A place further than this from the vehicle is labelled with its distance. */
     const val FAR_METRES = 50_000.0
 
-    /** The tapped view closes by itself after this (plan §5.2). */
+    /** The tapped view closes by itself after this. */
     const val VIEW_TIMEOUT_MS = 30_000L
 
-    /** Hours in the view's row (plan §5.2). */
+    /** Hours in the view's row. */
     const val VIEW_HOURS = 4
 
-    /** A rain percentage is shown from here up (plan §5.2). */
+    /** A rain percentage is shown from here up. */
     const val RAIN_SHOWN_PERCENT = 20
 
-    /** "Feels 84°" is shown when it differs from the temperature by this or more (plan §5.2). */
+    /** "Feels 84°" is shown when it differs from the temperature by this or more. */
     const val FEELS_DIFFERENCE = 3.0
 
-    /** The locations asked for (plan §1). */
+    /** The locations asked for. */
     const val LOCATION_LIMIT = 10
 
     /**
-     * Whether a provider owned by [owner] may be read (plan §3): Breezy's release package;
+     * Whether a provider owned by [owner] may be read: Breezy's release package;
      * its debug package only when this app is debuggable. Anything else, or none, is refused.
      */
     fun ownerAccepted(owner: String?, debuggable: Boolean): Boolean =
         owner == PACKAGE || (debuggable && owner == DEBUG_PACKAGE)
 
     /**
-     * Which location to read (plan §2): Breezy's current position; else the one nearest the
+     * Which location to read: Breezy's current position; else the one nearest the
      * vehicle's or phone's [fix]; else the first. Null only when there are none.
      */
     fun choose(places: List<WeatherPlace>, fix: Pair<Double, Double>?): WeatherPlace? {
@@ -453,7 +453,7 @@ object WeatherRules {
     }
 
     /**
-     * The alerts that take the tile and are spoken (plan §5.3): started, not ended, at or
+     * The alerts that take the tile and are spoken: started, not ended, at or
      * above [level], and not [dismissed]; the most severe first, then the one ending soonest.
      */
     fun qualifying(alerts: List<WeatherAlert>, nowMillis: Long, level: AlertLevel, dismissed: Set<String> = emptySet()): List<WeatherAlert> =
@@ -486,7 +486,7 @@ object WeatherText {
         "Breezy Weather update notifier so the car hears about new weather straight away."
 
     /**
-     * The settings card's status line (plan §4), and the tapped view's when there is no
+     * The settings card's status line, and the tapped view's when there is no
      * reading. With a reading: "Waco · updated 12 min ago".
      */
     fun status(state: WeatherState, nowMillis: Long): String {
@@ -515,7 +515,7 @@ object WeatherText {
         }
     }
 
-    /** Whether the reading is past the stale limit (plan §2); one with no time counts as stale. */
+    /** Whether the reading is past the stale limit; one with no time counts as stale. */
     fun stale(data: WeatherData, nowMillis: Long): Boolean {
         val refresh = data.refreshMillis ?: return true
         return nowMillis - refresh > WeatherRules.STALE_MS
@@ -532,7 +532,7 @@ object WeatherText {
     fun placeName(place: WeatherPlace): String = place.name.ifBlank { "Weather" }
 
     /**
-     * The place and age line along the bottom of both views (plan §2): "Waco · 40 min ago",
+     * The place and age line along the bottom of both views: "Waco · 40 min ago",
      * led by "old" when stale and "62 km away" when far: "old · 62 km away · Waco · 4 h ago".
      * The flags go first so that a line too long for the tile loses the place's tail or the
      * age, never the words that say the weather may not be the truck's.
@@ -549,7 +549,7 @@ object WeatherText {
     /** What separates the place line's parts; the view breaks a two-line place line at one. */
     const val PLACE_SEPARATOR = " · "
 
-    /** Breezy's temperature tags as drawn; any other tag is printed as it came (plan §1). */
+    /** Breezy's temperature tags as drawn; any other tag is printed as it came. */
     fun unitSuffix(unit: String?): String = when (unit?.lowercase()) {
         "f" -> "°F"
         "c" -> "°C"
@@ -562,7 +562,7 @@ object WeatherText {
     fun temperature(value: Tagged?): String =
         value?.let { "${Math.round(it.value)}${unitSuffix(it.unit)}" } ?: NO_READING
 
-    /** "78°": the header's short form when "78°F" does not fit (plan §5.1). Kelvin keeps its K. */
+    /** "78°": the header's short form when "78°F" does not fit. Kelvin keeps its K. */
     fun shortTemperature(value: Tagged?): String = value?.let {
         if (it.unit.equals("k", ignoreCase = true)) "${Math.round(it.value)} K" else "${Math.round(it.value)}°"
     } ?: NO_READING
@@ -598,7 +598,7 @@ object WeatherText {
         alert.endMillis?.let { "until " + clock.time(it, zone) }
 
     /**
-     * What is said for an alert (plan §6): "Weather alert. " and the headline, capped like a
+     * What is said for an alert: "Weather alert. " and the headline, capped like a
      * read notification at [ReadAloudText.MAX]. The description and instructions never.
      */
     fun spoken(alert: WeatherAlert): String {

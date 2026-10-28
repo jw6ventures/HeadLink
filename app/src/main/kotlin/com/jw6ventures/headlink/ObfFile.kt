@@ -6,7 +6,7 @@ import java.io.IOException
 import java.nio.channels.FileChannel
 import java.nio.file.StandardOpenOption
 
-/** Which kind of section a table-of-contents entry is. Only these two are read (plan §3). */
+/** Which kind of section a table-of-contents entry is. Only these two are read. */
 enum class ObfSectionType { ADDRESS, POI }
 
 /** One address or POI section: where it is in the file, its name and, if the file says, its bounds. */
@@ -20,7 +20,7 @@ class ObfSection(
 )
 
 /**
- * A file's table of contents (plan §3.1). [skippedSections] counts the map, routing,
+ * A file's table of contents. [skippedSections] counts the map, routing,
  * transport and other sections passed over without being read.
  */
 class ObfToc(
@@ -34,12 +34,12 @@ class ObfToc(
 )
 
 /**
- * OsmAnd's `.obf` map file, read in place (plan §3): the address and POI sections only.
+ * OsmAnd's `.obf` map file, read in place: the address and POI sections only.
  *
  * Written fresh from OsmAnd's own reader (`BinaryMapIndexReader`,
  * `BinaryMapAddressReaderAdapter`, `BinaryMapPoiReaderAdapter` at OsmAnd `b75433b`) and
  * the vendored `protocol/upstream/osmand/OBF.proto`, then checked against real places
- * (docs/p11-2-3-results.md). Pure JVM: the host tests read real Texas files with it.
+ * (docs/verification.md). Pure JVM: the host tests read real Texas files with it.
  *
  * - **Reads are positional** ([ChannelBytes]); nothing is memory-mapped, so files of any
  *   size open, and any number of threads may query at once: each query walks with its own
@@ -50,7 +50,7 @@ class ObfToc(
  * - **Cities are read once and kept** ([cities]); **streets are read per city and kept in a
  *   bounded LRU** ([streets]); buildings are read per street and not kept.
  * - **The address name index is never read.** OsmAnd changed its layout in July 2026, so
- *   nothing here depends on it; search walks cities and streets instead (plan §3.3).
+ *   nothing here depends on it; search walks cities and streets instead.
  *
  * Owns [channel] and closes it in [close].
  */

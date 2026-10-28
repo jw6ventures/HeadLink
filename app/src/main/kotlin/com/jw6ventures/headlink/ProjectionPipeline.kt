@@ -165,7 +165,7 @@ class ProjectionPipeline(
     private var shownOfferRoute: Route? = null
 
     /**
-     * P11.5: the POI marker loop (docs/p11-plan.md §6), fed by the scene thread every frame;
+     * P11.5: the POI marker loop (docs/navigation.md), fed by the scene thread every frame;
      * null runs the dashboard without markers. Installed by the service before [start].
      */
     @Volatile
@@ -645,7 +645,7 @@ class ProjectionPipeline(
         dashboard?.weatherChoices(on, level)
     }
 
-    /** Where the vehicle, else the phone, is: the location weather is chosen by (P10 plan §2). */
+    /** Where the vehicle, else the phone, is: the location weather is chosen by (P10). */
     fun followPosition(): Pair<Double, Double>? = dashboard?.followPosition()
 
     /** The call card's and keypad's presses since the last call, in order, once (P7.9). */

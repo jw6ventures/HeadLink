@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- P9.1: Maps & routing → Live traffic (docs/p9-plan.md §3). A file of its own so the
+<!-- P9.1: Maps & routing → Live traffic (docs/navigation.md, "Live traffic (HERE)"). A file of its own so the
      P9 work does not share strings.xml's lines with other slices. -->
 <resources>
     <string name="traffic_title">Live traffic</string>

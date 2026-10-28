@@ -43,7 +43,7 @@ facts for release preparation; it is not a legal conclusion.
 | VTM `vtm-themes` 0.25.0 | APK dex plus its shipped theme XML and symbol SVGs | LGPL-3.0, same waiver | As above |
 | VTM's bundled tessellator, compiled into `libvtm-jni.so` | `lib/arm64-v8a/libvtm-jni.so` | SGI Free Software License B 2.0 | GPL-compatible; keep the SGI notice |
 | `androidsvg` 1.4 (transitive, `vtm-android` only) | APK dex | Apache-2.0 | Keep license text |
-| BRouter routing engine, **vendored source** at commit `4d2639af` (tag `v1.7.10`, 17 July 2026): `vendor/brouter/src/main/java/btools/{router,mapaccess,util,expressions,codec}`, 101 files, 603,183 bytes, **held unmodified** | APK dex; the offline router (P6.3) | MIT (`vendor/brouter/LICENSE`, copied verbatim) | Keep copyright and license text. MIT into this GPL-3.0-only work is allowed. Vendored rather than resolved because BRouter publishes **no Maven Central artifact at all**, so `verification-metadata.xml` has no coordinate to pin — see `vendor/brouter/README.md` and [p6-plan](p6-plan.md) §4 |
+| BRouter routing engine, **vendored source** at commit `4d2639af` (tag `v1.7.10`, 17 July 2026): `vendor/brouter/src/main/java/btools/{router,mapaccess,util,expressions,codec}`, 101 files, 603,183 bytes, **held unmodified** | APK dex; the offline router (P6.3) | MIT (`vendor/brouter/LICENSE`, copied verbatim) | Keep copyright and license text. MIT into this GPL-3.0-only work is allowed. Vendored rather than resolved because BRouter publishes **no Maven Central artifact at all**, so `verification-metadata.xml` has no coordinate to pin — see `vendor/brouter/README.md` and [navigation](navigation.md) |
 | BRouter profile data `lookups.dat` and `car-vario.brf`, from upstream `misc/profiles2` at the same commit | APK, as classpath resources under `btools/profiles/` (43,495 bytes) | MIT, as BRouter | Byte-identical to upstream; **relocated** into the library's resources and otherwise unchanged. The car profile is not yet validated for turn-by-turn |
 | BRouter-derived `.rd5` routing segments | **Not packaged.** Operator-supplied at runtime into app-private storage, exactly as `.map` files are; the app declares no `INTERNET` permission | ODbL 1.0 (data), with segments produced offline by BRouter's own `brouter-map-creator` | Same on-screen OpenStreetMap attribution as the rendered map |
 | OpenStreetMap-derived Mapsforge `.map` data | **Not packaged.** Operator-supplied at runtime into app-private storage; the app declares no `INTERNET` permission and downloads nothing | ODbL 1.0 (data), with map tiles produced offline by `mapsforge-map-writer` | Attribution is satisfied **on screen**: `DashboardDrawing` draws "© OpenStreetMap contributors (ODbL)" inside the map pane whenever the map renders |
@@ -56,7 +56,8 @@ facts for release preparation; it is not a legal conclusion.
 | `bytes` 1.12.1 | `libaap_jni.so`, harness | MIT | Keep copyright and license text |
 
 The APK declares no AndroidX, Google Play services, gearhead, or other library
-dependency; see the dependency listing in [P0.2 results](p0-2-results.md). P1.1 added
+dependency (`tools/verify-apk.sh` fails a build with any Google Play services or
+gearhead reference). P1.1 added
 no shipped dependency. The TLS and discovery work added the OpenSSL, `openssl`, and
 `prost` rows above. Compile-time-only crates in Cargo.lock are not linked into
 artifacts: proc macros `openssl-macros` 0.1.1 and `prost-derive` 0.14.4 with `syn`,

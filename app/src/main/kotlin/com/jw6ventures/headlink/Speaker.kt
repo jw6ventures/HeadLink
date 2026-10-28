@@ -20,18 +20,18 @@ import java.util.Locale
 
 /**
  * An installed text-to-speech engine, as the phone's status line and the report name it
- * (P8 plan §3). [internet] is whether that package holds `INTERNET`: the app cannot stop
+ * (docs/audio-and-speech.md, "The engine"). [internet] is whether that package holds `INTERNET`: the app cannot stop
  * an engine using the network, but it can say that one could.
  */
 data class SpeechEngine(val packageName: String, val label: String, val internet: Boolean)
 
 /**
  * The engines on the phone, found without binding one: the `TTS_SERVICE` services this
- * app can see through its `<queries>` entry (§3). Without that entry the list is empty on
+ * app can see through its `<queries>` entry. Without that entry the list is empty on
  * targetSdk ≥ 30, whatever is installed.
  */
 object SpeechEngines {
-    /** Android's text-to-speech settings, where the engine, voice and rate are chosen (§7). */
+    /** Android's text-to-speech settings, where the engine, voice and rate are chosen. */
     const val SETTINGS_ACTION = "com.android.settings.TTS_SETTINGS"
 
     fun installed(context: Context): List<SpeechEngine> {
@@ -54,8 +54,8 @@ object SpeechEngines {
 
     /**
      * The engine `TextToSpeech` binds with no engine named: the system default when it is
-     * installed, else the first system engine, else the first. The app never picks one
-     * (§3); this only predicts which the platform will use, for Home.
+     * installed, else the first system engine, else the first. The app never picks one;
+     * this only predicts which the platform will use, for Home.
      */
     fun default(context: Context): SpeechEngine? {
         val all = installed(context)
@@ -74,7 +74,7 @@ object SpeechEngines {
 }
 
 /**
- * The listener side of reading aloud (§8): one notification's words, fetched by key at
+ * The listener side of reading aloud: one notification's words, fetched by key at
  * the moment it is tapped, or null when it is gone from the phone. Set by
  * [MediaAccessService] while it is connected.
  */
@@ -83,11 +83,11 @@ fun interface NotificationTextSource {
 }
 
 /**
- * The single owner of spoken output (P8 plan §4): `TextToSpeech`, audio focus, the
+ * The single owner of spoken output (docs/audio-and-speech.md, "`Speaker`: the one owner of spoken output"): `TextToSpeech`, audio focus, the
  * truck-only gate and the silence lead-in. Every decision is [SpeechQueue]'s, which is
  * host-tested; this object only carries them out on Android.
  *
- * **Lifetime.** [bind] when projection starts, [release] when it ends (§3). P8.3's Play a
+ * **Lifetime.** [bind] when projection starts, [release] when it ends. P8.3's Play a
  * sample binds outside a session when nothing is bound, and then releases as soon as the
  * sample has ended, been skipped, or waited [SpeechQueue.SAMPLE_INIT_TIMEOUT_MS] for an
  * engine that never started. While it holds the engine it speaks only the sample, so
@@ -99,7 +99,7 @@ fun interface NotificationTextSource {
  *
  * **Privacy.** Words go from [ReadAloudText] or a [GuidePrompt] straight to the engine.
  * They are not kept, logged or reported; the event log says "notification read aloud" or
- * "voice prompt (stage)" and nothing more (§9).
+ * "voice prompt (stage)" and nothing more.
  */
 object Speaker {
     private val main = Handler(Looper.getMainLooper())
@@ -119,7 +119,7 @@ object Speaker {
     private var readySeen = false
     private var engine: SpeechEngine? = null
 
-    /** The **While speaking** setting in force (§7). */
+    /** The **While speaking** setting in force. */
     private var media = SpeechMedia.DEFAULT
 
     /** Why the bound engine cannot speak, once its init has said so; null while starting or ready. */
@@ -144,12 +144,12 @@ object Speaker {
     @Volatile
     var textSource: NotificationTextSource? = null
 
-    /** Told the key being read, or null, so its row stays lit (§8). Main thread. */
+    /** Told the key being read, or null, so its row stays lit. Main thread. */
     var readingListener: ((String?) -> Unit)? = null
 
     /**
      * Lab only: the emulator has no A2DP output, so the debug lab intent sets this and
-     * the Bluetooth gate passes on any output (plan §10). Never set on a release build.
+     * the Bluetooth gate passes on any output. Never set on a release build.
      * The report says `speech_gate=lab` while it is on.
      */
     @Volatile
@@ -169,7 +169,7 @@ object Speaker {
 
     private val devices = object : AudioDeviceCallback() {
         override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>?) {
-            // §4's race: an utterance under way when A2DP goes would finish on the phone's
+            // The race: an utterance under way when A2DP goes would finish on the phone's
             // speaker, so it is stopped here the moment the output is reported gone.
             if (removedDevices?.any { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP } != true) return
             if (bluetooth()) return
@@ -214,7 +214,7 @@ object Speaker {
     private val abandonCheck = Runnable { if (queue.abandonDue(now())) abandonFocus() }
 
     /**
-     * Binds the system's default engine and resets this session's counts (§3). Idempotent
+     * Binds the system's default engine and resets this session's counts. Idempotent
      * while bound, apart from taking [settings]' choices again. Init is asynchronous;
      * anything asked before it completes is dropped as `no_engine`, not queued.
      */
@@ -246,7 +246,7 @@ object Speaker {
         }
     }
 
-    /** Stops speaking, gives focus back at once, and shuts the engine down (§3, §4). */
+    /** Stops speaking, gives focus back at once, and shuts the engine down. */
     fun release() {
         generation++
         sampleOwnsEngine = false
@@ -268,7 +268,7 @@ object Speaker {
     }
 
     /**
-     * A notification row tapped on the dashboard (§8). The full text is fetched from the
+     * A notification row tapped on the dashboard. The full text is fetched from the
      * listener only once the queue has decided to speak, so a skipped or stopped read
      * reads nothing from the phone.
      */
@@ -298,7 +298,7 @@ object Speaker {
     }
 
     /**
-     * A turn prompt (§5), from [Guide]. It cuts off whatever is being said. The note names
+     * A turn prompt, from [Guide]. It cuts off whatever is being said. The note names
      * the stage, never the words.
      */
     fun guide(prompt: GuidePrompt) {
@@ -333,7 +333,7 @@ object Speaker {
     private const val ANNOUNCE_RETRY_MS = 250L
 
     /**
-     * P10: a weather alert newly in force, from [WeatherFeed] (docs/p10-plan.md §6):
+     * P10: a weather alert newly in force, from [WeatherFeed] (docs/audio-and-speech.md, "Other things spoken"):
      * "Weather alert. " and its headline, through the gate and the voice toggle. One that
      * must wait its turn, behind a turn prompt or another alert, is held here and said
      * when its turn comes, in the order asked. The note says what happened, never the
@@ -377,7 +377,7 @@ object Speaker {
     }
 
     /**
-     * Stops a turn prompt being spoken, for the toggle going off (§6), and since P10 a
+     * Stops a turn prompt being spoken, for the toggle going off, and since P10 a
      * weather alert, which the toggle also governs. A notification being read is left alone.
      */
     fun stopGuidance() {
@@ -399,11 +399,11 @@ object Speaker {
     val guidanceEnabled: Boolean
         get() = queue.guidanceOn
 
-    /** Whether speech can happen now, for the toggle's warning mark (§6): an engine, and an A2DP output. */
+    /** Whether speech can happen now, for the toggle's warning mark: an engine, and an A2DP output. */
     fun canSpeak(): Boolean = ready && bluetooth()
 
     /**
-     * **Play a sample** (P8.3, plan §7): [text] through the path a turn prompt takes —
+     * **Play a sample** (P8.3): [text] through the path a turn prompt takes —
      * [SpeechQueue.sample], then the same focus, lead-in and flush as [guide] — and [done]
      * told on the main thread how it came out, once. Main thread.
      *
@@ -474,7 +474,7 @@ object Speaker {
     }
 
     /**
-     * `key=value` lines for the session report (§9): the engine's package, whether it can
+     * `key=value` lines for the session report: the engine's package, whether it can
      * reach the network and became ready, the setting, the gate, and the queue's counts.
      * Never what was said.
      */
@@ -536,7 +536,7 @@ object Speaker {
             appContext?.let { context -> SpeechEngines.installed(context).firstOrNull { it.packageName == name } }
                 ?.let { this.engine = it }
         }
-        // English only, the device's variant where it is English (§3).
+        // English only, the device's variant where it is English.
         val locale = Locale.getDefault().takeIf { it.language == Locale.ENGLISH.language } ?: Locale.US
         val language = try {
             engine.setLanguage(locale)
@@ -554,7 +554,7 @@ object Speaker {
     }
 
     /**
-     * Asks for focus with the **While speaking** setting's kind (§4): transient for Pause
+     * Asks for focus with the **While speaking** setting's kind: transient for Pause
      * media, may-duck for Lower volume. Always with [focusListener], so a second request
      * while one is held replaces it rather than stacking a second grant.
      */
@@ -579,7 +579,7 @@ object Speaker {
     }
 
     /**
-     * Both kinds speak as navigation guidance. Plan §4 gave a read notification
+     * Both kinds speak as navigation guidance. An earlier design gave a read notification
      * `USAGE_ASSISTANT`, but that plays on the assistant stream, whose own volume sits far
      * below media's and which the rocker doesn't reach unless an assistant is active: on
      * the truck a read notification was barely audible while turn prompts were fine.
@@ -600,7 +600,7 @@ object Speaker {
     }
 
     /**
-     * Whether a call is on, for [SpeechQueue.guide]'s §14.1 rule. P7.9's call state first;
+     * Whether a call is on, for [SpeechQueue.guide]'s call rule. P7.9's call state first;
      * it is only fed while Call controls are on, so the audio mode, which needs no
      * permission, covers a call with them off.
      */

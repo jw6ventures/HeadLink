@@ -22,9 +22,9 @@
 //! same message and have neither be wrong on its own.
 //!
 //! **What is deliberately not here.** No lanes: the schema carries `NavigationLane` and
-//! the P6 plan §0 puts lane guidance out of scope, and filling it from a script would make
+//! P6 puts lane guidance out of scope, and filling it from a script would make
 //! the gate evidence claim a capability this project has no way to produce for real. No
-//! turn images: P6 plan §2 starts semantic rather than pictorial, and the only wire path
+//! turn images: P6 starts semantic rather than pictorial, and the only wire path
 //! that ever carried image bytes is deprecated. No estimated time of arrival string: the
 //! field is a `string` of unrecorded format and this source does not know the vehicle's
 //! local clock, so it sends the seconds remaining and leaves the text absent rather than
@@ -389,7 +389,7 @@ impl Guidance {
     /// One line for the report: the maneuver and how far away it is, and nothing that
     /// says where anybody is going.
     ///
-    /// No road name, no instruction text and no destination — the P6 plan §9 puts a
+    /// No road name, no instruction text and no destination — the P6 design puts a
     /// destination on the same footing as `sensor_location`, and the road names here being
     /// invented is not a reason to establish the habit of printing them.
     pub fn summary(&self, units: Units) -> String {

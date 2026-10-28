@@ -17,19 +17,20 @@ line "native-code: 'arm64-v8a'"
 # microphone, and Bluetooth only for W0 below. Each addition here is a deliberate,
 # separately optional integration that degrades without its grant (APP09); this list is
 # the guard that makes adding another a visible act.
-# P7.9 adds MANAGE_ONGOING_CALLS (signature|appop; docs/p7-backends-results.md §4.2 amends
-# docs/p7-plan.md §9 item 3). Declaring it grants nothing: it takes effect only after
+# P7.9 adds MANAGE_ONGOING_CALLS (signature|appop; docs/dashboard.md,
+# "Calls and the keypad"). Declaring it grants nothing: it takes effect only after
 # `adb shell appops set com.jw6ventures.headlink MANAGE_ONGOING_CALLS allow`, and even
 # then only while the disabled CallCompanionService pinned below is enabled by the
 # operator's Call controls setting during a session.
-# P10 adds org.breezyweather.READ_PROVIDER (spec §5.2 as amended, docs/p10-plan.md §9):
+# P10 adds org.breezyweather.READ_PROVIDER (spec §5.2 as amended, docs/dashboard.md, "Weather"):
 # Breezy Weather's own dangerous permission, asked for only when Show weather is turned
 # on; it lets Breezy's provider answer, and is not a network permission.
 # P9 adds INTERNET for live traffic alone (APP10 as amended 28 September 2026,
-# docs/p9-plan.md §2): off by default, and no socket opens unless the operator turns it on
+# docs/navigation.md, "Live traffic (HERE)"):
+# off by default, and no socket opens unless the operator turns it on
 # with their own HERE key (host-tested in TrafficClientTest; this script cannot see that).
 # W0 adds BLUETOOTH_CONNECT (spec §5.2 as amended 14 October 2026,
-# docs/wireless-investigation.md): the wireless probe's SDP query and, on a second tap
+# docs/connecting.md, "Diagnostics: the wireless probe"): the wireless probe's SDP query and, on a second tap
 # after an advertised verdict, W1's one RFCOMM bootstrap read; and W2's link below. Asked
 # for when the operator opens the probe from Diagnostics, or first taps Home's Connect
 # wirelessly (the 16 October 2026 amendment).
@@ -146,12 +147,12 @@ fi
 # P7.5: package visibility for MediaBrowserService apps (and, below, TTS engines) only,
 # never a wider query.
 printf '%s\n' "$manifest" | grep -q '"android.media.browse.MediaBrowserService"' || fail "media browser <queries> entry"
-# P8.1: text-to-speech engines, found the same way (docs/p8-plan.md §3).
+# P8.1: text-to-speech engines, found the same way (docs/audio-and-speech.md, "The engine").
 printf '%s\n' "$manifest" | grep -q '"android.intent.action.TTS_SERVICE"' || fail "text-to-speech <queries> entry"
 if printf '%s\n' "$manifest" | grep -q 'E: package '; then
     fail "<queries> must not name packages"
 fi
-# P10: Breezy Weather's provider authority, and no other provider (docs/p10-plan.md §9).
+# P10: Breezy Weather's provider authority, and no other provider (docs/dashboard.md, "Weather").
 printf '%s\n' "$manifest" | grep -q 'A: http://schemas.android.com/apk/res/android:authorities([^)]*)="org.breezyweather.provider.weather"' \
     || fail "Breezy Weather provider <queries> entry"
 [ "$(printf '%s\n' "$manifest" | grep -c ':authorities(')" = 1 ] || fail "only Breezy's authority may be queried or declared"

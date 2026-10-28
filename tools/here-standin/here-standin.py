@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""A stand-in for HERE's Traffic API v7, for the emulator lab's LAB_TRAFFIC runs (P9 plan §8).
+"""A stand-in for HERE's Traffic API v7, for the emulator lab's LAB_TRAFFIC runs (P9).
 
-It answers exactly the two requests the app's TrafficClient makes (plan §4):
+It answers exactly the two requests the app's TrafficClient makes:
 
     GET /v7/flow?in=bbox:W,S,E,N&locationReferencing=shape&functionalClasses=1,2,3&apiKey=K
     GET /v7/incidents?in=bbox:W,S,E,N&locationReferencing=shape&apiKey=K
@@ -15,7 +15,7 @@ two error shapes: a wrong key is 401 with {error, error_description}; a malforme
 request accepts it, as HERE's flow is, so the app's gzip path runs.
 
 It counts every TCP connection it accepts, not only requests: the check that the app makes
-no connection at all with traffic off (plan §8 check 5) is the connection count staying 0.
+no connection at all with traffic off is the connection count staying 0.
 The counts go to <state>/stats.txt after every event, and one line per request to
 <state>/requests.log, the key replaced by its length.
 

@@ -272,7 +272,7 @@ class MapControl(
 
     /**
      * Frames every point of [latitudes] and [longitudes] (one array pair per line) inside
-     * [view], a part of [pane], and leaves following to show them (P9.6, docs/p9-plan.md §7:
+     * [view], a part of [pane], and leaves following to show them (P9.6, docs/navigation.md:
      * the offer's "zoom to both routes"). Returns whether the camera changed.
      *
      * The points are measured in the rotation on show, so the box they need is the one the

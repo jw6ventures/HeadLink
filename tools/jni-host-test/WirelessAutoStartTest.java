@@ -1,4 +1,5 @@
-// W3's start rule on a desktop JVM (docs/wireless-w3-procedure.md): every reason the linked
+// W3's start rule on a desktop JVM (docs/connecting.md, "The companion-device link and auto-start"):
+// every reason the linked
 // truck connecting over Bluetooth does or does not start wireless projection.
 // WirelessAutoStart is pure Kotlin; Android's companion-device wake-up, the Nearby devices
 // grant and the link itself need a phone and the truck.

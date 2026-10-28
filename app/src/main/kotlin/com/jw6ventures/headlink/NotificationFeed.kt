@@ -4,7 +4,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * A plain description of one posted notification: exactly what the filter and the flex
- * tile need, and nothing else (P7.8, plan §5.8).
+ * tile need, and nothing else (P7.8).
  *
  * [MediaAccessService] builds it from a `StatusBarNotification` and its ranking, and only
  * while [NotificationFeed.active]. It is pure JVM so the filter is host-tested
@@ -67,8 +67,8 @@ enum class NotificationVerdict {
 
 /**
  * One row of the flex tile's notification list: who and which app, large; one line of
- * text, small (plan §5.8). Held in memory only, for the session, and never written or
- * logged anywhere (plan §9 item 6).
+ * text, small. Held in memory only, for the session, and never written or
+ * logged anywhere.
  */
 data class DashNotification(
     val key: String,
@@ -106,7 +106,7 @@ object NotificationRules {
      * The verdict, rules in a fixed order so each rejection is counted once, under the
      * most specific reason. Exclusion is last on purpose: an excluded app that would
      * otherwise have been shown is still an app that "has posted one", which is what the
-     * settings list offers (plan §5.8).
+     * settings list offers.
      */
     fun verdict(facts: NotificationFacts, ownPackage: String, excluded: Set<String>): NotificationVerdict = when {
         facts.packageName == ownPackage -> NotificationVerdict.OWN
@@ -152,7 +152,7 @@ object NotificationRules {
 }
 
 /**
- * The flex tile's notification source (P7.8, plan §5.8): alerting notifications, newest
+ * The flex tile's notification source (P7.8): alerting notifications, newest
  * first, in memory only.
  *
  * **Off by default, and off means read nothing.** [MediaAccessService] forwards a posted
@@ -162,7 +162,7 @@ object NotificationRules {
  *
  * **Pause keeps nothing either.** While paused nothing is read; un-pausing asks the
  * listener for the phone's active notifications again ([reread]), so whatever is still
- * in the shade appears and nothing that arrived during the pause is lost (plan §5.8).
+ * in the shade appears and nothing that arrived during the pause is lost.
  *
  * Wiring these flags to saved settings and the Ⓟ icon is the settings and dashboard
  * slices' job; this object takes plain values.
@@ -244,7 +244,7 @@ object NotificationFeed {
 
     /**
      * Packages that have posted a notification the tile would show, excluded ones
-     * included, for the settings exclusion list (plan §5.8). This session only.
+     * included, for the settings exclusion list. This session only.
      */
     fun posters(): Set<String> = synchronized(lock) { posters.toSet() }
 
@@ -272,7 +272,7 @@ object NotificationFeed {
         return verdict
     }
 
-    /** A notification was removed on the phone: its row goes too (plan §5.8). */
+    /** A notification was removed on the phone: its row goes too. */
     fun removed(key: String) {
         val change = synchronized(lock) {
             rows.removeAll { it.key == key }.also { if (it) removedCount++ }
@@ -319,7 +319,7 @@ object NotificationFeed {
         }
     }
 
-    /** `key=value` lines for the session report: counts only (spec §10, plan §9 item 4). */
+    /** `key=value` lines for the session report: counts only (spec §10). */
     fun report(): String = synchronized(lock) {
         val byVerdict = NotificationVerdict.entries.joinToString(" ") {
             "notifications_${it.name.lowercase()}=${verdicts[it.ordinal]}"

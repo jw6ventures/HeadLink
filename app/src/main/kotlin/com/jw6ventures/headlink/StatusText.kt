@@ -3,7 +3,7 @@ package com.jw6ventures.headlink
 import java.util.Locale
 
 /**
- * What the Home status card does next to its sentence (P7 plan §6.2). At most one per
+ * What the Home status card does next to its sentence (docs/phone-app.md, "Status card and the large button"). At most one per
  * state: a status with two buttons is a status the driver has to read twice.
  */
 enum class StatusAction(val label: String) {
@@ -27,10 +27,10 @@ enum class StatusTone { QUIET, BUSY, GOOD, PROBLEM }
 class Status(val sentence: String, val action: StatusAction, val tone: StatusTone)
 
 /**
- * The phone's status in plain words (P7 plan §6.2): one sentence and at most one action
+ * The phone's status in plain words (docs/phone-app.md, "Status card and the large button"): one sentence and at most one action
  * for the Home card, and the same sentence for the session notification.
  *
- * Pure JVM, so tools/jni-host-test holds every row of the plan's table to its wording,
+ * Pure JVM, so tools/jni-host-test holds every row of the table in docs/phone-app.md to its wording,
  * and so the notification (which [ProjectionService] builds, outside this slice) can call
  * the same builder rather than a second copy of the table.
  *
@@ -98,8 +98,8 @@ object StatusText {
     }
 
     /**
-     * The notification's line while a session runs: the Home sentence, since the plan
-     * wants the two to say the same thing. A session's notification only exists between
+     * The notification's line while a session runs: the Home sentence, since the two
+     * are meant to say the same thing. A session's notification only exists between
      * ARMED and IDLE, so the idle rows never reach it.
      */
     fun notification(stage: Stage, destination: String?): String =
@@ -137,7 +137,7 @@ object StatusText {
     }
 
     /**
-     * The route in words, "Routing to Home · 12 mi · 18 min · arrive 6:40" (§6.5), or
+     * The route in words, "Routing to Home · 12 mi · 18 min · arrive 6:40", or
      * null with no destination and no route.
      *
      * [metres] and [seconds] are the route's, [arrival] the clock time already formatted
@@ -200,9 +200,10 @@ object StatusText {
 }
 
 /**
- * One thing missing before a drive works (§6.1's Setup checklist): the head unit's trust
- * first, since nothing connects without it, then the plan's order. Each has exactly one
- * button that fixes it, which [ConnectionActivity] owns; this only says which are missing.
+ * One thing missing before a drive works (the Setup checklist): the head unit's trust
+ * first, since nothing connects without it, then the order docs/phone-app.md lists them.
+ * Each has exactly one button that fixes it, which [ConnectionActivity] owns; this only
+ * says which are missing.
  *
  * [optional] items are listed under their own heading and do not keep Setup from saying
  * Ready: a drive works without them, and an operator who declines one has decided.
@@ -227,7 +228,7 @@ enum class SetupItem(val title: String, val detail: String, val fix: String, val
         "Grant access",
     ),
     /**
-     * P10 (docs/p10-plan.md §4): Show weather is on, but Breezy Weather has not granted its
+     * P10 (docs/dashboard.md, "Weather"): Show weather is on, but Breezy Weather has not granted its
      * provider permission. Never listed with Show weather off: weather adds nothing then.
      */
     WEATHER_PERMISSION(
@@ -241,7 +242,7 @@ enum class SetupItem(val title: String, val detail: String, val fix: String, val
         "Allow location",
         optional = true,
     ),
-    /** Not in the plan's list: the session's own notification, which holds its Stop. */
+    /** Not in the Setup list: the session's own notification, which holds its Stop. */
     SESSION_NOTIFICATIONS(
         "Notifications are blocked",
         "A session still runs, but its notification may be hidden; use Stop on Home.",

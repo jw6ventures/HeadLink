@@ -5,13 +5,13 @@ import java.time.ZoneId
 import java.util.concurrent.Executor
 
 /**
- * P11.5 (docs/p11-plan.md §6): the map's Gas, Food and Shop markers. Pure JVM, so the host
+ * P11.5 (docs/navigation.md): the map's Gas, Food and Shop markers. Pure JVM, so the host
  * test (DashboardPoiTest) checks the rules, the query cadence and the capping with a fake
  * [ObfSource]; the VTM layer that draws them is [MapEngine.setPois], and the buttons and
  * the card are [Dashboard]'s.
  *
  * Names in [ObfPoi] are places near the driver: drawn on the card and nowhere else. Nothing
- * here logs or reports one (plan §8).
+ * here logs or reports one.
  */
 object PoiRules {
     /** The buttons left to right, and the order markers are listed in. */
@@ -258,7 +258,7 @@ object PoiSearch {
                 found += source.pois(box, kinds, limitPerKind, centreLat, centreLon, null)
             } catch (e: Exception) {
                 // A short read, a file replaced mid-read: that file's markers are missing
-                // this once, and the count says so. Never the file's name (plan §8).
+                // this once, and the count says so. Never the file's name.
                 failures++
             }
         }
@@ -294,7 +294,7 @@ class PoiShown(
 }
 
 /**
- * The marker refresh loop (plan §6). Fed by the scene thread every frame through [frame],
+ * The marker refresh loop. Fed by the scene thread every frame through [frame],
  * which only decides; queries run one at a time on [executor], and their result is
  * published in [shown] unless something newer has been asked for since, in which case it is
  * dropped and counted.
@@ -480,10 +480,10 @@ class PoiFeed(
     }
 
     companion object {
-        /** The pane must be still this long before a refresh (plan §6). */
+        /** The pane must be still this long before a refresh. */
         const val SETTLE_MS = 500L
 
-        /** While following and moving, no more often than this (plan §6). */
+        /** While following and moving, no more often than this. */
         const val FOLLOW_MS = 10_000L
 
         /** The query's box is the pane's grown by this much of its size on each side. */
@@ -505,7 +505,7 @@ class PoiEntry @JvmOverloads constructor(
 )
 
 /**
- * What the POI card shows (plan §6, §6a): up to [MAX_ENTRIES] places, the first chosen,
+ * What the POI card shows: up to [MAX_ENTRIES] places, the first chosen,
  * a row tap choosing another, and two buttons under them, [primary] ("Go", or P11.5a's "Add
  * stop") for the chosen place and Close. [tag] comes back in [PoiAction] so the caller
  * knows which flow the press belongs to; [label] is the tile's label.

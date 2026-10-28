@@ -17,7 +17,7 @@ import java.time.ZoneOffset
 import java.util.zip.GZIPInputStream
 
 /**
- * One HTTP GET, injected so the host tests can prove it is never called (plan §9).
+ * One HTTP GET, injected so the host tests can prove it is never called.
  * [UrlConnectionHttp] is the real one.
  */
 fun interface TrafficHttp {
@@ -46,9 +46,9 @@ class TrafficResponse(
 }
 
 /**
- * The platform's `HttpURLConnection` (plan §4: no new library). Redirects are not
+ * The platform's `HttpURLConnection` (no new library). Redirects are not
  * followed, so a request can never be handed on to a host other than the one asked; no
- * cache, since HERE sends no cache headers (plan §4) and nothing may be kept.
+ * cache, since HERE sends no cache headers and nothing may be kept.
  */
 class UrlConnectionHttp(
     private val connectTimeoutMs: Int = 15_000,
@@ -102,7 +102,7 @@ sealed class TrafficFetch {
 class TrafficCheck(val works: Boolean, val message: String)
 
 /**
- * The HTTP side of live traffic (plan §4, §9): the gate, the count, the two requests and
+ * The HTTP side of live traffic: the gate, the count, the two requests and
  * the parsing. It decides nothing about *when* to fetch; the caller does that, while a
  * route is followed.
  *
@@ -115,7 +115,7 @@ class TrafficCheck(val works: Boolean, val message: String)
  * - at the monthly limit it is never called, until the next calendar month;
  * - every request is counted, and stored, before it is sent;
  * - a snapshot is only the box it was asked for: nothing is kept between calls, so no
- *   response is ever reused for another box or held beyond the next (plan §1, 6.4 j).
+ *   response is ever reused for another box or held beyond the next (HERE terms, 6.4 j).
  *
  * The key goes only in the request's `apiKey` parameter, to HERE's host (or, in a
  * debuggable build only, the lab's stand-in). It is never in a message this returns.
@@ -136,7 +136,7 @@ class TrafficClient(
     fun gate(need: Int = FETCH_REQUESTS): TrafficSkip? = gate(settings(), need)
 
     /**
-     * Flow and incidents for [box]: exactly two GETs (plan §4), flow first, each counted
+     * Flow and incidents for [box]: exactly two GETs, flow first, each counted
      * before it is sent. Nothing is sent unless a whole fetch fits under the limit. When
      * flow fails, incidents are not asked for.
      */
@@ -160,9 +160,9 @@ class TrafficClient(
     }
 
     /**
-     * The card's **Test** (plan §3): one incidents request for [TEST_BOX], read whole.
+     * The card's **Test**: one incidents request for [TEST_BOX], read whole.
      * Counted like any other, and gated the same way, so it too sends nothing while the
-     * switch is off (plan §2's guarantee).
+     * switch is off, which is the switch's guarantee.
      */
     fun test(): TrafficCheck {
         val raw = settings()
@@ -260,7 +260,7 @@ class TrafficClient(
          */
         val TEST_BOX = TrafficBox(south = 32.775, west = -96.805, north = 32.785, east = -96.795)
 
-        /** Flow is six to seven times smaller gzipped (plan §4). */
+        /** Flow is six to seven times smaller gzipped. */
         val HEADERS = mapOf("Accept-Encoding" to "gzip", "Accept" to "application/json")
 
         private const val ERROR_BODY_LIMIT = 16 * 1024
@@ -269,7 +269,7 @@ class TrafficClient(
         private fun encode(key: String): String = URLEncoder.encode(key, "UTF-8")
 
         /**
-         * The lab's stand-in hosts (P9 plan §8), the only ones a base URL override may name: the
+         * The lab's stand-in hosts (P9), the only ones a base URL override may name: the
          * emulator's alias for the lab host, and the loopback an `adb reverse` port arrives on.
          * The debug build's network security config allows cleartext to exactly these.
          */

@@ -40,8 +40,8 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
 
-    <!-- P9: live traffic from HERE (docs/p9-plan.md §2, APP10 as amended 28 September
-         2026). The one opt-in integration that uses the network. It is off by default,
+    <!-- P9: live traffic from HERE (docs/navigation.md, "Live traffic (HERE)", APP10 as amended
+         28 September 2026). The one opt-in integration that uses the network. It is off by default,
          and with it off the app makes no network connection: TrafficClient opens no
          socket unless the operator has turned Traffic on and saved their own HERE key
          (host-tested, TrafficClientTest). With it on, it contacts only HERE's traffic
@@ -53,22 +53,22 @@
          (src/debug/res/xml/network_security_config.xml). -->
     <uses-permission android:name="android.permission.INTERNET" />
 
-    <!-- P7.9: optional full call controls (docs/p7-plan.md §5.8; §9 item 3 as amended in
-         docs/p7-backends-results.md §4.2). signature|appop: declaring it grants nothing,
+    <!-- P7.9: optional full call controls (docs/dashboard.md, "Calls and the keypad").
+         signature|appop: declaring it grants nothing,
          and the permission itself is never granted to this app (it is not platform-signed;
          pm refuses to grant it). What Telecom honours is the app-op: it binds
          CallCompanionService below once the operator has allowed that op from a computer,
          with CallControl.GRANT_COMMAND, which is
          adb shell appops set [two hyphens]user 0 com.jw6ventures.headlink MANAGE_ONGOING_CALLS allow
          (spelled out, because an XML comment cannot hold two hyphens in a row; the user
-         flag names the phone's owner on a multi-user phone; docs/p7-8-9-results.md §3.1), and even then only while a session projects with
+         flag names the phone's owner on a multi-user phone; docs/dashboard.md, "Calls and the keypad"), and even then only while a session projects with
          Call controls on. Without the
          grant, Call controls fall back to the dialer's call notification (answer, decline,
          hang up; no mute, no keypad). CALL_COMPANION_APP is not declared: Telecom has not
          bound on it since Android 11. -->
     <uses-permission android:name="android.permission.MANAGE_ONGOING_CALLS" />
 
-    <!-- P10: weather from Breezy Weather (docs/p10-plan.md, spec.md 5.2 as amended). A
+    <!-- P10: weather from Breezy Weather (docs/dashboard.md, "Weather", spec.md 5.2 as amended). A
          third-party dangerous permission, Breezy's own: asked for only when the operator
          turns Settings, Weather, Show weather on, and the weather item degrades to a dash
          without it (APP09). It lets Breezy's content provider answer; it is not a network
@@ -77,8 +77,8 @@
          could declare this permission name if Breezy were not installed. -->
     <uses-permission android:name="org.breezyweather.READ_PROVIDER" />
 
-    <!-- W0: the wireless probe (docs/wireless-investigation.md, spec.md 5.2 as amended
-         14 October 2026). A runtime grant (Nearby devices), asked for only when the
+    <!-- W0: the wireless probe (docs/connecting.md, "Diagnostics: the wireless probe",
+         spec.md 5.2 as amended 14 October 2026). A runtime grant (Nearby devices), asked for only when the
          operator opens Diagnostics, Wireless probe; nothing else in the app touches
          Bluetooth. With it the probe lists paired devices and asks the one picked which
          services it offers (one SDP query). After an advertised verdict, and only on a
@@ -87,14 +87,15 @@
          name or address, and W1's keeps no Wi-Fi key (spec.md 5.2, the W1 amendment). -->
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
-    <!-- W2: wireless projection (docs/wireless-investigation.md, spec.md 5.2, the W2
-         amendment). A normal, install-time permission for one thing: the local-only
+    <!-- W2: wireless projection (docs/connecting.md, "Joining the head unit's Wi-Fi",
+         spec.md 5.2, the W2 amendment). A normal, install-time permission for one thing: the local-only
          network request for the head unit's own Wi-Fi, which Android confirms with the
          operator once. Nothing else in the app requests a network. -->
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
 
     <!-- W3: start wireless projection when the truck connects over Bluetooth
-         (docs/wireless-w3-procedure.md, spec.md 5.2, the W3 amendment). Both are normal,
+         (docs/connecting.md, "The companion-device link and
+         auto-start", spec.md 5.2, the W3 amendment). Both are normal,
          install-time permissions and do nothing on their own: they apply only once the
          operator has linked the app to the truck through Android's companion-device dialog
          (Settings, Link the truck for wireless), and stop applying when that
@@ -107,8 +108,8 @@
         android:name="android.software.companion_device_setup"
         android:required="false" />
 
-    <!-- Wireless standby (docs/wireless-w3-procedure.md, spec.md 5.2, the standby
-         amendment). A normal, install-time permission. The app holds a partial wake lock
+    <!-- Wireless standby (docs/connecting.md, "Standby: the truck's Android Auto
+         button", spec.md 5.2, the standby amendment). A normal, install-time permission. The app holds a partial wake lock
          only while the linked truck's own start request (its Android Auto button) is being
          set up, at most 90 s and released once the session starts, and for 5 s to answer
          each Bluetooth frame from the truck while waiting for one, so a phone asleep in a
@@ -116,11 +117,11 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <!-- P7.5: the idle media pane lists player apps that can be resumed with no session
-         left, through Android's media resumption (docs/p7-plan.md §5.5). This makes apps
+         left, through Android's media resumption (docs/dashboard.md, "Media pane"). This makes apps
          exporting a MediaBrowserService visible to this one. It is a package-visibility
-         declaration, not a permission, and names no app (§9 item 3).
+         declaration, not a permission, and names no app.
 
-         P8.1: the same for text-to-speech engines (docs/p8-plan.md §3). Without it,
+         P8.1: the same for text-to-speech engines (docs/audio-and-speech.md, "The engine"). Without it,
          TextToSpeech finds no engine on targetSdk 30 and later and fails silently. The
          app uses whichever engine the system default is, and reports its package and
          whether it holds INTERNET; it adds no permission of its own. -->
@@ -160,7 +161,7 @@
                 android:resource="@xml/accessory_filter" />
         </activity>
         <!-- P6.4: destinations shared from another app, OsmAnd above all, which does the
-             offline address search this app does not (P6 plan §5.1). Plain text through
+             offline address search this app does not. Plain text through
              the share sheet, and geo: URIs from anything that opens a location. Adds no
              permission; the route starts from the vehicle's position or, only if the
              operator has already granted it, the phone's. No window, and no task of its
@@ -223,7 +224,7 @@
              ordinary app has to read what another application is playing.
 
              It reads notifications only when the operator turns a feature on that needs
-             them (P7.8, docs/p7-plan.md §9 item 6): with "Notifications on the dashboard"
+             them (P7.8, docs/dashboard.md, "Notifications"): with "Notifications on the dashboard"
              on and not paused, it reads alerting notifications and keeps them in memory
              for the session, never stored or reported; with Call controls on and the
              in-call service below not bound, it reads call notifications for their
@@ -238,7 +239,7 @@
                 <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>
         </service>
-        <!-- P10: Breezy Weather's update notifier (docs/p10-plan.md §3). Breezy lists the
+        <!-- P10: Breezy Weather's update notifier (docs/dashboard.md, "Weather"). Breezy lists the
              apps that declare this under Settings, Modules, and sends the broadcast to the
              ones the operator ticks. Exported and guarded by no permission, because Breezy
              sends it with none; it carries no weather, only a cue to read the provider
@@ -253,7 +254,7 @@
                 <action android:name="org.breezyweather.ACTION_UPDATE_NOTIFIER" />
             </intent-filter>
         </receiver>
-        <!-- P7.9: optional call controls (docs/p7-plan.md §5.8). Disabled here, and
+        <!-- P7.9: optional call controls (docs/dashboard.md, "Calls and the keypad"). Disabled here, and
              enabled by CallControl only while a session projects with the operator's
              Call controls setting on; disabled again at the end of the session and on
              every app start. BIND_INCALL_SERVICE means only Telecom can bind it, and it

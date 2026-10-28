@@ -85,7 +85,7 @@ public final class ObfLibraryTest {
             "empty");
         List<String> texas = Collections.nCopies(11, "Texas");
         String eleven = r.status(new ObfRules.FolderState(true, false, 11, 11, 0, 0, texas, june30), UTC);
-        check("11 maps · Texas · newest 30 Jun 2026".equals(eleven), "the plan's example: " + eleven);
+        check("11 maps · Texas · newest 30 Jun 2026".equals(eleven), "the example: " + eleven);
         String newer = r.status(new ObfRules.FolderState(true, false, 3, 0, 3, 0, none, 0), UTC);
         check("3 maps in a newer OBF format than this app reads".equals(newer), "all newer: " + newer);
         String mixed = r.status(new ObfRules.FolderState(true, false, 3, 1, 1, 1, Arrays.asList("Texas"), june30), UTC);
@@ -101,7 +101,7 @@ public final class ObfLibraryTest {
     private static void poiSettingsDefaultsAndRepair() {
         PoiValues d = new PoiValues();
         check(d.getMarkersPerKind() == 25 && d.getAheadMiles() == 50 && d.getCorridorMiles() == 0.5
-            && d.getAheadCandidates() == 5, "the plan's defaults (§6, §6a)");
+            && d.getAheadCandidates() == 5, "the defaults");
         Map<String, Object> stored = new HashMap<>(d.toStored());
         check(PoiValues.Companion.fromStored(stored).equals(d), "round trip");
         check(stored.keySet().equals(new java.util.HashSet<>(Arrays.asList(

@@ -1,12 +1,12 @@
 package com.jw6ventures.headlink
 
 /*
- * Live traffic (P9, docs/p9-plan.md): the values passed between its parts. Pure Kotlin and
+ * Live traffic (P9, docs/navigation.md, "Live traffic (HERE)"): the values passed between its parts. Pure Kotlin and
  * no Android, so the host tests load it.
  *
  * Nothing here is ever written to storage, the report or the event log: HERE's terms allow
- * no keeping of its data beyond the response it came in (plan §1, 6.4 j), and where the
- * vehicle is stays out of the report (P6 plan §9.6).
+ * no keeping of its data beyond the response it came in (HERE's Platform Terms, 6.4j), and
+ * where the vehicle is stays out of the report (spec §10).
  */
 
 /** A box on the map, degrees, as HERE's `in=bbox:W,S,E,N` takes it. */
@@ -68,7 +68,7 @@ class TrafficIncident(
 )
 
 /**
- * One fetch's answer, for the one box it was asked for (plan §4: never reused for another
+ * One fetch's answer, for the one box it was asked for (never reused for another
  * box, and replaced, not kept, by the next).
  */
 class TrafficSnapshot(
@@ -80,12 +80,12 @@ class TrafficSnapshot(
 )
 
 /**
- * How the route line is drawn over one run of it (plan §6). [NONE] is "HERE has no data",
+ * How the route line is drawn over one run of it. [NONE] is "HERE has no data",
  * which is drawn as the route's normal colour and is **not** the same as [FREE].
  */
 enum class Congestion { NONE, FREE, SLOW, QUEUING, CLOSED;
     companion object {
-        /** Plan §6: slow for jam factor 4 to 8, queuing above 8. */
+        /** Slow for jam factor 4 to 8, queuing above 8. */
         fun of(jamFactor: Double, traversability: Traversability): Congestion = when {
             traversability != Traversability.OPEN -> CLOSED
             jamFactor > 8.0 -> QUEUING
@@ -109,7 +109,7 @@ class TrafficRun(
     val speedMps: Double?,
     /**
      * Seconds HERE's speed takes over the run less BRouter's own time for it, never below 0
-     * (plan §6: positive delays only). 0 for [Congestion.NONE].
+     * (positive delays only). 0 for [Congestion.NONE].
      */
     val delaySeconds: Double,
     /** The HERE stretch's road name, for the offer's reason ("Queue on I-35E"), or null. */
@@ -155,7 +155,7 @@ class RouteTraffic(
 }
 
 /**
- * One BRouter no-go point (plan §7): a circle of [radiusM] metres BRouter must not enter
+ * One BRouter no-go point: a circle of [radiusM] metres BRouter must not enter
  * when [weight] is null (a closure), and otherwise charges distance-inside × [weight].
  * Handed to `RoutingContext.nogopoints` as an `OsmNodeNamed`, whose `nogoWeight` of NaN is
  * the hard block.
@@ -165,7 +165,7 @@ data class Nogo(val latitude: Double, val longitude: Double, val radiusM: Double
 }
 
 /**
- * A faster way round, found because of traffic (plan §7), for the divided turn card and the
+ * A faster way round, found because of traffic, for the divided turn card and the
  * map's view of both routes.
  */
 class TrafficOffer(
@@ -186,7 +186,7 @@ class TrafficOffer(
 }
 
 /**
- * What the projected map shows of traffic at one moment (plan §6): the followed route's
+ * What the projected map shows of traffic at one moment: the followed route's
  * runs, whether the attribution is owed, the delay in the arrival time, and the offer if
  * one is up. Published by the traffic loop on the main thread; read by the dashboard.
  */
@@ -197,12 +197,12 @@ class TrafficDisplay(
     val delaySeconds: Int,
     /** An offer, or null. */
     val offer: TrafficOffer?,
-    /** The followed route was computed with traffic nogos (plan §7), so HERE shaped it. */
+    /** The followed route was computed with traffic nogos, so HERE shaped it. */
     val routeShaped: Boolean = false,
 ) {
     /**
      * "Traffic © HERE" is owed whenever a traffic colour is drawn, or traffic is in the time
-     * or shaped the route (plan §1, 6.4 a; §6). Free-flowing is drawn in the normal colour.
+     * or shaped the route (HERE's Platform Terms, 6.4a). Free-flowing is drawn in the normal colour.
      */
     val attributed: Boolean
         get() = delaySeconds > 0 || offer != null || routeShaped ||

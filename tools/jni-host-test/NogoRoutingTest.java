@@ -1,4 +1,4 @@
-// P9.5's routing half on a desktop JVM (docs/p9-plan.md §7, §9; docs/p9-5-routing-results.md):
+// P9.5's routing half on a desktop JVM (docs/navigation.md, "Live traffic (HERE)"):
 // traffic no-go points through RouteRequest and Router into the vendored BRouter, and the
 // cost conversion in TrafficCost. Router and TrafficCost are pure Kotlin over the BRouter
 // jar, so these are the classes the app runs; nothing here says how fast a phone is.
@@ -7,8 +7,8 @@
 // I-35 through Austin and on roads in Dallas and rural Texas: that the points reach BRouter,
 // that a closure blocks and a jam weighs about what its delay says, the way out for a
 // vehicle already on a closed road, that nothing leaks into the next request, BRouter's
-// habit of letting a jam's point overwrite a closure's, and the plan's overpass and
-// frontage-road cases. With W105_N30.rd5 as well, that the top-speed step-down keeps the
+// habit of letting a jam's point overwrite a closure's, and the overpass and
+// frontage-road cases (docs/navigation.md, "Live traffic (HERE)"). With W105_N30.rd5 as well, that the top-speed step-down keeps the
 // points. Without the tiles those checks are skipped and the summary line says so.
 import btools.router.OsmNodeNamed;
 import btools.router.OsmTrack;
@@ -34,7 +34,7 @@ import com.jw6ventures.headlink.TrafficCost;
 public final class NogoRoutingTest {
     private static int passed;
 
-    /** The placement rule of plan §7, as TrafficNogos applies it. */
+    /** The placement rule (docs/navigation.md, "Live traffic (HERE)"), as TrafficNogos applies it. */
     private static final double SPACING_M = 150;
     private static final double RADIUS_M = 8;
     private static final double MARGIN_M = 30;
@@ -111,7 +111,7 @@ public final class NogoRoutingTest {
         check(TrafficCost.INSTANCE.costPerSecond(3) == TrafficCost.INSTANCE.secondPrice(121)
                 && TrafficCost.INSTANCE.costPerSecond(5, 90) == TrafficCost.INSTANCE.secondPrice(90),
                 "classes 3 to 5 are the plain price, at the speed asked for");
-        // The plan's typical jam: 1 km, 3 minutes, 7 points of 8 m.
+        // A typical jam: 1 km, 3 minutes, 7 points of 8 m.
         near(TrafficCost.INSTANCE.pointWeight(180, 7, 1), 48.8, 0.1, "a 3-minute interstate jam's 7 points weigh 48.8 each");
         near(TrafficCost.INSTANCE.pointWeight(180, 7, 3), 30.5, 0.1, "on an arterial, 30.5");
         near(7 * 2 * RADIUS_M * TrafficCost.INSTANCE.pointWeight(180, 7, 3), 180 * TrafficCost.INSTANCE.secondPrice(121), 1e-6,
@@ -182,7 +182,7 @@ public final class NogoRoutingTest {
     /**
      * The way round a stretch costs some seconds (a closure there shows how many). A jam of
      * well under that must leave the route alone, and one of well over it must move it:
-     * TrafficCost's conversion within the spread docs/p9-5-routing-results.md measured
+     * TrafficCost's conversion within the measured spread (docs/navigation.md, "Live traffic (HERE)")
      * (the delay at which BRouter left came to 0.4 to 2.1 times the way round's time).
      */
     private static void aJamWeighsAboutItsDelay(Router router) throws Exception {
@@ -354,7 +354,7 @@ public final class NogoRoutingTest {
     }
 
     /**
-     * Austin to Lubbock is timed lower than asked (docs/routing-settings.md §4). A closure
+     * Austin to Lubbock is timed lower than asked (docs/navigation.md, "Route preferences"). A closure
      * on the route it takes must still be kept out of after the step-down.
      */
     private static void theSpeedStepDownKeepsThePoints(Router router) throws Exception {
@@ -388,7 +388,7 @@ public final class NogoRoutingTest {
         return room <= 0 ? 0 : (int) Math.ceil(room / SPACING_M - 1e-9) + 1;
     }
 
-    /** Points the way plan §7 places them on a stretch of [route] from [from] to [to] metres: evenly, at most 150 m apart, 30 m clear of each end. */
+    /** Points the way the placement rule puts them on a stretch of [route] from [from] to [to] metres: evenly, at most 150 m apart, 30 m clear of each end. */
     private static List<Nogo> placed(Route route, double from, double to, Double weight) {
         int n = count(from, to);
         List<Nogo> nogos = new ArrayList<>();

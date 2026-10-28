@@ -52,7 +52,7 @@ object DashboardDrawing {
 
     /**
      * Clock, speed and compass from the left; the two header icons, the signal and the
-     * battery from the right (P7.3, plan §5.1). The debug line under them is drawn only
+     * battery from the right (P7.3). The debug line under them is drawn only
      * with Diagnostics on.
      */
     private fun drawHeader(
@@ -92,7 +92,7 @@ object DashboardDrawing {
         cursor += paint.measureText(speed) + layout.margin * 2
 
         // The needle, the point and the bearing are kept whatever else leaves the header
-        // (James, plan §1 item 9): the one way to check the map's arrow at a glance.
+        // (James): the one way to check the map's arrow at a glance.
         val bearing = snapshot.bearing
         if (bearing != null) {
             drawCompass(canvas, paint, cursor + big * 0.4f, baseline - big * 0.3f, big * 0.4f, bearing, palette)
@@ -105,11 +105,11 @@ object DashboardDrawing {
         }
 
         // The upcoming turn used to fill the rest of this line; since P7.4 it is on the
-        // turn card over the map, and the room it leaves stays empty (plan §5.1).
+        // turn card over the map, and the room it leaves stays empty.
 
         if (snapshot.diagnostics) {
-            // The evidence a drive has to record, behind the Diagnostics switch (plan
-            // §5.1, §6.1). "scale inferred" is back here, off the everyday header, for
+            // The evidence a drive has to record, behind the Diagnostics switch.
+            // "scale inferred" is back here, off the everyday header, for
             // any shown value whose divisor no drive has confirmed.
             paint.color = palette.dim
             paint.textSize = small
@@ -164,7 +164,7 @@ object DashboardDrawing {
     }
 
     /**
-     * Ⓟ, the notification pause (plan §5.8): a thin grey ring while notifications are
+     * Ⓟ, the notification pause: a thin grey ring while notifications are
      * allowed, and bold in the accent colour while they are held back, because a pause
      * left on is the mistake to make visible.
      */
@@ -245,7 +245,7 @@ object DashboardDrawing {
     /**
      * Four bars for the primary SIM and its network type beside them, `wifi` instead
      * while the phone is on wifi, and under the bars one row of four dots for each other
-     * SIM (plan §5.2). Unlit bars and dots are drawn faint rather than left out, so four
+     * SIM. Unlit bars and dots are drawn faint rather than left out, so four
      * bars always read as a scale; a row of hollow rings is a SIM with no service, and a
      * missing row is no SIM at all.
      */
@@ -429,7 +429,7 @@ object DashboardDrawing {
             val trip = snapshot.trip
             if (index == DashboardLayout.FAVORITES_TILE && trip != null) {
                 // P7.4: a trip takes the favourites' tile, label and all, for as long as
-                // the route exists (plan §5.4).
+                // the route exists.
                 drawTrip(canvas, paint, layout, trip, palette)
                 return@forEachIndexed
             }
@@ -472,7 +472,7 @@ object DashboardDrawing {
     }
 
     /**
-     * The flex tile's content under its label (P7.8, P7.9, plan §5.8): whichever source has
+     * The flex tile's content under its label (P7.8, P7.9): whichever source has
      * something to say, a call first, then notifications, else a quiet line. Never "not
      * configured": the tile always has a job, even when the answer is "nothing new".
      */
@@ -511,7 +511,7 @@ object DashboardDrawing {
     }
 
     /**
-     * The notifications, newest first, one row each (plan §5.8): the sender or title,
+     * The notifications, newest first, one row each: the sender or title,
      * large, across the row; under it, small, the app's name dimmed and one line of the
      * text. The full text is not drawn: at a glance from the seat, who and which app is
      * what a driver needs, and the rest is what reading aloud is for.
@@ -566,7 +566,7 @@ object DashboardDrawing {
     }
 
     /**
-     * The call card (P7.9, plan §5.8): the caller large under the label, and under that
+     * The call card (P7.9): the caller large under the label, and under that
      * either Answer and Decline side by side, green and red, each half the tile and the
      * whole height left; or, connected, the running time and a row of Mute (lit while
      * muted), Keypad and Hang up. Mute and Keypad are left out where they cannot work, on
@@ -660,12 +660,12 @@ object DashboardDrawing {
     }
 
     /**
-     * The keypad (P7.9, plan §5.8), over the media pane and both tiles: the echo strip of
+     * The keypad (P7.9), over the media pane and both tiles: the echo strip of
      * this call's keys with Close at its right, then 1–9, *, 0 and # in the telephone's
      * order. On a solid plate with a rim, like the turn card, so it reads as a pop-up over
      * the dashboard rather than as a new layout of it.
      *
-     * **The echo is drawn and held nowhere else** (plan §5.8): keypad digits are often
+     * **The echo is drawn and held nowhere else**: keypad digits are often
      * PINs, so they are never logged or reported. The strip shows the latest keys when
      * there are more than fit.
      */
@@ -697,7 +697,7 @@ object DashboardDrawing {
             val room = echo.width - 2f * layout.margin
             val digits = snapshot.keypadEcho
             // The keypad hides the tile that says "Muted", and a forgotten mute is the
-            // mistake to catch (plan §5.8), so the strip says it too while it is on.
+            // mistake to catch, so the strip says it too while it is on.
             var left = echo.x + layout.margin.toFloat()
             if (snapshot.call.muted) {
                 paint.typeface = Typeface.DEFAULT_BOLD
@@ -748,7 +748,7 @@ object DashboardDrawing {
     }
 
     /**
-     * The trip panel (P7.4, plan §5.4): arrival time big at the top left with the time and
+     * The trip panel (P7.4): arrival time big at the top left with the time and
      * distance remaining right-aligned beside it, the two maneuvers after the next one
      * small underneath, and End route across the bottom.
      *
@@ -836,7 +836,7 @@ object DashboardDrawing {
     }
 
     /**
-     * "+7 min traffic" on the trip panel's caption line (P9.4, plan §6), in the warning
+     * "+7 min traffic" on the trip panel's caption line (P9.4), in the warning
      * colour, left of the time remaining, which already includes the delay. "arrive ·" stays
      * in front of it where both fit; where they do not, the label takes the caption's place,
      * since the big clock time under it reads as an arrival either way. Brought down to fit
@@ -873,7 +873,7 @@ object DashboardDrawing {
     }
 
     /**
-     * The voice-guidance toggle (P8.2, P8 plan §6): a speaker drawn from strokes, as the
+     * The voice-guidance toggle (P8.2): a speaker drawn from strokes, as the
      * maneuver icons are. On, it is lit in the accent with two sound waves; off, it is dim
      * and slashed. Whenever speech cannot happen — no engine, or no Bluetooth output — a
      * small warning triangle sits at its top right whichever way it is set, so "why is it
@@ -965,7 +965,7 @@ object DashboardDrawing {
         if (list.width <= 0 || list.height <= 0) return
         val favorites = snapshot.favorites
         if (favorites.isEmpty()) {
-            // Two centred lines, sized to fit rather than cut off (plan §5.7): the layout's
+            // Two centred lines, sized to fit rather than cut off: the layout's
             // size is an estimate, so the real text is measured and the size brought down
             // further if either line would still overrun.
             paint.color = palette.dim
@@ -1118,7 +1118,7 @@ object DashboardDrawing {
         canvas.drawRoundRect(rect(tile), CORNER, CORNER, paint)
 
         if (snapshot.mediaIdle) {
-            // P7.5: nothing is playing, so the pane offers what could be (plan §5.5).
+            // P7.5: nothing is playing, so the pane offers what could be.
             drawPlayers(canvas, paint, layout, snapshot, palette)
             return
         }
@@ -1175,7 +1175,7 @@ object DashboardDrawing {
     }
 
     /**
-     * The idle media pane (P7.5, plan §5.5): the player apps, most recently active first,
+     * The idle media pane (P7.5): the player apps, most recently active first,
      * as many as [DashboardLayout.PLAYER_ROWS], each a row with a Resume button, and
      * without notification access one small line saying the phone could list more.
      *
@@ -1262,7 +1262,7 @@ object DashboardDrawing {
             }
         }
         if (hint) {
-            // Small and once, no longer the headline (plan §5.5): apps with a browser
+            // Small and once, no longer the headline: apps with a browser
             // service are listed without access, live sessions only with it.
             val box = layout.playerHint
             paint.color = palette.dim
@@ -1378,8 +1378,8 @@ object DashboardDrawing {
             snapshot.poiButtons?.let { drawPoiButtons(canvas, paint, layout, it, palette) }
         }
         // P9.3: HERE's credit whenever traffic is drawn, or is in the time, or shaped the
-        // route (plan §1, 6.4 a). Outside the `ok` branch, because the arrival time owes it
-        // even over a pane with no map in it.
+        // route (HERE's terms, 6.4 a; docs/navigation.md, "Live traffic (HERE)"). Outside the
+        // `ok` branch, because the arrival time owes it even over a pane with no map in it.
         if (snapshot.trafficAttributed) drawTrafficAttribution(canvas, paint, layout, palette)
         // Outside the map's `ok` branch: guidance does not need a map, and a driver
         // following a route with no map installed still needs to know the next turn.
@@ -1397,7 +1397,7 @@ object DashboardDrawing {
     }
 
     /**
-     * The turn card (P7.4, plan §5.3): the maneuver's icon, the distance to it large, and
+     * The turn card (P7.4): the maneuver's icon, the distance to it large, and
      * the street it turns onto on its own line; `Rerouting…` or `You have arrived` in that
      * line's place, with no distance.
      *
@@ -1468,7 +1468,7 @@ object DashboardDrawing {
     }
 
     /**
-     * The turn card divided for an offer (P9.6, plan §7 "The offer"): the next turn in its
+     * The turn card divided for an offer (P9.6, docs/navigation.md, "Live traffic (HERE)"): the next turn in its
      * part — stacked, exactly as the whole card draws it; side by side, the icon over the
      * distance with the street dropped — and in the other, "Faster: −7 min" in bold, the
      * reason under it, and Take and Keep. Take is filled in the accent, as the press that
@@ -1534,7 +1534,7 @@ object DashboardDrawing {
     /**
      * The next turn in the side-by-side card's narrow part: the icon across its top and the
      * distance centred under it, or re-routing and arrived in small type. No street: the
-     * part is too narrow for one (plan §7).
+     * part is too narrow for one.
      */
     private fun drawTurnUnderIcon(
         canvas: Canvas,
@@ -1912,7 +1912,7 @@ object DashboardDrawing {
         poiButtonIcons.getOrPut(kind to size) { PoiMarkerArt.draw(kind, size) }
 
     /**
-     * P11.5: the POI card in the flex tile (plan §6): one place large — its name, what it is
+     * P11.5: the POI card in the flex tile: one place large — its name, what it is
      * and how far, and the open-now line when its hours parse — or up to three, one row each
      * with the chosen one lit (P11.5a's stops). Go (or Add stop) in the accent and Close
      * along the bottom. The names are drawn here and nowhere else.

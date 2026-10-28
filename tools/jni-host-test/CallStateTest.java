@@ -2,7 +2,7 @@
 // notification's call types as tile phases, which call the tile shows when there are
 // several, the caller text, the keypad's keys, and when Mute and the keypad are offered.
 // CallRules is pure Kotlin; whether Telecom binds the companion at all is for the Pixel
-// (docs/p7-backends-results.md section 4.2).
+// (docs/dashboard.md, "Calls and the keypad").
 import java.util.List;
 import com.jw6ventures.headlink.CallPhase;
 import com.jw6ventures.headlink.CallRoute;

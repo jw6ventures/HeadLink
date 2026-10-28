@@ -133,7 +133,7 @@ data class AttemptSettings(
      */
     val labSocket: String? = null,
     /**
-     * W2 (docs/wireless-investigation.md): the session runs over the TCP connection
+     * W2 (docs/connecting.md, "The companion-device link and auto-start"): the session runs over the TCP connection
      * [WirelessLink] has already opened to the head unit, instead of the USB accessory.
      */
     val wireless: Boolean = false,

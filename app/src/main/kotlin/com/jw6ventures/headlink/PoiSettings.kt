@@ -4,13 +4,12 @@ import android.content.Context
 import android.content.SharedPreferences
 
 /**
- * Settings → OsmAnd maps: the map's POI markers and search ahead (docs/p11-plan.md §6,
- * §6a, §12 decision 5).
+ * Settings → OsmAnd maps: the map's POI markers and search ahead (docs/navigation.md).
  *
  * Pure Kotlin, stored keys included, like [TrafficSettings]: [PoiSettings] only moves
  * [toStored]'s map in and out of its own preferences file, so the host test checks the
- * defaults, the repair and the round trip. Distances are miles, as the plan states them;
- * the corridor is stored in tenths of a mile, since preferences hold no double.
+ * defaults, the repair and the round trip. Distances are miles; the corridor
+ * is stored in tenths of a mile, since preferences hold no double.
  */
 data class PoiValues(
     /** Markers per category (Gas, Food, Shop), nearest the centre first. */

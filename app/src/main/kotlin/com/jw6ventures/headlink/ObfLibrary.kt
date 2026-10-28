@@ -24,7 +24,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Which files in the maps folder are OsmAnd maps worth opening, what identifies one
- * version of a file, and the card's status line (docs/p11-plan.md §2). Pure Kotlin, so the
+ * version of a file, and the card's status line (docs/navigation.md). Pure Kotlin, so the
  * host test checks the rules; [ObfLibrary] carries them out through Android's document API.
  */
 object ObfRules {
@@ -86,7 +86,7 @@ object ObfRules {
 
     private val DATE = DateTimeFormatter.ofPattern("d MMM yyyy", Locale.UK)
 
-    /** The card's status line, in the plan's §2 wording. */
+    /** The card's status line (docs/navigation.md, "OsmAnd maps: search and places"). */
     fun status(state: FolderState, zone: ZoneId): String {
         if (!state.chosen) return "No folder chosen"
         if (state.unreadable) return "Folder unreadable"
@@ -112,7 +112,7 @@ object ObfRules {
     private fun maps(n: Int): String = if (n == 1) "1 map" else "$n maps"
 
     /**
-     * Which persisted grant is which (plan §2): the drop folder's reads and writes, the
+     * Which persisted grant is which: the drop folder's reads and writes, the
      * maps folder's only reads. Each folder's choice gives up only earlier grants of its
      * own kind, so choosing one never drops the other.
      */
@@ -125,7 +125,7 @@ object ObfRules {
 }
 
 /**
- * The read-only maps folder (docs/p11-plan.md §2, P11.1): OsmAnd's `.obf` files, read in
+ * The read-only maps folder (docs/navigation.md, P11.1): OsmAnd's `.obf` files, read in
  * place through a persisted **read-only** grant, kept apart from [DropFolder]'s read+write
  * one. Opens each file through [ParcelFileDescriptor] as a [FileChannel] for positional
  * reads, and keeps it open while a projection is attached or the connection screen is in
@@ -139,7 +139,7 @@ object ObfRules {
  * Debug builds also read `filesDir/lab-obf/` the same way: the emulator lab pushes files
  * there because a folder grant cannot be scripted.
  *
- * File names stay on the phone: [report] carries counts only (plan §8).
+ * File names stay on the phone: [report] carries counts only.
  */
 object ObfLibrary {
     private const val LAB_DIR = "lab-obf"
@@ -213,7 +213,7 @@ object ObfLibrary {
     }
 
     /**
-     * The card's status line (plan §2). The last listing's; before the first one it
+     * The card's status line. The last listing's; before the first one it
      * starts a listing off the main thread and says so, and [listener] fires when done.
      */
     fun status(context: Context): String {
@@ -300,7 +300,7 @@ object ObfLibrary {
         }
     }
 
-    /** `[routing]` lines: counts only, never a file name or a region (plan §8). */
+    /** `[routing]` lines: counts only, never a file name or a region. */
     fun report(): String = synchronized(lock) {
         "obf_files_open=${opened.size} obf_newer_format=${state?.newer ?: 0} obf_unreadable=${state?.failed ?: 0} " +
             "obf_open_failures=$openFailures obf_listings=$listings obf_opens=$opens obf_newer_seen=$newerFiles " +

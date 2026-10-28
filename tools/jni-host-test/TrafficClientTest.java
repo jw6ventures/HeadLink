@@ -1,12 +1,12 @@
-// P9.1's live traffic client and P9.2's response parsing on a desktop JVM (docs/p9-plan.md
-// section 9, client items): no request at all while the integration is off or keyless, exactly the
-// two GETs the plan names when it is on, every request counted before it is sent, the
+// P9.1's live traffic client and P9.2's response parsing on a desktop JVM (docs/navigation.md,
+// "Live traffic (HERE)"): no request at all while the integration is off or keyless, exactly the
+// two GETs, flow then incidents, when it is on, every request counted before it is sent, the
 // monthly cap and its reset on the 1st, both of HERE's error shapes, gzip or not, the
 // base-URL override honoured only in a debuggable build, and that a snapshot is only ever
 // the box it was fetched for. The flow and incident bodies are hand-written in the shape the
-// P9.0 captures showed, never copied from them (plan section 1, 6.4 h). TrafficSettings,
+// P9.0 captures showed, never copied from them (HERE's terms, 6.4 h). TrafficSettings,
 // TrafficStatus, TrafficClient and TrafficJson are pure Kotlin; the preferences file, the
-// card and HttpURLConnection against HERE need a phone (docs/p9-1-results.md).
+// card and HttpURLConnection against HERE need a phone (docs/verification.md).
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -179,7 +179,7 @@ public final class TrafficClientTest {
 
     // ---- settings ---------------------------------------------------------------------
 
-    /** Plan section 3's defaults, the stored round trip, and the repair that keeps it off without a key. */
+    /** The defaults, the stored round trip, and the repair that keeps it off without a key. */
     private static void settingsStartOffAndRepair() {
         TrafficSettings d = new TrafficSettings();
         check(!d.getEnabled() && d.getApiKey().isEmpty() && !d.getUsable(), "off and keyless by default");
@@ -221,7 +221,7 @@ public final class TrafficClientTest {
 
     // ---- the gate ---------------------------------------------------------------------
 
-    /** Plan section 2 and section 9: off, or on with no key, and the HTTP layer is never called. */
+    /** Off, or on with no key, and the HTTP layer is never called. */
     private static void offOrKeylessSendsNothing() {
         long[] clock = {SEPTEMBER};
         for (TrafficSettings s : new TrafficSettings[] {
@@ -243,7 +243,7 @@ public final class TrafficClientTest {
         }
     }
 
-    /** Plan section 4: flow then incidents, for the box, with the key and gzip asked for. */
+    /** Flow then incidents, for the box, with the key and gzip asked for. */
     private static void aFetchIsExactlyTheTwoRequests() {
         long[] clock = {SEPTEMBER};
         FakeHttp http = new FakeHttp();
@@ -262,7 +262,7 @@ public final class TrafficClientTest {
         check(st.getLastFetchMs() == SEPTEMBER && st.getLastError() == null, "the last fetch recorded");
     }
 
-    /** Plan section 9: each request is in the count when it is sent, not after. */
+    /** Each request is in the count when it is sent, not after. */
     private static void everyRequestIsCountedBeforeItIsSent() {
         long[] clock = {SEPTEMBER};
         FakeHttp http = new FakeHttp();
@@ -333,7 +333,7 @@ public final class TrafficClientTest {
         check("Lane narrows".equals(works.getSummary()), "description when there is no summary");
     }
 
-    /** Plan section 4: `{title, status, code, cause, action, correlationId}` and a 401's `{error, error_description}`. */
+    /** Error bodies: `{title, status, code, cause, action, correlationId}` and a 401's `{error, error_description}`. */
     private static void bothErrorShapesAreRead() {
         check("Malformed request: maximum width and height of a bounding box can be 1 degree (E608006)"
             .equals(TrafficJson.INSTANCE.error(BAD_REQUEST)), "the bad-request shape: " + TrafficJson.INSTANCE.error(BAD_REQUEST));
@@ -404,7 +404,7 @@ public final class TrafficClientTest {
 
     // ---- the cap ----------------------------------------------------------------------
 
-    /** Plan section 3: fetching stops at the limit until the next calendar month, and the card says so. */
+    /** Fetching stops at the limit until the next calendar month, and the card says so. */
     private static void theMonthlyCapStopsAndResetsOnTheFirst() {
         long[] clock = {SEPTEMBER};
         FakeHttp http = new FakeHttp();
@@ -442,7 +442,7 @@ public final class TrafficClientTest {
 
     // ---- no reuse ---------------------------------------------------------------------
 
-    /** Plan section 4, section 9: a response is only ever for the box it was fetched for, and never kept. */
+    /** A response is only ever for the box it was fetched for, and never kept. */
     private static void aSnapshotIsOnlyItsOwnBox() {
         long[] clock = {SEPTEMBER};
         FakeHttp http = new FakeHttp();
@@ -474,7 +474,7 @@ public final class TrafficClientTest {
         check(ledger.status().getRequests() == 1 && ledger.status().getLastFetchMs() == 0L, "counted, and not a fetch");
     }
 
-    /** Plan section 4, section 8: the lab's stand-in server only in a debuggable build. */
+    /** The lab's stand-in server only in a debuggable build. */
     private static void theBaseUrlOverrideIsDebugOnly() {
         long[] clock = {SEPTEMBER};
         TrafficSettings lab = new TrafficSettings(true, KEY, 10, 30, 4500, true, "http://10.0.2.2:8765");
@@ -489,7 +489,7 @@ public final class TrafficClientTest {
         }
     }
 
-    /** The code review's fixes to the client, the parser and the count (docs/p9-lab-results.md). */
+    /** The code review's fixes to the client, the parser and the count (docs/verification.md). */
     private static void reviewFixes() {
         long[] clock = {SEPTEMBER};
         // Fix 2: a debuggable build honours an override naming the lab's hosts only.

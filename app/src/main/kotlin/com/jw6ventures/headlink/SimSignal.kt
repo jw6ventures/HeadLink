@@ -1,7 +1,7 @@
 package com.jw6ventures.headlink
 
 /**
- * One active subscription's signal, as [PhoneStatus] last heard it (P7.3, plan §5.2).
+ * One active subscription's signal, as [PhoneStatus] last heard it (P7.3).
  *
  * Carries an opaque id and a slot, never a carrier name or a number: this is what the
  * header draws and what the report may count (spec §10), and nothing else about a SIM
@@ -35,7 +35,7 @@ data class SignalRows(
  */
 object SimSignal {
     /**
-     * Rows of dots under the bars. The plan's number (§1 item 9): a phone with more than
+     * Rows of dots under the bars. A phone with more than
      * four subscriptions is not a case worth a taller header.
      */
     const val MAX_SECONDARY = 3
@@ -51,7 +51,7 @@ object SimSignal {
      * An out-of-service primary draws **empty bars** (0), as the phone's status bar does,
      * where `—` (-1) is kept for "no SIM or nothing read yet". A secondary has no such
      * distinction to make: out of service or unread is a **hollow** row (-1), and a
-     * missing row always means "no such SIM" (plan §5.2).
+     * missing row always means "no such SIM".
      */
     fun arrange(subscriptions: List<SubscriptionSignal>, defaultData: Int): SignalRows {
         if (subscriptions.isEmpty()) return SignalRows(-1, emptyList(), 0)

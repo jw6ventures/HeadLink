@@ -285,7 +285,7 @@ object Routing {
 
     /**
      * The `[routing]` report section. **No coordinates, no geometry and no destination**,
-     * on the footing the P6 plan §9.6 proposes for navigation evidence: what was computed,
+     * on the footing navigation evidence takes (docs/navigation.md): what was computed,
      * how long it took and where, and how big the answer was. Tile names say which 5°
      * square data was installed for, as the map line already names the map file.
      */
@@ -308,7 +308,7 @@ object Routing {
         )
         appendLine(options?.report() ?: "routing_options=-")
         append(Navigation.report())
-        // P11: OsmAnd's maps and typed search, counts only (docs/p11-plan.md §8).
+        // P11: OsmAnd's maps and typed search, counts only (docs/navigation.md).
         append(ObfLibrary.report())
         append(Guide.report())
         append(LiveAlternatives.report())

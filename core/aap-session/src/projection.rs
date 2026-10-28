@@ -251,7 +251,7 @@ pub struct ProjectionConfig {
     /// Send the scripted sequence even if the head unit never announces its cluster or
     /// never grants navigation focus (P6.2).
     ///
-    /// Off by default, which is the P6 plan §3 sequence: wait for `InstrumentClusterStart`
+    /// Off by default, which is the P6 sequence: wait for `InstrumentClusterStart`
     /// rather than assuming the cluster is there, and send maneuvers only to a cluster
     /// that has given this source focus. Setting it turns one drive into two experiments
     /// — a head unit that opens the channel, accepts the messages and displays nothing is
@@ -440,7 +440,7 @@ pub struct AudioStart {
     pub channel_count: u32,
     /// Bytes in the buffer size this source expects, so the app paces itself rather than
     /// discovering the limit by having buffers refused. 2048 samples at 48 kHz stereo is
-    /// 8192 bytes ≈ 42.7 ms, which two independent sources agree on (P5 §3).
+    /// 8192 bytes ≈ 42.7 ms, which two independent sources agree on (P5.3).
     pub buffer_bytes: usize,
 }
 
@@ -1166,7 +1166,7 @@ pub struct ProjectionReport {
     pub navigation_focus_timeout: bool,
     /// `NAV_FOCUS_NATIVE` was sent back at the end. There is no `RELEASE` on this
     /// exchange, so handing the cluster back is a request for the head unit's own
-    /// navigation (P6 plan §3, `ids::NAVIGATION_FOCUS_REQUEST`).
+    /// navigation (P6, `ids::NAVIGATION_FOCUS_REQUEST`).
     pub navigation_focus_released: bool,
     /// Mid-session hand-backs: a live route ended and `NAV_FOCUS_NATIVE` went out then,
     /// rather than at the end of the session (P7.4). Each later route's request is in
@@ -1668,7 +1668,7 @@ impl fmt::Display for ProjectionReport {
             self.navigation_completed,
             self.navigation_unhandled
         )?;
-        // No road name, no instruction text and no destination: the P6 plan §9 puts a
+        // No road name, no instruction text and no destination: the P6 design puts a
         // destination on the same footing as `sensor_location`, and these being scripted
         // is not a reason to establish the habit.
         writeln!(
@@ -3546,9 +3546,9 @@ impl Session {
 
     /// `NavigationNotification` (0x8006): the modern semantic maneuver.
     ///
-    /// No lanes and no images. `NavigationLane` is in the schema and P6 plan §0 puts lane
+    /// No lanes and no images. `NavigationLane` is in the schema and P6 puts lane
     /// guidance out of scope — nothing here could fill it from a real route — and the only
-    /// path that ever carried turn images is the deprecated 0x8004 (P6 plan §2).
+    /// path that ever carried turn images is the deprecated 0x8004.
     fn send_navigation_notification(&mut self, channel: u8, guidance: &Guidance, now: Instant) {
         let step = NavigationStep {
             maneuver: Some(NavigationManeuver {
@@ -4024,7 +4024,7 @@ impl Session {
     /// `album_art` is unbounded `bytes` in the schema and the transport's fragment
     /// payload is 16 KiB, so carrying it would be the only message this source sends that
     /// could fragment unpredictably behind video. Ford's size limit for it is unknown
-    /// (P5 §8), so this slice sends none and records the omission.
+    /// (docs/dashboard.md, "Media pane"), so this slice sends none and records the omission.
     fn send_media_metadata(&mut self, channel: u8, playing: &NowPlaying, now: Instant) {
         let metadata = MediaPlaybackMetadata {
             title: Some(playing.title.clone()),
@@ -4623,7 +4623,7 @@ impl Session {
     /// Each stream is pumped one whole message at a time, and `send_on` appends every
     /// fragment of a message to the output queue before returning, so a fragmenting video
     /// keyframe can never have an audio buffer wedged into the middle of it — the
-    /// `MESSENGER_INTERTWINED_CHANNELS` hazard a second AV channel introduces (P5 §3).
+    /// `MESSENGER_INTERTWINED_CHANNELS` hazard a second AV channel introduces (P5.3).
     pub(crate) fn pump_media(&mut self, now: Instant) {
         if self.report.outcome.is_some() || self.report.stage != Stage::Projecting {
             return;
