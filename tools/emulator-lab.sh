@@ -197,7 +197,7 @@
 # The lab player is also what the endroute script's Resume press plays: the emulator image
 # has no launchable player, and since part 2b only launchable apps are listed.
 #
-# The traffic script (P9 plan §8, needs LAB_ROUTING and LAB_MAP; LAB_TRAFFIC set with no
+# The traffic script (P9, needs LAB_ROUTING and LAB_MAP; LAB_TRAFFIC set with no
 # script names it too) runs live traffic against a stand-in HERE server,
 # tools/here-standin/here-standin.py, started in the pod beside the emulator on 127.0.0.1:8765,
 # which the emulator reaches as http://10.0.2.2:8765 (the debug build allows cleartext to that
@@ -210,7 +210,7 @@
 # every request, and a scenario change is fetched at once by turning traffic off and on.
 # Its counts are in here/stats.txt and its requests, key hidden, in here/requests.log.
 # LAB_TRAFFIC picks the run:
-#   * offer (the default; plan §8 checks 1-3): scenario a, a slow stretch just ahead (amber),
+#   * offer (the default): scenario a, a slow stretch just ahead (amber),
 #     a queue on the motorway 10 km on (red) and a closure on a side road. The receiver checks
 #     the route line turns amber in the picture, waits for the divided turn card (Take filled
 #     in the accent), checks the map reframed, shows the card in the other palette and back,
@@ -239,7 +239,7 @@
 # Ford's 726x480 content rectangle), for the renders of the divided card (P9.6). Every run
 # checks that no key, road, reason, stand-in description or coordinate reached the report.
 #
-# The weather script (P10 plan §8; LAB_WEATHER set with no script names it too) runs weather
+# The weather script (P10; LAB_WEATHER set with no script names it too) runs weather
 # against the stand-in Breezy Weather, tools/breezy-standin (tools/breezy-standin.sh builds it
 # into $OPENAUTO_CACHE/breezy-standin/breezy-standin.apk). It has Breezy's package name, so it
 # is installed on this emulator only, before the app so that its READ_PROVIDER permission
@@ -275,7 +275,7 @@
 #     (2 s at most).
 # Every run checks that no place, condition, headline or fixture text reached the report.
 #
-# LAB_REGION=austin (P11, docs/p11-plan.md section 12 decision 6) moves the lab to Texas: LAB_MAP
+# LAB_REGION=austin (P11, docs/verification.md, "Emulator lab") moves the lab to Texas: LAB_MAP
 # defaults to $OPENAUTO_CACHE/maps/texas.map, the routing tile is W100_N30.rd5 (LAB_ROUTING still
 # names its directory, normally $OPENAUTO_CACHE/rd5), the receiver's fixed fix and the track's
 # start are downtown Austin by I-35 (30.2660,-97.7360; --position: the spot near downtown with
@@ -1280,7 +1280,7 @@ https://osmand.net/map?pin=30.50860,-97.67880#16/30.50860/-97.67880"
         [ -n "$routed" ] || fail "no route came back round the closure"
         sleep 5
         snapshot b true
-        # Plan §8 check 5 mid-drive: off drops what is held within 8 s, and nothing more is sent.
+        # Traffic switched off mid-drive: what is held drops within 8 s, and nothing more is sent.
         sent=$(standin requests)
         traffic_switch false
         sleep 8
@@ -1693,9 +1693,9 @@ https://osmand.net/map?pin=30.50860,-97.67880#16/30.50860/-97.67880"
         grep -q "navigation_open=true" /out/app-report.txt \
             || fail "the navigation channel was never opened"
         if [ "$NAVIGATION_CLUSTER" = none ] && [ "$NAVIGATION_FORCE" != 1 ]; then
-            # The P6 plan section 3 rule, end to end through the app: wait for the
-            # cluster rather than assuming it, and send nothing at all to one that never
-            # announced itself.
+            # The rule in docs/navigation.md ("Instrument cluster turn-by-turn"), end to end
+            # through the app: wait for the cluster rather than assuming it, and send nothing
+            # at all to one that never announced itself.
             grep -q "navigation_cluster_starts=0" /out/app-report.txt \
                 || fail "a cluster was announced by a receiver told not to"
             grep -q "navigation_cluster_timeout=true" /out/app-report.txt \
@@ -1980,7 +1980,7 @@ https://osmand.net/map?pin=30.50860,-97.67880#16/30.50860/-97.67880"
             || fail "no route came back from the routing thread: $(grep "^routing_" /out/app-report.txt | tr "\n" " ")"
         grep -Eq "map_engine=.* route_points=[1-9][0-9]* route_changes=[2-9]" /out/app-report.txt \
             || fail "the map engine never drew both routes: $(grep "map_engine=" /out/app-report.txt)"
-        # Spec section 10 and the P6 plan section 9.6: no label and no coordinate of any
+        # Spec section 10: no label and no coordinate of any
         # destination in the saved report, whose event log is part of it.
         for marker in Labmarker Viewmarker Sendmarker 42.3551 71.0656 42.4495 71.231; do
             ! grep -q "$marker" /out/app-report.txt || fail "the report carries $marker"
@@ -2212,7 +2212,7 @@ grep -E "receiver_(video_decoded_frames|checks|check_failed|tap_result|track|gui
 if [ "$DESTINATION" = 1 ] && [ "$status" = 0 ]; then
     python3 tools/route-line-pixels.py "$out/frames" || status=1
 fi
-# P8.1: the row stays lit while it is read (plan section 8), in the picture the head unit
+# P8.1: the row stays lit while it is read, in the picture the head unit
 # decoded: 2.5 s after the first tap, past its 800 ms flash, it is still lit when an engine
 # is reading it and dark when there is none; 2.5 s after the second tap, stopped, it is dark.
 if [ "$SCRIPT" = speech ] && [ "$status" = 0 ]; then
@@ -2225,7 +2225,7 @@ ok = (read >= 0.05 and stop < 0.01) if ready else read < 0.01
 print(\"emulator-lab: row lit %.3f while read, %.3f after the stop (engine ready: %s): %s\" % (read, stop, ready, \"ok\" if ok else \"FAIL\"))
 sys.exit(0 if ok else 1)" "$ready" "${read_lit:-0}" "${stop_lit:-0}" || status=1
 fi
-# P9.4 (plan §8 check 2): the time the cluster was told against the trip panel's, read from
+# P9.4: the time the cluster was told against the trip panel's, read from
 # the report the app saved at the same moment (app-report-a.txt, stamped app-report-a.time),
 # and the rise the receiver saw when traffic arrived against the delay the app added.
 if [ "$SCRIPT" = traffic ] && { [ "$TRAFFIC_MODE" = offer ] || [ "$TRAFFIC_MODE" = render ]; } && [ "$status" = 0 ]; then

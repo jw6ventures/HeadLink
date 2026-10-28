@@ -6,7 +6,7 @@
 //
 // VTM's own parser needs a canvas backend this JVM does not have, so whether VTM accepts
 // both files is proven where it runs: the lab report's `theme=oaa-light` / `theme=oaa-dark`
-// rather than `vtm-fallback` (docs/p7-6-map-results.md).
+// rather than `vtm-fallback` (docs/dashboard.md, "Map pane").
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;

@@ -231,7 +231,7 @@ Receiver-side observations (lab only, not factory evidence):
 - Later (before the first hardware test) the driver advertises H.264 800x480@30 video on
   channel 3 and an 800x480 touch screen on channel 1, and the demo pins the receiver's
   generated certificate. Full TLS, authentication, discovery, keepalive, and shutdown
-  results are in [P2/P3 lab results](p2-p3-lab-results.md).
+  results are summarised in [verification](verification.md).
 
 ## Local categories added in P1.1
 
@@ -601,7 +601,7 @@ Evidence at the pinned commits, for the messages P4 adds:
   available, and `lab-receiver --touch-space` reproduces any of the three. `input_raw_range`
   records how far the raw coordinates reach; note that it *cannot* settle the origin, since
   Ford normalises to the frame dimensions under either hypothesis and both predict the same
-  0..800 span (docs/g4-g5-procedure.md §4).
+  0..800 span.
 - **Margins and insets.** [VideoConfigData.proto](https://github.com/mrmees/open-android-auto/blob/61eab61c5f9968154ff1a80faa8c0a427b208479/oaa/video/VideoConfigData.proto)
   fields 3 and 4 are the margins and field 11 carries `AdditionalVideoConfig`, whose
   `display_insets` gave Ford's asymmetric layout (1080p: left 0, right 586). The content
@@ -1038,9 +1038,8 @@ tile, which is how the driver hands the screen back, was a no-op no matter how m
 it was tapped; only unplugging and replugging the accessory restored projection. Google's
 Gearhead 17.4 on the same vehicle, same day, same gesture, recovers in about two seconds.
 The investigation that narrowed this down by elimination — channel coverage, audio-source
-arbitration, Bluetooth pairing linkage, and stream continuity — is
-[docs/ford-focus-reattach-investigation.md](ford-focus-reattach-investigation.md); this
-section records the confirmed cause and fix.
+arbitration, Bluetooth pairing linkage, and stream continuity — is in
+the git history; this section records the confirmed cause and fix.
 
 **The root cause.** On video focus loss (NATIVE, NATIVE_TRANSIENT, or NONE) this source
 *paused* the stream — stopped feeding the encoder — but sent nothing on the wire to say so.

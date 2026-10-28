@@ -80,7 +80,7 @@ public final class DestinationTest {
             "spaces around the q= pair");
     }
 
-    /** P6 plan section 5.1: geocoding we do not have, so say so rather than guess. */
+    /** Geocoding we do not have, so say so rather than guess. */
     private static void anAddressWithNoCoordinatesIsRefused() {
         check(refused(PARSER.parseUri("geo:0,0?q=1100+Congress+Ave,+Austin,+TX")) == Refusal.ADDRESS_ONLY,
             "Contacts' and Calendar's address-only form");

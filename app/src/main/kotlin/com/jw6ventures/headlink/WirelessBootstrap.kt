@@ -6,7 +6,7 @@ import java.time.Instant
 import java.util.Locale
 
 /**
- * W1 of docs/wireless-investigation.md: connect to the head unit's wireless bootstrap
+ * W1 (docs/connecting.md, "The Bluetooth bootstrap"): connect to the head unit's wireless bootstrap
  * service over RFCOMM, record what it sends, answer only as far as its Wi-Fi details,
  * and stop. The phone joins no network and opens no TCP connection.
  *
@@ -14,7 +14,7 @@ import java.util.Locale
  * WirelessBootstrapTest. WirelessProbeActivity owns the socket and feeds [Session].
  *
  * The message ids and fields come from two head-unit-side projects
- * (WirelessAndroidAutoDongle, aa-proxy-rs; docs/wireless-investigation.md). Their field
+ * (WirelessAndroidAutoDongle, aa-proxy-rs; docs/connecting.md, "The Bluetooth bootstrap"). Their field
  * names are readings, not evidence, so every inbound field is recorded by number as well
  * as interpreted.
  *
@@ -185,7 +185,7 @@ object WirelessBootstrap {
 
     /**
      * Our WifiVersionResponse, shaped as Android Auto 17.6 builds it for a head unit below
-     * 4.0 (docs/wireless-w1-results.md, dexdump of `phn`/`xrb`/`xht`):
+     * 4.0 (docs/connecting.md, "The Bluetooth bootstrap", dexdump of `phn`/`xrb`/`xht`):
      * - 1 and 2: the head unit's own major and minor, echoed;
      * - 3: serial, `unknown`, which is 17.6's own value without the privileged phone-state grant;
      * - 4: status 0, the value 17.6 computes for a major-1 head unit;

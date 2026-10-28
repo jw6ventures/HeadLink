@@ -1,9 +1,9 @@
 package com.jw6ventures.headlink
 
 /**
- * Wireless standby (spec §5.2, the standby amendment; docs/wireless-w3-procedure.md,
- * "Standby"): the rules for holding the Bluetooth bootstrap link open to the linked truck
- * and waiting for it to ask for projection, as Android Auto does.
+ * Wireless standby (spec §5.2, the standby amendment; docs/connecting.md,
+ * "Standby: the truck's Android Auto button"): the rules for holding the Bluetooth
+ * bootstrap link open to the linked truck and waiting for it to ask for projection, as Android Auto does.
  *
  * The phone is always the RFCOMM client: Android Auto 17.6 never listens for the head unit
  * (dexdump of all four dex files, 18 October 2026). So the Android Auto button on the
@@ -20,7 +20,7 @@ object WirelessStandby {
      * WifiStartRequest field 3, as Android Auto 17.6 names it (`pgy.a`, enum map `a.ao`):
      * 0 the operator asked on the head unit, 1 the head unit launching by itself, 2 the
      * head unit restarting after a drop. SYNC 4.0 has sent 1 on every start but one, which
-     * sent 2 after it reset the previous session (docs/wireless-w1-results.md).
+     * sent 2 after it reset the previous session (docs/connecting.md, "The Bluetooth bootstrap").
      */
     const val REASON_USER_REQUEST = 0L
     const val REASON_AUTO_LAUNCH = 1L

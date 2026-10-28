@@ -1,6 +1,6 @@
 package com.jw6ventures.headlink
 
-/** Where a call stands, as the flex tile needs it (P7.9, plan §5.8). */
+/** Where a call stands, as the flex tile needs it (P7.9). */
 enum class CallPhase {
     /** No call: the tile shows notifications or its empty state. */
     NONE,
@@ -29,7 +29,7 @@ enum class CallSource {
     TELECOM,
 
     /**
-     * The dialer's `CallStyle` notification (plan §5.8's fallback): Answer, Decline and
+     * The dialer's `CallStyle` notification (the fallback): Answer, Decline and
      * Hang up through its own intents; no mute, no keypad.
      */
     NOTIFICATION,
@@ -40,7 +40,7 @@ enum class CallSource {
  * hand to the render thread.
  *
  * **Privacy.** [caller] is a name or a number. It is drawn on the tile and nowhere else:
- * never logged, never in a report (spec §10, plan §9 item 4).
+ * never logged, never in a report (spec §10).
  */
 data class CallState(
     val phase: CallPhase = CallPhase.NONE,

@@ -15,7 +15,7 @@ import android.os.SystemClock
 import android.service.media.MediaBrowserService
 
 /**
- * The player apps the idle media pane lists, each with a Resume button (P7.5, plan §5.5).
+ * The player apps the idle media pane lists, each with a Resume button (P7.5).
  *
  * Two sources, merged by [Players.merge]:
  *
@@ -24,7 +24,7 @@ import android.service.media.MediaBrowserService
  *     does; without it this source is simply empty. Resume is `transportControls.play()`.
  *  2. **Apps exporting a `MediaBrowserService`**, found through the manifest's `<queries>`
  *     entry for `android.media.browse.MediaBrowserService` (a package-visibility
- *     declaration, not a permission; plan §9 item 3). These can be resumed with no session
+ *     declaration, not a permission). These can be resumed with no session
  *     left at all, after the app was killed, through Android's media resumption: connect
  *     with `BrowserRoot.EXTRA_RECENT` in the root hints, and an app that supports it
  *     answers with a session primed with its most recent item. Resume then does what

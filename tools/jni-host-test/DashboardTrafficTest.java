@@ -1,4 +1,4 @@
-// P9.3, P9.4 and P9.6 on a desktop JVM (docs/p9-plan.md sections 6 and 7): what live traffic
+// P9.3, P9.4 and P9.6 on a desktop JVM (docs/navigation.md, "Live traffic (HERE)"): what live traffic
 // puts on the projected dashboard. The route line's traffic pieces (which runs are coloured,
 // in what, merged and capped, cut at the vehicle, and never on a route they were not matched
 // to), "Traffic (c) HERE" and where it sits, the trip panel's "+N min traffic", the divided
@@ -261,11 +261,11 @@ public final class DashboardTrafficTest {
         check(TrafficLines.CLOSED_DASH >= 8, "dashes long enough to see as dashes");
     }
 
-    // --- the attribution (P9.3, plan 1 clause 6.4 a) ----------------------------------
+    // --- the attribution (P9.3, HERE's terms, clause 6.4 a) ----------------------------------
 
     private static void theAttributionIsOwedByTheRule() {
         Route route = straight(30);
-        check(TrafficDisplay.ATTRIBUTION.equals("Traffic \u00a9 HERE"), "the plan's words");
+        check(TrafficDisplay.ATTRIBUTION.equals("Traffic \u00a9 HERE"), "the required words");
         check(!TrafficDisplay.Companion.getEMPTY().getAttributed(), "nothing to credit with no traffic");
         check(!new TrafficDisplay(traffic(route, run(0, 500, Congestion.NONE), run(500, 900, Congestion.FREE)), 0, null, false).getAttributed(),
             "free-flowing and no data draw no traffic colour, so nothing is owed");
@@ -414,7 +414,7 @@ public final class DashboardTrafficTest {
     }
 
     /**
-     * Why side by side is the default (plan 11 leaves it to the lab's renders): at the truck's
+     * Why side by side is the default (it was left to the lab's renders): at the truck's
      * 726x480 and the 800x480 minimum it leaves more of the pane for the two routes and gives
      * Take and Keep more area. Stacked keeps the turn exactly as it is, street and all.
      */

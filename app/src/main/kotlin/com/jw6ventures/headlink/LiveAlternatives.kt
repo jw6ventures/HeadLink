@@ -455,7 +455,7 @@ object LiveAlternatives {
     }
 
     /**
-     * **Take** on the traffic offer (P9.6, plan §7): follow its route exactly as a tapped
+     * **Take** on the traffic offer (P9.6): follow its route exactly as a tapped
      * bubble's ([choose]). Every offered route has a via point ([AlternativeSearch]), so the
      * route is asked for from the vehicle through it, with the traffic's points.
      */

@@ -3,7 +3,7 @@ package com.jw6ventures.headlink
 import java.time.ZoneId
 
 /**
- * The header's weather item (P10 plan §5.1), in words and flags, so the chrome repaints only
+ * The header's weather item (P10), in words and flags, so the chrome repaints only
  * when what is drawn changes. [temperature] is "78°F" or [WeatherText.NO_READING].
  */
 data class WeatherHeader(
@@ -14,18 +14,18 @@ data class WeatherHeader(
     val dim: Boolean,
     /** The most severe qualifying alert's colour, for the glyph's warning mark; else null. */
     val alertColour: Int?,
-    /** A finger is on it (never during a call, plan §5.2). */
+    /** A finger is on it (never during a call). */
     val pressed: Boolean,
 )
 
 /** One hour on the weather view's row: "15:00", its glyph, "74°", and "40%" or null. */
 data class WeatherHourCell(val hour: String, val code: WeatherCode?, val night: Boolean, val temperature: String, val rain: String?)
 
-/** The alert strip over the weather view's "Now" block (plan §5.2). */
+/** The alert strip over the weather view's "Now" block. */
 data class WeatherStrip(val colour: Int?, val headline: String)
 
 /**
- * The tapped weather view (plan §5.2). With no reading, only [status] is set: "Permission
+ * The tapped weather view. With no reading, only [status] is set: "Permission
  * not granted", "Breezy Weather not installed"… so the tap always says something.
  */
 data class WeatherPanel(
@@ -44,7 +44,7 @@ data class WeatherPanel(
     val pressed: Boolean = false,
 )
 
-/** The alert view (plan §5.3): the bar's colour, the headline, "until 21:45", "+1 more". */
+/** The alert view: the bar's colour, the headline, "until 21:45", "+1 more". */
 data class WeatherAlertCard(
     val id: String,
     val colour: Int?,

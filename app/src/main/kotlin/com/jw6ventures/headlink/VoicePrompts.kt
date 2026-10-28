@@ -12,7 +12,7 @@ enum class PromptStage(val label: String) {
     ARRIVAL("arrival"),
 }
 
-/** The **Timing** setting (P8 plan §7): a factor on every lead time, never on a minimum. */
+/** The **Timing** setting: a factor on every lead time, never on a minimum. */
 enum class PromptTiming(val label: String, val factor: Double) {
     EARLIER("earlier", 1.3),
     NORMAL("normal", 1.0),
@@ -26,11 +26,12 @@ enum class PromptDetail(val label: String) {
 }
 
 /**
- * Voice guidance's settings (P8 plan §7), with its defaults. Pure, so [VoicePrompts] and its
- * host tests need nothing saved; where they are saved is `AppSettings`' business.
+ * Voice guidance's settings (docs/audio-and-speech.md, "Turn prompts"), with its defaults.
+ * Pure, so [VoicePrompts] and its host tests need nothing saved; where they are saved is
+ * `AppSettings`' business.
  *
- * [detail] defaults to [PromptDetail.FULL]: the plan gives no default for it, and P8.2's
- * drive is meant to hear every §5.2 rule, the close-turn chaining among them.
+ * [detail] defaults to [PromptDetail.FULL]: the earlier design gave no default for it, and
+ * P8.2's drive is meant to hear every spoken-stage rule, the close-turn chaining among them.
  */
 data class VoiceSettings(
     /** The trip panel's toggle and the phone's Voice guidance switch: one saved value. */
@@ -49,7 +50,7 @@ data class VoiceSettings(
 data class VoicePrompt(val text: String, val stage: PromptStage)
 
 /**
- * When turn prompts are spoken, and what they say (P8 plan §5.1–5.3).
+ * When turn prompts are spoken, and what they say (docs/audio-and-speech.md, "Turn prompts").
  *
  * Fed each [NextStep] as [Guide] publishes it, with the current speed, plus the route
  * events that have no step ([onRerouting], [onArrived]); each call returns at most one
@@ -67,7 +68,7 @@ data class VoicePrompt(val text: String, val stage: PromptStage)
  * it), else the last pace this step had (its seconds round to 0 in the last metres), else
  * standing still, which leaves every threshold at its minimum distance.
  *
- * **Reroutes land on the same turn with new ids** (plan §5.2). A reroute is a new route,
+ * **Reroutes land on the same turn with new ids**. A reroute is a new route,
  * so its steps are new ids and would say everything again. To tell "the same turn", each
  * spoken stage is kept for [DEDUPE_MS] with *where its maneuver is along the distance
  * driven*: an odometer, the caller's when it passes one, else this class's own integral of
@@ -147,7 +148,7 @@ class VoicePrompts(
     }
 
     /**
-     * Voice guidance was just turned on (plan §6): the current step's prompt at once, as
+     * Voice guidance was just turned on: the current step's prompt at once, as
      * confirmation, whatever the stage toggles say, then prompts carry on as normal. Inside
      * a stage's threshold it is that stage's prompt, and counts as it; further out it is
      * the distance and instruction, counted as Early without using Early up. Null with no
@@ -231,7 +232,7 @@ class VoicePrompts(
         }
     }
 
-    /** Whether the stage at [level] is spoken for this step at all (§5.2's quiet rules). */
+    /** Whether the stage at [level] is spoken for this step at all (the quiet rules). */
     private fun allowed(state: StepState, step: NextStep, level: Int): Boolean {
         val type = step.maneuver.type
         return when {
@@ -289,7 +290,7 @@ class VoicePrompts(
         private val STAGES = arrayOf(PromptStage.EARLY, PromptStage.EARLY, PromptStage.PREPARE, PromptStage.AT_TURN)
 
         /**
-         * The §5.2 table at normal timing, by level: lead seconds and minimum metres.
+         * The lead-time table at normal timing, by level: lead seconds and minimum metres.
          * A starting point for a drive, not a finding.
          */
         private val LEAD_S = doubleArrayOf(0.0, 50.0, 15.0, 4.0)

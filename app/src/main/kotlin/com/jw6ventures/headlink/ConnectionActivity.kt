@@ -54,7 +54,7 @@ import java.util.Date
  * the attempt to [ProjectionService]. Only small binder calls and file reads run on the
  * UI thread.
  *
- * **P7.7 (plan §6): one activity, five tabs.** Home (the status in words, one large
+ * **P7.7: one activity, five tabs.** Home (the status in words, one large
  * Connect/Stop, the route and the favorites), Setup (what is missing, each with the button
  * that fixes it), Maps & routing, Settings, and Diagnostics, shown only with the
  * Diagnostics switch on. Every control that existed before is still here: the protocol
@@ -99,6 +99,7 @@ class ConnectionActivity : Activity() {
     private lateinit var resultText: TextView
     private lateinit var savedText: TextView
     private lateinit var trustText: TextView
+    private lateinit var identityStatusText: TextView
     private lateinit var reportText: TextView
     private lateinit var projectionText: TextView
     private lateinit var profileSpinner: Spinner
@@ -143,7 +144,7 @@ class ConnectionActivity : Activity() {
     private lateinit var readAloudCheck: CompoundButton
     private lateinit var readAloudRow: View
     private lateinit var speechMediaSpinner: Spinner
-    // P8.3: Maps & routing → Voice guidance (plan §7).
+    // P8.3: Maps & routing → Voice guidance.
     private lateinit var voiceGuidanceCheck: CompoundButton
     private lateinit var voiceEarlyCheck: CheckBox
     private lateinit var voicePrepareCheck: CheckBox
@@ -155,7 +156,7 @@ class ConnectionActivity : Activity() {
     private lateinit var voiceArrivalCheck: CompoundButton
     private lateinit var sampleButton: Button
     private lateinit var sampleText: TextView
-    // Maps & routing → Route preferences (docs/routing-settings.md).
+    // Maps & routing → Route preferences (docs/navigation.md, "Route preferences").
     private lateinit var avoidHighwaysCheck: CompoundButton
     private lateinit var avoidTollsCheck: CompoundButton
     private lateinit var avoidUnpavedCheck: CompoundButton
@@ -165,7 +166,7 @@ class ConnectionActivity : Activity() {
     private lateinit var etaSpinner: Spinner
     private lateinit var learnPaceCheck: CompoundButton
     private lateinit var showAlternativesCheck: CompoundButton
-    // P9.1: Maps & routing → Live traffic (docs/p9-plan.md §3).
+    // P9.1: Maps & routing → Live traffic (docs/phone-app.md, "Live traffic").
     private lateinit var trafficCheck: CompoundButton
     private lateinit var trafficKeyInput: EditText
     private lateinit var trafficKeyText: TextView
@@ -187,7 +188,7 @@ class ConnectionActivity : Activity() {
     /** The last Save key was refused; the line under the field says so until the next. */
     private var trafficKeyInvalid = false
 
-    // P10.1: Settings → Weather (docs/p10-plan.md §4).
+    // P10.1: Settings → Weather (docs/phone-app.md, "Settings").
     private lateinit var weatherCheck: CompoundButton
     private lateinit var weatherStatusText: TextView
     private lateinit var weatherGrantButton: Button
@@ -343,7 +344,7 @@ class ConnectionActivity : Activity() {
         outState.putInt(STATE_TAB, currentTab)
     }
 
-    /** A plug-in shows Home, whose status says what the attach did (plan §2). */
+    /** A plug-in shows Home, whose status says what the attach did. */
     private fun showHomeOnAttach(intent: Intent?) {
         if (intent?.action == UsbManager.ACTION_USB_ACCESSORY_ATTACHED) selectTab(TAB_HOME)
     }
@@ -356,7 +357,7 @@ class ConnectionActivity : Activity() {
         super.onResume()
         DropFolder.sweep(this)
         // The dashboard's ☀/☾ saves day/night from the head unit while this screen is
-        // behind it (P7 plan §5.6), so the row is re-read rather than trusted. Selecting
+        // behind it, so the row is re-read rather than trusted. Selecting
         // the same position again fires nothing, and a changed one stores what it read.
         val saved = AppSettings.load(this)
         dayNightSpinner.setSelection(saved.dayNight.ordinal)
@@ -398,7 +399,7 @@ class ConnectionActivity : Activity() {
             SessionController.note("lab favorites: ${Favorites.list(this).size} saved, ${if (recent != null) "a" else "no"} recent one")
         }
         // P8.1: the emulator has no A2DP output, so the lab lets Speaker's Bluetooth gate
-        // pass on any output (plan §10). Debug builds only; the report says speech_gate=lab.
+        // pass on any output. Debug builds only; the report says speech_gate=lab.
         val speechGate = intent?.hasExtra(EXTRA_LAB_SPEECH_BLUETOOTH) == true
         if (speechGate && applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
             Speaker.labBluetooth = intent.getBooleanExtra(EXTRA_LAB_SPEECH_BLUETOOTH, false)
@@ -406,7 +407,7 @@ class ConnectionActivity : Activity() {
         }
         // P9: live traffic's settings for the lab, pointing it at the stand-in server.
         val trafficLab = intent != null && labTraffic(intent)
-        // P10: Show weather and its choices, a read now, or P10.0's capture (plan §8, §12).
+        // P10: Show weather and its choices, a read now, or P10.0's capture.
         val weatherLab = intent != null && labWeather(intent)
         // P9.6: the divided card's layout for this process's next projection. Read when the
         // dashboard's layout is made, so it goes before the attempt below starts one.
@@ -560,7 +561,7 @@ class ConnectionActivity : Activity() {
     }
 
     /**
-     * Plug-in-and-go (P7 plan §2): an attach with no attempt in progress starts one with
+     * Plug-in-and-go (P7): an attach with no attempt in progress starts one with
      * the saved settings, exactly as Connect would, when [AutoStart.decide] allows it —
      * the setting is on, the accessory matches the filter, a head unit is already pinned,
      * and the identity is ready. Anything else leaves the attach doing what it always
@@ -650,7 +651,7 @@ class ConnectionActivity : Activity() {
      * Not at the moment the service is requested: `startForegroundService` is allowed
      * because this activity is in front, and whether the platform still counts it as in
      * front by the time the service promotes itself is exactly what the locked-phone
-     * experiment (§2 item 2) has to find out. Leaving only after the session has moved
+     * experiment (docs/connecting.md, "Start when plugged in") has to find out. Leaving only after the session has moved
      * past PERMISSION — the service promotes itself before that — keeps this step out of
      * that question. A failed attempt leaves the screen up, so the failure is seen.
      */
@@ -1295,7 +1296,7 @@ class ConnectionActivity : Activity() {
     }
 
     /**
-     * Where typed search ranks from (plan §4): the vehicle while projecting, else the
+     * Where typed search ranks from: the vehicle while projecting, else the
      * phone's newest cached fix. Read on the main thread when a search starts; it goes to
      * the search engine only, never a note or the report.
      */
@@ -1314,8 +1315,8 @@ class ConnectionActivity : Activity() {
     }
 
     /**
-     * A tap on a favorite routes there, exactly as a tap on the dashboard's tile does
-     * (P7 plan §6.4). The log says only that it came from the phone.
+     * A tap on a favorite routes there, exactly as a tap on the dashboard's tile does.
+     * The log says only that it came from the phone.
      */
     private fun routeToFavorite(favorite: Favorite) {
         SessionController.note("phone favorite tapped")
@@ -1412,7 +1413,7 @@ class ConnectionActivity : Activity() {
     }
 
     /**
-     * Saves the destination in one tap (§6.4): a place just shared from OsmAnd is the
+     * Saves the destination in one tap: a place just shared from OsmAnd is the
      * likeliest one to keep. Named by its own label, else its coordinates; Rename is a
      * long press away. A place already saved at the same point is not saved twice.
      */
@@ -1605,6 +1606,13 @@ class ConnectionActivity : Activity() {
             identity["tls_self_test"] ?: "-",
             if (pins.isEmpty()) getString(R.string.no_pins) else pins.joinToString("\n"),
         )
+        val fingerprint = identity["source_identity_fingerprint_sha256"]
+        identityStatusText.text = when {
+            SessionController.identityBusy -> getString(R.string.identity_status_busy)
+            identity["identity_error"] != null -> getString(R.string.identity_status_error, identity["identity_error"])
+            fingerprint != null -> getString(R.string.identity_status_ready, fingerprint.take(16))
+            else -> getString(R.string.identity_status_busy)
+        }
         stopButton.isEnabled = stage != Stage.IDLE && stage != Stage.STOPPING
         useListedButton.visibility =
             if (stage == Stage.ARMED && attempt?.mismatchCandidate != null) View.VISIBLE else View.GONE
@@ -1622,7 +1630,7 @@ class ConnectionActivity : Activity() {
     }
 
     /**
-     * Home (§6.1): the status in words, the one large button, the route in words and the
+     * Home: the status in words, the one large button, the route in words and the
      * favorites. The status card's own button carries only the actions the large button
      * does not: the large one is Connect (or Try again, or Trust and connect with no head
      * unit trusted yet) while idle and Stop otherwise.
@@ -1687,7 +1695,7 @@ class ConnectionActivity : Activity() {
         wirelessText.text = WirelessLink.lastStatus
             ?: getString(if (pins > 0) R.string.home_wireless_hint else R.string.home_wireless_needs_usb)
 
-        // P8.1 (plan §7): which engine speaks, flagged if it can reach the network.
+        // P8.1: which engine speaks, flagged if it can reach the network.
         val engine = speechEngine
         speechText.text = when {
             engine == null -> getString(R.string.speech_no_engine)
@@ -1822,7 +1830,7 @@ class ConnectionActivity : Activity() {
     }
 
     /**
-     * Setup (§6.1): what is missing, each with the one button that fixes it, or Ready.
+     * Setup: what is missing, each with the one button that fixes it, or Ready.
      * Rebuilt only when the list changes; the buttons' enabled state follows every render,
      * because the imports and trust are only allowed while idle, as they are elsewhere.
      */
@@ -1954,7 +1962,7 @@ class ConnectionActivity : Activity() {
     }
 
     /**
-     * "Trust and connect" (§6.2, and Setup's no-pins item): Diagnostics' "Trust the next
+     * "Trust and connect" (and Setup's no-pins item): Diagnostics' "Trust the next
      * head unit" box, ticked for one attempt, then Connect — the same C2 first-use path,
      * behind a confirmation that says what it pins. [connect] clears the box once an
      * attempt begins; if none began (the identity was still loading), it is cleared here
@@ -2012,7 +2020,7 @@ class ConnectionActivity : Activity() {
     }
 
     /**
-     * **Play a sample** (P8.3, plan §7): the words a Prepare prompt would say, through
+     * **Play a sample** (P8.3): the words a Prepare prompt would say, through
      * [Speaker.sample], which takes a prompt's path, binding the engine for the sample alone
      * when no projection has one. The button waits for the outcome, which says why when
      * nothing was heard.
@@ -2063,7 +2071,7 @@ class ConnectionActivity : Activity() {
         }
     }
 
-    /** Android's text-to-speech settings: engine, voice and rate are chosen there (plan §7). */
+    /** Android's text-to-speech settings: engine, voice and rate are chosen there. */
     private fun openSpeechSettings() {
         try {
             startActivity(Intent(SpeechEngines.SETTINGS_ACTION))
@@ -2112,7 +2120,7 @@ class ConnectionActivity : Activity() {
     }
 
     /**
-     * The per-app exclusion list (§5.8): every app seen posting a notification the tile
+     * The per-app exclusion list: every app seen posting a notification the tile
      * would show this session ([NotificationFeed.posters]), plus the ones already
      * excluded, by name. Saved through [AppSettings] like any other choice, and handed to
      * the feed at once so a change applies to a session already running. The event log
@@ -2156,7 +2164,7 @@ class ConnectionActivity : Activity() {
 
     /**
      * P9 lab extras, debug builds only: live traffic's settings seeded from the intent, so
-     * `tools/emulator-lab.sh` can point it at its stand-in HERE server (plan §8). They are
+     * `tools/emulator-lab.sh` can point it at its stand-in HERE server. They are
      * written to the traffic preferences like the lab favourites are, and stay until
      * changed. False when the intent carries none.
      */
@@ -2210,7 +2218,7 @@ class ConnectionActivity : Activity() {
                 !checked -> TrafficPrefs.update(this) { it.copy(enabled = false) }
                 // The switch is disabled without a key; this is the belt to that brace.
                 now.apiKey.isEmpty() -> setTrafficSwitch(false)
-                // Plan §3: the first time, what it sends and HERE's terms, before anything is on.
+                // The first time, what it sends and HERE's terms, before anything is on.
                 !now.disclosed -> {
                     setTrafficSwitch(false)
                     confirmTraffic()
@@ -2258,8 +2266,8 @@ class ConnectionActivity : Activity() {
     }
 
     /**
-     * The first turn-on (plan §3): the plan's paragraph on what is sent, and HERE's End
-     * User Terms and Privacy Policy (plan §1, 6.2). Only **Turn on** turns it on.
+     * The first turn-on: the paragraph on what is sent, and HERE's End
+     * User Terms and Privacy Policy. Only **Turn on** turns it on.
      */
     private fun confirmTraffic() {
         val message = LinearLayout(this).apply {
@@ -2280,7 +2288,7 @@ class ConnectionActivity : Activity() {
             .show()
     }
 
-    /** HERE's terms, linked, at the foot of the card (plan §1, 6.2). */
+    /** HERE's terms, linked, at the foot of the card. */
     private fun termsText(): TextView = ui.caption().apply {
         autoLinkMask = android.text.util.Linkify.WEB_URLS
         movementMethod = android.text.method.LinkMovementMethod.getInstance()
@@ -2308,7 +2316,7 @@ class ConnectionActivity : Activity() {
         renderState()
     }
 
-    /** One incidents request, off the main thread (plan §3's Test). */
+    /** One incidents request, off the main thread, for the card's Test. */
     private fun testTraffic() {
         trafficTesting = true
         trafficTestText.setText(R.string.traffic_testing)
@@ -2333,7 +2341,7 @@ class ConnectionActivity : Activity() {
 
     /**
      * The card from what is saved: the switch (which needs a key), whether a key is saved,
-     * Test (only with traffic on), and the Status (plan §3). Re-read on every render, since
+     * Test (only with traffic on), and the Status. Re-read on every render, since
      * the route's refreshes write the status from another thread.
      */
     private fun renderTraffic() {
@@ -2363,7 +2371,7 @@ class ConnectionActivity : Activity() {
     }
 
     /**
-     * P10 lab extras, debug builds only (plan §8, §12): Show weather and its two choices
+     * P10 lab extras, debug builds only: Show weather and its two choices
      * saved as the card saves them and handed to a projection under way, a read now, and
      * P10.0's capture on the Pixel. `lab_weather` never asks for Breezy's permission, which
      * the lab grants with `pm grant`. Each is noted for the lab to find in the event log,
@@ -2440,7 +2448,7 @@ class ConnectionActivity : Activity() {
     }
 
     /**
-     * The card's status line (plan §4). A projection's own reading is shown while it holds
+     * The card's status line. A projection's own reading is shown while it holds
      * one; otherwise one read of the card's own, only with Show weather on, since off means
      * nothing is read (the lab's `off` run checks the stand-in saw no query at all).
      */
@@ -2499,7 +2507,7 @@ class ConnectionActivity : Activity() {
     /**
      * Puts the Weather card's saved choices on screen, then makes each save its own field,
      * as [loadSaved] does, and hands the result to a projection under way ([Weather.settings]).
-     * Turning Show weather on asks for Breezy's permission when it is not yet held (plan §4).
+     * Turning Show weather on asks for Breezy's permission when it is not yet held.
      */
     private fun loadWeather() {
         val saved = AppSettings.load(this).weather
@@ -2559,6 +2567,7 @@ class ConnectionActivity : Activity() {
         }
         stageText = text().apply { textSize = 18f }
         trustText = text(monospace = true)
+        identityStatusText = ui.body(selectable = true)
         notificationText = text().apply { setText(R.string.notifications_denied) }
         accessoryText = text(monospace = true)
         resultText = text()
@@ -2632,13 +2641,13 @@ class ConnectionActivity : Activity() {
         dayNightSpinner = spinner(DayNightMode.LABELS)
         notificationsOnDashboardCheck = switch(R.string.notifications_on_dashboard)
         callControlsCheck = switch(R.string.call_controls)
-        // P8.1 (plan §7): under the dashboard switch, and only shown with it on.
+        // P8.1: under the dashboard switch, and only shown with it on.
         readAloudCheck = switch(R.string.read_aloud_label)
         readAloudRow = ui.withHelp(readAloudCheck, R.string.read_aloud_label, R.string.read_aloud_help)
         speechMediaSpinner = spinner(SpeechMedia.LABELS)
         speechText = ui.body()
         // P8.3: voice guidance. The switch is the trip panel's toggle; the rest are what
-        // P8.2 saved with the plan's defaults and read at every projection start.
+        // P8.2 saved with their defaults and read at every projection start.
         voiceGuidanceCheck = switch(R.string.voice_guidance_label)
         voiceEarlyCheck = CheckBox(this).apply { setText(R.string.voice_early) }
         voicePrepareCheck = CheckBox(this).apply { setText(R.string.voice_prepare) }
@@ -2693,7 +2702,7 @@ class ConnectionActivity : Activity() {
         }
         trafficLimitText = ui.caption()
         trafficStatusText = ui.body(selectable = true)
-        // P10.1 (plan §4): weather. Off by default (APP09); the status line is the phone's
+        // P10.1: weather. Off by default (APP09); the status line is the phone's
         // own words for what the last read found, place name included, shown here only.
         weatherCheck = switch(R.string.weather_switch)
         weatherStatusText = ui.body(selectable = true).apply { accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
@@ -2802,7 +2811,7 @@ class ConnectionActivity : Activity() {
                 .show()
         }
         val noticesButton = button(R.string.notices) { showNotices() }
-        // W0 (docs/wireless-investigation.md): its own screen, which asks for Nearby devices
+        // W0 (docs/connecting.md, "Wireless"): its own screen, which asks for Nearby devices
         // when it opens and not before.
         val wirelessProbeButton = button(R.string.wireless_probe_open) {
             startActivity(Intent(this, WirelessProbeActivity::class.java))
@@ -2822,7 +2831,7 @@ class ConnectionActivity : Activity() {
         val exportSavedButton = button(R.string.export_saved) { exportReport(REQUEST_EXPORT_SAVED) }
         loadSaved()
 
-        // Home: what someone who is not debugging sees (§6.1).
+        // Home: what someone who is not debugging sees.
         statusSentence = ui.primary(TextView(this)).apply {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
             // Connecting, projecting and failures are announced, not only drawn.
@@ -2870,7 +2879,7 @@ class ConnectionActivity : Activity() {
                     it.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                 },
             ),
-            // P8.1 (plan §7): the engine that speaks, and where it is chosen.
+            // P8.1: the engine that speaks, and where it is chosen.
             ui.card(speechText, quietButton(R.string.speech_settings) { openSpeechSettings() }),
             ui.card(
                 favoritesHeader,
@@ -2909,7 +2918,7 @@ class ConnectionActivity : Activity() {
                 ui.withHelp(learnPaceCheck, R.string.route_learn_pace_label, R.string.route_learn_pace_help),
                 ui.withHelp(showAlternativesCheck, R.string.route_show_alternatives_label, R.string.route_show_alternatives_help),
             ),
-            // P9.1 (plan §3): live traffic, beside the route preferences it adds to.
+            // P9.1: live traffic, beside the route preferences it adds to.
             ui.card(
                 ui.title(R.string.traffic_title),
                 ui.caption().apply { setText(R.string.traffic_caption) },
@@ -2926,7 +2935,7 @@ class ConnectionActivity : Activity() {
                 trafficStatusText,
                 termsText(),
             ),
-            // P8.3 (plan §7): Maps & routing → Voice guidance.
+            // P8.3: Maps & routing → Voice guidance.
             ui.card(
                 ui.title(R.string.voice_title),
                 ui.withHelp(voiceGuidanceCheck, R.string.voice_guidance_label, R.string.voice_guidance_help),
@@ -2974,6 +2983,14 @@ class ConnectionActivity : Activity() {
                 ui.withHelp(wirelessLinkCheck, R.string.wireless_link_label, R.string.wireless_link_help),
                 ui.withHelp(wirelessAutoCheck, R.string.wireless_auto_label, R.string.wireless_auto_help),
             ),
+            // The identity is the user's to supply where a car refuses the generated one, so
+            // its import is a setting; replacing it and the pins stay under Diagnostics.
+            ui.card(
+                ui.title(R.string.settings_identity),
+                ui.caption().apply { setText(R.string.settings_identity_caption) },
+                identityStatusText,
+                importIdentityButton,
+            ),
             ui.card(
                 ui.title(R.string.settings_media),
                 ui.withHelp(mediaInfoCheck, R.string.media_info_label, R.string.media_info_help),
@@ -2996,7 +3013,7 @@ class ConnectionActivity : Activity() {
                 ui.withHelp(callControlsCheck, R.string.call_controls, R.string.call_controls_help),
                 callControlsText,
             ),
-            // P10.1 (plan §4): Settings → Weather, after the notifications an alert outranks
+            // P10.1: Settings → Weather, after the notifications an alert outranks
             // and before the speech choice its spoken alerts share.
             ui.card(
                 ui.title(R.string.weather_title),
@@ -3004,9 +3021,9 @@ class ConnectionActivity : Activity() {
                 ui.withHelp(weatherCheck, R.string.weather_switch, R.string.weather_switch_help),
                 *weatherRows.toTypedArray(),
             ),
-            // P11.1 (docs/p11-plan.md §2): the maps folder, its status, markers and search ahead.
+            // P11.1 (docs/navigation.md): the maps folder, its status, markers and search ahead.
             osmAndMapsCard.view,
-            // P8.1: applies to notification reading and, from P8.2, turn prompts (plan §7).
+            // P8.1: applies to notification reading and, from P8.2, turn prompts.
             ui.card(
                 ui.title(R.string.settings_speech),
                 // Stacked: "Pause media" is cut to "Pause me…" beside its label at 360 dp.
@@ -3015,7 +3032,7 @@ class ConnectionActivity : Activity() {
             ui.card(ui.withHelp(diagnosticsCheck, R.string.diagnostics, R.string.diagnostics_help)),
         )
 
-        // Diagnostics: everything else, moved rather than removed (§6.1).
+        // Diagnostics: everything else, moved rather than removed.
         versionText = ui.body(selectable = true).apply { text = versionLine() }
         routeDetailText = text()
         sensorLocationRow = ui.withHelp(sensorLocationCheck, R.string.sensor_location_label, R.string.sensor_location_help)
@@ -3063,7 +3080,6 @@ class ConnectionActivity : Activity() {
                 ui.title(R.string.diagnostics_identity),
                 trustText,
                 ui.row(forgetPinsButton, replaceIdentityButton),
-                importIdentityButton,
                 noticesButton,
             ),
             reportText,
@@ -3111,7 +3127,7 @@ class ConnectionActivity : Activity() {
 
     /**
      * Puts every saved choice on screen, then makes each control save its own field as it
-     * changes (P7 plan §3).
+     * changes.
      *
      * One field per write, through [AppSettings.update], rather than the whole screen at
      * once: the dashboard saves day/night and the notification pause from the head unit
@@ -3356,7 +3372,7 @@ class ConnectionActivity : Activity() {
         /**
          * P9.6 lab: how the turn card divides for a traffic offer, `stacked` or
          * `side-by-side` ([OfferLayout.key]), set before the projection's layout is made so
-         * the lab can render both for James (plan §11). Debug builds only.
+         * the lab can render both for James. Debug builds only.
          */
         const val EXTRA_LAB_OFFER_LAYOUT = "lab_offer_layout"
         /** P9 lab: refresh the projection's part of the saved report now (boolean, any value). Debug builds only. */
@@ -3389,7 +3405,7 @@ class ConnectionActivity : Activity() {
         /** This screen's hold on OsmAnd's open maps ([ObfLibrary.hold]). */
         private const val MAPS_HOLDER = "screen"
 
-        /** The tabs, in the bar's order (P7.7, plan §6.1). */
+        /** The tabs, in the bar's order (P7.7). */
         private const val TAB_HOME = 0
         private const val TAB_SETUP = 1
         private const val TAB_MAPS = 2

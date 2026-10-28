@@ -1,4 +1,4 @@
-// P10's weather on a desktop JVM (docs/p10-plan.md §10): Breezy's gzipped JSON read into
+// P10's weather on a desktop JVM (docs/dashboard.md, "Weather"): Breezy's gzipped JSON read into
 // WeatherData (every field, every optional field missing, unknown fields, a blob that is not
 // gzip, JSON of the wrong shape), the location chosen, the stale and far labels at their
 // limits, alert filtering and order, the provider-owner check, the read loop (nothing read
@@ -7,7 +7,7 @@
 // item's box at 1080p, Ford's 726x480 and 800x480, the view opened and closed by a tap, a tap
 // on it, the 30 s timeout and a call, the alert dismissed and a new id shown again, the
 // alert speech rules, and what the report may carry. The fixtures are hand-written in the
-// shape of Breezy's source (provider 0.2), not captured from a phone: plan §1 says the field
+// shape of Breezy's source (provider 0.2), not captured from a phone: the field
 // names are unconfirmed until P10.0 reads a real blob. ContentResolver and the drawing need
 // a phone or the lab.
 import java.io.ByteArrayOutputStream;

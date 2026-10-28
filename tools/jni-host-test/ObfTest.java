@@ -1,4 +1,4 @@
-// P11.2-P11.3's OBF reader on a desktop JVM (docs/p11-plan.md §3, docs/p11-2-3-results.md).
+// P11.2-P11.3's OBF reader on a desktop JVM (docs/navigation.md, "OsmAnd maps: search and places").
 //
 // Always: the wire walker on hand-made bytes (varints, zigzag, OsmAnd's wire type 6 with a
 // 4-byte and an 8-byte big-endian length, unknown fields of every wire type skipped, limits,

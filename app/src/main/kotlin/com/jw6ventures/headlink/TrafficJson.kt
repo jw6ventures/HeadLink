@@ -4,16 +4,16 @@ import java.io.IOException
 import java.io.Reader
 
 /*
- * Live traffic (P9, docs/p9-plan.md §4 "What the responses hold"): HERE's flow, incident
+ * Live traffic (P9, docs/navigation.md, "Live traffic (HERE)"): HERE's flow, incident
  * and error bodies read into TrafficModel's types.
  *
- * The plan names org.json. It is not used, for two reasons: a 1° flow response is 9 MB of
+ * An earlier design named org.json. It is not used, for two reasons: a 1° flow response is 9 MB of
  * JSON, which org.json would hold as one string and then as a tree, and neither org.json
  * nor android.util.JsonReader is on the host tests' classpath, so nothing built on them
  * could be host-tested. [JsonStream] is a small pull reader in plain Kotlin instead, read
- * straight off the (decompressed) response stream. No new library (docs/p9-1-results.md).
+ * straight off the (decompressed) response stream. No new library (docs/navigation.md, "Live traffic (HERE)").
  *
- * Every field the plan lists is read by name; anything else, including fields HERE may add
+ * Every field the app uses is read by name; anything else, including fields HERE may add
  * later, is skipped whole. Optional fields that are missing take the defaults written
  * beside them, and a result with no geometry is dropped rather than failing the response.
  */
@@ -287,7 +287,7 @@ class JsonStream(private val input: Reader) {
     }
 }
 
-/** HERE's flow, incident and error bodies (plan §4). */
+/** HERE's flow, incident and error bodies. */
 object TrafficJson {
     /** A flow response's `results[]`. */
     @Throws(IOException::class)
@@ -313,7 +313,7 @@ object TrafficJson {
 
     /**
      * An error body in words for the card's status line, or null when it is neither of
-     * HERE's two shapes (plan §4): `{title, status, code, cause, action, correlationId}`
+     * HERE's two shapes: `{title, status, code, cause, action, correlationId}`
      * for a bad request, and `{error, error_description}` for a bad key (401). The
      * correlation id is left out: it is for HERE's support, and too long for a status line.
      */
@@ -357,7 +357,7 @@ object TrafficJson {
         val spans = if (subs.isNullOrEmpty()) {
             listOf(figures.span(0.0, length, null))
         } else {
-            // Laid end to end by their own lengths, in order (plan §4); a sub-segment that
+            // Laid end to end by their own lengths, in order; a sub-segment that
             // leaves a figure out takes its stretch's, except speed, which HERE leaves out
             // only where it is closed.
             var from = 0.0
@@ -534,7 +534,7 @@ object TrafficJson {
 
     /**
      * HERE's three values. One it may add later reads as open: an unknown word must not
-     * close a road to routing (plan §7's hard nogos are for what HERE says is closed).
+     * close a road to routing (hard nogos are for what HERE says is closed).
      */
     fun traversability(value: String?): Traversability? = when (value) {
         null -> null

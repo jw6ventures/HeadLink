@@ -267,7 +267,7 @@ class RouteFollower(val route: Route, private val generation: Long) {
         private const val BACK_M = 50.0
         private const val AHEAD_M = 1_000.0
         /**
-         * Maneuvers past the next one that the trip panel shows (plan §5.4): two, which is
+         * Maneuvers past the next one that the trip panel shows: two, which is
          * what fits beside each other in a tile at 800x480, and as far ahead as a glance
          * needs — the rest of the route is on the map.
          */

@@ -4,7 +4,7 @@ import java.time.Instant
 import java.util.Locale
 
 /**
- * W0 of docs/wireless-investigation.md: does a paired head unit advertise the wireless
+ * W0 (docs/connecting.md, "Diagnostics: the wireless probe"): does a paired head unit advertise the wireless
  * Android Auto bootstrap service over Bluetooth SDP? Read-only. Nothing here connects or
  * sends anything to the head unit.
  *

@@ -111,10 +111,10 @@ public final class AppSettingsTest {
         check(d.getNotificationExclusions().isEmpty(), "nothing excluded");
         check(!d.getNotificationsPaused(), "not paused");
         check(!d.getCallControls(), "call controls off");
-        // P8.1 (docs/p8-plan.md section 7).
+        // P8.1 (docs/audio-and-speech.md, "Settings").
         check(d.getReadAloud(), "read aloud when tapped: on");
         check(d.getSpeechMedia() == SpeechMedia.PAUSE, "while speaking: pause media");
-        // P8.2 (section 6 and 7): the model's own defaults, every stage heard.
+        // P8.2: the model's own defaults, every stage heard.
         VoiceSettings v = d.getVoice();
         check(v.equals(new VoiceSettings()), "voice guidance: the model's defaults");
         check(v.getEnabled(), "voice guidance: on");
@@ -159,7 +159,7 @@ public final class AppSettingsTest {
     }
 
     /**
-     * P10 (docs/p10-plan.md section 4): Show weather off by default (APP09), alerts spoken
+     * P10 (docs/dashboard.md, "Weather"): Show weather off by default (APP09), alerts spoken
      * and shown from Severe; the three keys round trip, the level by name, and an unknown
      * level or a wrong type reads as the default.
      */
@@ -339,7 +339,7 @@ public final class AppSettingsTest {
             check((c.getFill() >>> 24) == 0xFF, "the fill is opaque: " + c);
             check(c.getFill() != c.getRim(), "the rim differs from the fill: " + c);
             // Blue keeps today's translucent grey rim, which the review found visible
-            // enough (P7 plan section 1 item 12); every new swatch gets one of clear contrast.
+            // enough; every new swatch gets one of clear contrast.
             if (c != MarkerColour.BLUE) {
                 check(Math.abs(luminance(c.getFill()) - luminance(c.getRim())) > 0.25, "the rim contrasts: " + c);
             }

@@ -1,7 +1,7 @@
 package com.jw6ventures.headlink
 
 /**
- * A media player app the idle media pane can offer to resume (P7.5, plan §5.5).
+ * A media player app the idle media pane can offer to resume (P7.5).
  *
  * Pure JVM, like [Favorite], so the ordering the pane shows is host-tested. The Android
  * side that finds players and resumes them is [MediaPlayers].
@@ -50,7 +50,7 @@ object Players {
 
     /**
      * Merges apps with a live session and apps with a browser service into one list,
-     * one row per package, **most recently active first** (plan §5.5).
+     * one row per package, **most recently active first**.
      *
      * [played] is the packages that have really had a playing session on this phone,
      * most recent first, as [MediaPlayers] remembers them between sessions. It orders

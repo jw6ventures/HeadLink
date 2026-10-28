@@ -2,6 +2,11 @@
 <resources>
     <string name="source_auth_rejected">The head unit rejected source authentication after TLS completed. It may require an identity from an issuer it trusts. Trusting the head unit or regenerating a self-signed identity does not establish that trust.</string>
     <string name="import_identity">Import source identity</string>
+    <string name="settings_identity">Source identity</string>
+    <string name="settings_identity_caption">The certificate this phone shows the car. Many cars accept the one HeadLink makes. Some, such as the 2024 Ford SYNC 4.0, need one you supply yourself; HeadLink does not provide one.</string>
+    <string name="identity_status_ready">In use: %1$s…</string>
+    <string name="identity_status_busy">Preparing the identity…</string>
+    <string name="identity_status_error">Not ready: %1$s</string>
     <string name="import_identity_description">Select a PEM file containing your source certificate, any intermediate certificates in issuer order, and matching unencrypted RSA-2048 private key. Use an identity you are authorized to use. A valid import replaces the current source identity; head-unit pins stay in place. Importing does not guarantee that the vehicle will accept it.</string>
     <string name="app_name">HeadLink</string>
     <string name="connect">Connect</string>
@@ -131,7 +136,7 @@ Incomplete from a previous run: %3$s</string>
     <string name="notifications_on_dashboard">Notifications on the dashboard</string>
     <string name="call_controls">Call controls</string>
     <string name="diagnostics">Diagnostics</string>
-    <!-- P7.7: the phone screen rebuilt (docs/p7-plan.md §6). Short *_label strings; each
+    <!-- P7.7: the phone screen rebuilt (docs/phone-app.md). Short *_label strings; each
          long explanation is kept word for word as the matching *_help, opened by its ⓘ. -->
     <string name="tab_home">Home</string>
     <string name="tab_setup">Setup</string>
@@ -184,7 +189,7 @@ Incomplete from a previous run: %3$s</string>
     <string name="notification_exclusions_count">Apps hidden: %1$d</string>
     <string name="notification_exclusions_none">No app has posted a notification yet this session. With notifications on the dashboard, apps appear here once they post one, and can then be hidden.</string>
     <string name="call_controls_help">Answer, decline and hang up calls from the dashboard. Turned off, the app never sees a call. With a one-time grant from a computer, mute and a keypad work too; without it, the phone\'s own call notification is used, which needs notification access. Callers, numbers and keypad digits are never saved or reported.</string>
-    <!-- P8.1: speech (docs/p8-plan.md §7). -->
+    <!-- P8.1: speech (docs/audio-and-speech.md, "Speech"). -->
     <string name="read_aloud_label">Read aloud when tapped</string>
     <string name="read_aloud_help">A notification tapped on the dashboard is read aloud: the sender and the text, never the app. The full text is fetched from the phone at the moment of the tap and handed to the speech engine; it is not saved, logged or reported. Speech plays only while the phone is connected to Bluetooth audio, and is heard in the car only while Bluetooth audio is its selected source. Tap the row again to stop it.</string>
     <string name="settings_speech">Speech</string>
@@ -194,7 +199,7 @@ Incomplete from a previous run: %3$s</string>
     <string name="speech_engine_networked">Speech: %1$s (this engine can use the network)</string>
     <string name="speech_no_engine">Speech: no engine installed</string>
     <string name="speech_settings">Text-to-speech settings</string>
-    <!-- Home → Preview route (docs/route-preview.md). -->
+    <!-- Home → Preview route (docs/navigation.md, "Route preview and alternatives"). -->
     <string name="preview_route">Preview route and alternatives</string>
     <string name="preview_title">Route preview</string>
     <string name="preview_fit">Whole route</string>
@@ -223,7 +228,7 @@ Incomplete from a previous run: %3$s</string>
     <string name="preview_unreadable">Could not open the preview: %1$s</string>
     <string name="preview_adopted">Following the route you chose.</string>
     <string name="preview_stale">The route changed while the preview was open (a re-route or a new destination), so the choice was not applied.</string>
-    <!-- Maps & routing → Route preferences (docs/routing-settings.md). -->
+    <!-- Maps & routing → Route preferences (docs/navigation.md, "Route preferences"). -->
     <string name="route_prefs_title">Route preferences</string>
     <string name="route_prefs_caption">Avoided roads cost more rather than being closed, so a place only reachable that way is still reached. A change recomputes the route being shown, from where you are now.</string>
     <string name="route_avoid_highways">Avoid highways</string>
@@ -244,7 +249,7 @@ Incomplete from a previous run: %3$s</string>
     <string name="route_show_alternatives_label">Show other routes on the map</string>
     <string name="route_show_alternatives_help">While a route is followed on the car\'s screen, the phone looks for up to two other ways to the destination about every five minutes and draws them in grey, each with how much longer it is (\"+6 min\"). Tap a bubble on the car\'s screen to take that route. One goes away once you pass the point where it leaves your route. Routes more than ten minutes longer (or a quarter of the time left) are not shown. Looking takes the phone some seconds of work each time, and never holds up a re-route.</string>
     <string name="route_learn_pace_help">As you drive, the time still to go is corrected by how your drive so far compared with its estimate: slow traffic makes the arrival later, a clear road earlier. It starts after about two minutes of driving, counts in full after ten, never takes off more than a third or adds more than half, and starts afresh for each new destination. It is not used for the time to the next turn.</string>
-    <!-- P8.3: Maps & routing → Voice guidance (docs/p8-plan.md §7). -->
+    <!-- P8.3: Maps & routing → Voice guidance (docs/audio-and-speech.md, "Turn prompts"). -->
     <string name="voice_title">Voice guidance</string>
     <string name="voice_guidance_label">Speak turn prompts</string>
     <string name="voice_guidance_help">Turn prompts are spoken while a route is followed. This is the same switch as the speaker button beside End route on the dashboard: turning either one changes both, and it stays as it was left for the next drive. Prompts are spoken only over Bluetooth audio, and are heard in the car only while Bluetooth audio is its selected source.</string>
@@ -324,7 +329,7 @@ Incomplete from a previous run: %3$s</string>
     <string name="location_title">Allow location?</string>
     <string name="location_prompt">The map and routes follow the vehicle\'s own position when the head unit sends one, and need nothing from the phone for it. With location allowed, the phone\'s position is used when the vehicle has none, and a destination can be routed before you plug in. The position stays on this phone and is never put in a report.</string>
     <string name="location_allow">Allow location</string>
-    <!-- P10.1: Settings → Weather (docs/p10-plan.md §4). The status line and the notifier
+    <!-- P10.1: Settings → Weather (docs/dashboard.md, "Weather"). The status line and the notifier
          help are WeatherText's, in code, so the dashboard and host tests share them. -->
     <string name="weather_title">Weather</string>
     <string name="weather_caption">The current weather in the dashboard\'s header, read from Breezy Weather on this phone. No network.</string>
@@ -337,7 +342,7 @@ Incomplete from a previous run: %3$s</string>
     <string name="weather_speak_note">Heard only while the dashboard\'s voice toggle is on.</string>
     <string name="weather_level_label">Alerts shown from</string>
     <string name="weather_level_help">The lowest severity of alert that takes the dashboard\'s second tile and is spoken. Alerts below it still show in the weather view opened from the header.</string>
-    <!-- P11.1 (docs/p11-plan.md §2, §6a, §12): Settings → OsmAnd maps. -->
+    <!-- P11.1 (docs/navigation.md, "OsmAnd maps: search and places"): Settings → OsmAnd maps. -->
     <string name="osmand_maps_title">OsmAnd maps</string>
     <string name="osmand_maps_caption">Address search and map places, read from OsmAnd\'s own map files on this phone. Nothing is copied or written, and nothing connects to the network.</string>
     <string name="osmand_maps_choose">Choose folder</string>

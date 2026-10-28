@@ -15,8 +15,8 @@ import java.time.Instant
  * [ReportPersistence], and exported on request (spec §10).
  * Nonsecret metadata only: the accessory serial is redacted, and no raw wire data,
  * keys, or unrelated device identifiers are included. Vehicle, head-unit firmware,
- * USB policy, port, cable, and Bluetooth details are recorded by the operator in
- * docs/g1-setup-record.md; no public API reports them.
+ * USB policy, port, cable, and Bluetooth details are recorded by the operator
+ * (docs/verification.md, "On the truck"); no public API reports them.
  */
 object SessionReport {
     private val nativeProbe: String by lazy { NativeBridge.probe() }
@@ -33,7 +33,7 @@ object SessionReport {
             appendLine(
                 "scope=USB accessory acquisition, version, TLS, authentication, encrypted service discovery, and " +
                     "the projection demonstration; a gate is passed only by the evidence named in " +
-                    "docs/g1-setup-record.md and docs/g4-g5-procedure.md",
+                    "docs/verification.md, Gates",
             )
             appendLine()
             appendLine("[app]")

@@ -4,7 +4,7 @@ import java.net.URLDecoder
 
 /**
  * Where a destination came from. The label is the only part of a destination the
- * report and the event log ever carry (P6 plan §5.1, §9.6).
+ * report and the event log ever carry (P6.4, spec §10).
  */
 enum class DestinationSource(val label: String) {
     /** `ACTION_SEND` text: the ordinary share sheet, OsmAnd's "Message" item. */

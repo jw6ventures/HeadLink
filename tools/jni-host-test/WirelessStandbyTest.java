@@ -1,5 +1,6 @@
 // Wireless standby's rules on a desktop JVM (spec 5.2, the standby amendment;
-// docs/wireless-w3-procedure.md, "Standby"): the start reasons decoded from Android Auto
+// docs/connecting.md, "Standby: the truck's Android Auto button"):
+// the start reasons decoded from Android Auto
 // 17.6, which start requests start projection, the automatic-start loop guard and the
 // reconnect pacing. Holding the RFCOMM link open on the truck, the button press itself and
 // the wake lock need a phone and the truck.

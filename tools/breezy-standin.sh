@@ -1,5 +1,5 @@
 #!/bin/sh
-# Builds the emulator lab's stand-in Breezy Weather (tools/breezy-standin/, P10 plan §8): an
+# Builds the emulator lab's stand-in Breezy Weather (tools/breezy-standin/, P10): an
 # app with Breezy's package name, its READ_PROVIDER permission and its weather provider,
 # serving the scenario files in tools/breezy-standin/scenarios/ (packaged as assets) with
 # their times resolved against the moment of each query; and a receiver the lab uses to

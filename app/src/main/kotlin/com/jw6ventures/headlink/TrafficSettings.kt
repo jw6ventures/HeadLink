@@ -9,8 +9,8 @@ import java.time.format.TextStyle
 import java.util.Locale
 
 /**
- * Maps & routing → Traffic (P9 plan §3): the one opt-in integration that uses the
- * network (APP10 as amended, plan §2).
+ * Maps & routing → Traffic (P9, docs/phone-app.md, "Live traffic"): the one opt-in integration that uses the
+ * network (APP10 as amended).
  *
  * Off by default, and it cannot be on without a key: [repaired] turns it off whenever the
  * key is blank, so no stored combination can have it on and keyless. [TrafficClient]
@@ -25,7 +25,7 @@ import java.util.Locale
 data class TrafficSettings(
     /** Live traffic on. Needs [apiKey]; see [repaired]. */
     val enabled: Boolean = false,
-    /** The operator's own HERE API key (plan §1, Exhibit 2 §1.2), or "" for none. */
+    /** The operator's own HERE API key (HERE's Exhibit 2 §1.2), or "" for none. */
     val apiKey: String = "",
     /** Refresh every, minutes: one of [REFRESH_MINUTES] (decision 2). */
     val refreshMinutes: Int = DEFAULT_REFRESH_MINUTES,
@@ -35,11 +35,11 @@ data class TrafficSettings(
     val monthlyLimit: Int = DEFAULT_MONTHLY_LIMIT,
     /**
      * The operator has seen what traffic sends and HERE's terms, which the card shows the
-     * first time the switch is turned on (plan §3), and accepted by turning it on.
+     * first time the switch is turned on, and accepted by turning it on.
      */
     val disclosed: Boolean = false,
     /**
-     * The lab's stand-in server in place of HERE (plan §4, §8), e.g. `http://10.0.2.2:8765`,
+     * The lab's stand-in server in place of HERE, e.g. `http://10.0.2.2:8765`,
      * or "" for HERE. Honoured only by a debuggable build ([TrafficClient]); a release build
      * ignores whatever is stored here. Set only by the lab intent, never by the card.
      */
@@ -87,7 +87,7 @@ data class TrafficSettings(
         const val DEFAULT_REFRESH_MINUTES = 10
         val LOOK_AHEAD_KM = listOf(15, 30, 50)
         const val DEFAULT_LOOK_AHEAD_KM = 30
-        /** Under HERE's 5,000 free transactions a month (plan §1), with room to spare. */
+        /** Under HERE's 5,000 free transactions a month, with room to spare. */
         const val DEFAULT_MONTHLY_LIMIT = 4_500
         /** A fetch is two requests, so fewer than two would never allow one. */
         val LIMIT_RANGE = 2..1_000_000
@@ -134,9 +134,9 @@ data class TrafficSettings(
 }
 
 /**
- * What traffic has done (plan §3's Status): the requests counted in one calendar month,
+ * What traffic has done (the card's Status): the requests counted in one calendar month,
  * the last fetch and the last error. Numbers and HERE's error text only — never a box, a
- * position or anything HERE returned (plan §3: "counts only numbers, never areas").
+ * position or anything HERE returned: it counts only numbers, never areas.
  *
  * Months are UTC calendar months, as HERE bills (an assumption; HERE's pricing page says
  * "per month"), so the count resets at 00:00 UTC on the 1st: early evening of the last
@@ -245,11 +245,11 @@ class MemoryTrafficLedger(private var current: TrafficStatus = TrafficStatus()) 
  *
  * Kept out of Android backup and device transfer, as every file of this app is: the
  * manifest's `allowBackup="false"` and `data_extraction_rules.xml`, which excludes every
- * domain (tools/verify-apk.sh pins both). The key is the operator's alone (plan §3) and
+ * domain (tools/verify-apk.sh pins both). The key is the operator's alone and
  * must never leave the phone.
  *
  * The count is written with `commit`, synchronously, before the request it counts is sent
- * (plan §9): a request the process dies during is still counted. Callers are off the main
+ * (docs/navigation.md, "Live traffic (HERE)"): a request the process dies during is still counted. Callers are off the main
  * thread by contract ([TrafficClient]).
  */
 object TrafficPrefs {

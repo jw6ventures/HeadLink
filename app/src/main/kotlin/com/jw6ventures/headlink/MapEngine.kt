@@ -116,7 +116,7 @@ class MapEngine(width: Int, height: Int) {
     private var offerChanges = 0L
 
     /**
-     * P11.5: the Gas, Food and Shop markers (docs/p11-plan.md §6), one VTM [ItemizedLayer]
+     * P11.5: the Gas, Food and Shop markers (docs/navigation.md), one VTM [ItemizedLayer]
      * just under the labels, so above the route, its traffic and the buildings, and street
      * names still read over a marker. Made on first use; its symbols per kind and size.
      */
@@ -361,7 +361,7 @@ class MapEngine(width: Int, height: Int) {
      * once per session and never updates it, even in daylight". That reading was wrong
      * about its cause: every one of those sessions was with the truck's display pinned to
      * dark mode, so what they recorded was the operator's setting, not SYNC 4.0's
-     * behaviour (P7 plan §1 item 16). A Ford whose display follows its light sensor is
+     * behaviour (docs/dashboard.md, "Day and night"). A Ford whose display follows its light sensor is
      * expected to send a second NIGHT_DATA at dusk; no recorded session has one yet,
      * which is why the switch is proven only on the lab receiver so far.
      *
@@ -593,7 +593,7 @@ class MapEngine(width: Int, height: Int) {
     }
 
     /**
-     * Colours the route ahead of the vehicle by [traffic] (P9.3, docs/p9-plan.md §6), given
+     * Colours the route ahead of the vehicle by [traffic] (P9.3, docs/navigation.md), given
      * the position the map follows. Scene thread, every frame; [TrafficLines] says whether
      * anything drawn has to change, and only then are layers touched: traffic for a route
      * other than the one on the map draws nothing, and the cut at the vehicle moves in steps.
@@ -1101,7 +1101,7 @@ class MapEngine(width: Int, height: Int) {
 
         /**
          * The longest a switch holds the previous picture, ms. The lab measured a switch
-         * at well under this (docs/p7-6-map-results.md); it is a bound for a tile that
+         * at well under this (docs/verification.md); it is a bound for a tile that
          * will not load, so a stuck read costs a hole in the new picture rather than a
          * map that stops following the vehicle.
          */

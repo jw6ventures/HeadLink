@@ -14,7 +14,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
 /**
- * Breezy Weather's content provider through the ContentResolver (plan §1, §3): the Android
+ * Breezy Weather's content provider through the ContentResolver: the Android
  * half of [WeatherSource]. Each call is one query, closed before it returns; nothing is
  * cached here. Worker thread only.
  */
@@ -71,7 +71,7 @@ class WeatherProvider(context: Context) : WeatherSource {
     companion object {
         fun uri(path: String): Uri = Uri.parse("content://${WeatherRules.AUTHORITY}/$path")
 
-        /** Plan §1: no minute-by-minute rain and no normals; units left at Breezy's own. */
+        /** No minute-by-minute rain and no normals; units left at Breezy's own. */
         fun weatherUri(): Uri = uri("weather").buildUpon()
             .appendQueryParameter("withMinutely", "false")
             .appendQueryParameter("withNormals", "false")
@@ -80,7 +80,7 @@ class WeatherProvider(context: Context) : WeatherSource {
 }
 
 /**
- * Breezy's update notifier (plan §3): a cue to read again, with no weather in it. Exported
+ * Breezy's update notifier: a cue to read again, with no weather in it. Exported
  * and guarded by nothing, since Breezy sends it with no permission; a forged one can only
  * cause a harmless extra read, and only while a projection is attached with weather on.
  */
@@ -93,7 +93,7 @@ class WeatherNotifierReceiver : BroadcastReceiver() {
 }
 
 /**
- * The one [WeatherFeed] (plan §3), running while a projection is attached: [start] reads
+ * The one [WeatherFeed], running while a projection is attached: [start] reads
  * when it begins and then every [WeatherRules.READ_EVERY_MS], [cue] on Breezy's notifier,
  * [stop] at its end. Main thread only.
  */
@@ -169,7 +169,7 @@ object Weather {
     fun report(): String = feed?.report() ?: "weather_enabled=- weather_reads=0\n"
 
     /**
-     * One read for the phone's Weather card (plan §4), whatever Show weather says and
+     * One read for the phone's Weather card, whatever Show weather says and
      * whether or not a projection is attached: the card's status line, "Waco · updated 12
      * min ago". [done] is told on the main thread. Its own feed, so the session's counts and
      * reading are left alone; the reading is shown once and not kept.
@@ -192,7 +192,7 @@ object Weather {
     }
 
     /**
-     * Debug builds, P10.0 (plan §12): the provider's answers as this app receives them,
+     * Debug builds, P10.0: the provider's answers as this app receives them,
      * written under `files/weather-capture/` for `run-as` to fetch. `adb shell content query`
      * cannot do it, because the shell cannot hold Breezy's permission. Worker thread; the
      * blobs are the operator's own weather and are never reported.

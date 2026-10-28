@@ -21,7 +21,7 @@ import java.util.regex.Pattern;
 import java.util.zip.GZIPOutputStream;
 
 /**
- * The stand-in Breezy's scenarios (P10 plan §8), shared by the stand-in's provider and the
+ * The stand-in Breezy's scenarios (P10), shared by the stand-in's provider and the
  * host tests. Plain Java with no android imports: tools/jni-host-test compiles this same
  * file, so the app's parser is tested against exactly the bytes the lab serves.
  *

@@ -7,7 +7,7 @@ import android.graphics.RectF
 import android.graphics.Typeface
 
 /**
- * P10's drawing (docs/p10-plan.md §5): the header's weather item, the tapped weather view
+ * P10's drawing (docs/dashboard.md, "Weather"): the header's weather item, the tapped weather view
  * and the alert view in the flex tile, and the twelve condition glyphs they share. The
  * glyphs are drawn from shapes, as the maneuver icons are, so none can fall back to a
  * missing font glyph. [DashboardDrawing] calls in; everything drawn comes from the
@@ -17,7 +17,7 @@ object WeatherDrawing {
     private const val CORNER = 10f
 
     /**
-     * The weather view's hour row, as a share of the view's height (P10 lab §4.2), and the
+     * The weather view's hour row, as a share of the view's height, and the
      * larger share it takes when any hour has a rain line under its temperature.
      */
     private const val ROW_SHARE = 0.3f
@@ -52,7 +52,7 @@ object WeatherDrawing {
         val cx = box.x + layout.margin / 2f + side / 2f
         val cy = box.centerY.toFloat()
         // With no reading there is no glyph: the dimmed "—" where the temperature goes says
-        // it alone (plan §5.1), rather than a second dash in the glyph's place.
+        // it alone, rather than a second dash in the glyph's place.
         item.code?.let { glyph(canvas, paint, it, item.night, cx, cy, side, ground, palette, item.dim) }
         item.alertColour?.let { warningMark(canvas, paint, cx + side * 0.34f, cy - side * 0.5f, side * 0.42f, it, ground) }
         paint.style = Paint.Style.FILL
@@ -63,7 +63,7 @@ object WeatherDrawing {
     }
 
     /**
-     * The tapped view (plan §5.2), in [box], the flex tile under its label: an alert strip
+     * The tapped view, in [box], the flex tile under its label: an alert strip
      * if one is in force, the glyph and the temperature large, the condition (left out
      * under a strip, where the glyph says it) and the feels-like, high and low line, a row
      * of the next four hours, and the place and age along the bottom. With no reading, the
@@ -236,7 +236,7 @@ object WeatherDrawing {
     }
 
     /**
-     * The alert view (plan §5.3): the alert's colour as a bar down the left, the headline
+     * The alert view: the alert's colour as a bar down the left, the headline
      * wrapped to at most three lines, "until 21:45" and "+1 more", and the place and age.
      */
     fun drawAlert(canvas: Canvas, paint: Paint, layout: DashboardLayout, box: Box, alert: WeatherAlertCard, palette: DashboardPalette) {
@@ -481,7 +481,7 @@ object WeatherDrawing {
     }
 
     /**
-     * The voice toggle's small warning triangle (P8 plan §6), here in the alert's own colour,
+     * The voice toggle's small warning triangle (P8), here in the alert's own colour,
      * with its top at ([cx], [top]) and [t] across.
      */
     private fun warningMark(canvas: Canvas, paint: Paint, cx: Float, top: Float, t: Float, colour: Int, ground: Int) {

@@ -12,7 +12,7 @@ import kotlin.math.roundToInt
  * They are the profile's weights, not bans: an avoided highway is made much more costly,
  * an avoided toll road or toll booth is all but closed, and a destination that can
  * only be reached one way is still reached. Each was checked on the Texas tiles to change
- * a route (docs/routing-settings.md).
+ * a route (docs/navigation.md, "Route preferences").
  *
  * **Time.** BRouter times a route with the profile's kinematic model, which drives no
  * faster than [topSpeedKmh] anywhere a road has no lower limit. The profile ships with

@@ -8,17 +8,17 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
- * P11.5a (docs/p11-plan.md §6a): search ahead on the route. While a route is followed, a
- * press that lights Gas, Food or Shop also looks along the road ahead, works out the detour
- * to the nearest few places with BRouter, says the best one and lists up to three on the
- * flex tile with **Add stop**.
+ * P11.5a (docs/navigation.md, "OsmAnd maps: search and places"): search ahead on the
+ * route. While a route is followed, a press that lights Gas, Food or Shop also looks
+ * along the road ahead, works out the detour to the nearest few places with BRouter,
+ * says the best one and lists up to three on the flex tile with **Add stop**.
  *
  * Everything here is pure JVM, for the host test (SearchAheadTest): the corridor and its
  * query boxes, projecting a place onto the route, the detour's two short routes and its
  * arithmetic, the best-stop rule, the words, the via point's release, and the counts. The
  * threads, the speaker and the card are [AheadSearcher]'s.
  *
- * Names in [ObfPoi] are places near the driver: spoken and drawn, never reported (plan §8).
+ * Names in [ObfPoi] are places near the driver: spoken and drawn, never reported.
  */
 
 /** Which side of the road a place is on, facing along the route. */
@@ -257,12 +257,12 @@ object AheadSearch {
      */
     const val MIN_AHEAD_M = 300.0
 
-    /** A and B are this far before and after the place's projection (plan §6a: about 2 km). */
+    /** A and B are this far before and after the place's projection (about 2 km). */
     const val LEG_M = 2_000.0
 
     /**
      * A nearer stop whose detour is within this of the smallest beats the smallest further
-     * on (plan §6a); it also settles a tie.
+     * on; it also settles a tie.
      */
     const val NEARER_WITHIN_S = 120
 
@@ -366,7 +366,7 @@ object AheadSearch {
     }
 
     /**
-     * The stop to name (plan §6a): the smallest detour, the nearer of equal ones; except that
+     * The stop to name: the smallest detour, the nearer of equal ones; except that
      * a stop at least [NEARER_BY_M] nearer whose detour is within [NEARER_WITHIN_S] of it
      * comes first, the nearest such. "Further on" means a real distance: two stations at
      * one exit are not one nearer than the other (the first lab run named a 2-minute
@@ -482,7 +482,7 @@ object ViaRelease {
 }
 
 /**
- * The search-ahead counts for the report (plan §6a, §8): presses, candidates, detours routed
+ * The search-ahead counts for the report: presses, candidates, detours routed
  * and failed, and the time from a press to what was said. **Never a name or a place.**
  */
 class AheadCounts {

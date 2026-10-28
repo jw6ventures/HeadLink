@@ -1,4 +1,5 @@
-// P11.5a on a desktop JVM (docs/p11-plan.md section 6a): search ahead on the route. The
+// P11.5a on a desktop JVM (docs/navigation.md, "OsmAnd maps: search and places"):
+// search ahead on the route. The
 // corridor - places projected onto the route ahead of the vehicle as metres ahead, metres off
 // and the side of the road, behind and off-corridor ones dropped, one per place - its query
 // boxes and how they end at the destination; the detour's A and B and their clamping; the

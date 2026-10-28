@@ -3,7 +3,7 @@ package com.jw6ventures.headlink
 import java.io.IOException
 
 /**
- * The address half of [ObfFile] (plan §3.3), after OsmAnd's `BinaryMapAddressReaderAdapter`.
+ * The address half of [ObfFile], after OsmAnd's `BinaryMapAddressReaderAdapter`.
  *
  * - **Cities** come from each `CitiesIndex` block: type 1 cities and towns ([CityType.CITY]),
  *   3 villages ([CityType.VILLAGE]), 2 postcodes ([CityType.POSTCODE]). A city's position is
