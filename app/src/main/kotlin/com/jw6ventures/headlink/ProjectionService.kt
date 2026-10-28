@@ -137,6 +137,32 @@ class ProjectionService : Service() {
         return START_NOT_STICKY
     }
 
+    /**
+     * Promotes to a connectedDevice foreground service, adding the location type while a
+     * location permission is granted: without it Android stops delivering the phone's
+     * position, the map's fallback, once no activity is visible. If the platform refuses
+     * the location type (a start from the background, or the grant gone in between), the
+     * session still runs, as it did before, on connectedDevice alone.
+     */
+    private fun promote() {
+        val connected = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+        val location = listOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
+            .any { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
+        if (location) {
+            try {
+                startForeground(
+                    NOTIFICATION_ID,
+                    buildNotification(),
+                    connected or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION,
+                )
+                return
+            } catch (e: SecurityException) {
+                SessionController.note("foreground location type refused: $e")
+            }
+        }
+        startForeground(NOTIFICATION_ID, buildNotification(), connected)
+    }
+
     private fun start(generation: Long) {
         val attempt = SessionController.attempt
         // The lab transport has no connected device, and the platform refuses a
@@ -146,11 +172,7 @@ class ProjectionService : Service() {
         // Promote first: startForegroundService obliges it even for a stale request.
         if (foreground) {
             try {
-                startForeground(
-                    NOTIFICATION_ID,
-                    buildNotification(),
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
-                )
+                promote()
             } catch (e: RuntimeException) {
                 // ForegroundServiceStartNotAllowedException, SecurityException
                 // (connectedDevice prerequisites), or invalid type exceptions.

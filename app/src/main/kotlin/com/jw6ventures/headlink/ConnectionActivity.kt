@@ -1122,21 +1122,22 @@ class ConnectionActivity : Activity() {
      * the result has to come back to it to refresh the label.
      */
     private fun importMap(uri: Uri) {
-        val name = queryName(uri) ?: "region${MapData.SUFFIX}"
+        // The worker holds the application, not this activity: a copy can outlast it.
+        val app = applicationContext
         Thread({
             val message = try {
-                val installed = contentResolver.openInputStream(uri)?.use { stream ->
-                    MapData.install(this, name, stream)
+                val name = queryName(app, uri) ?: "region${MapData.SUFFIX}"
+                val installed = app.contentResolver.openInputStream(uri)?.use { stream ->
+                    MapData.install(app, name, stream)
                 } ?: throw IOException("no input stream")
-                getString(R.string.map_imported, installed.name)
-            } catch (e: IOException) {
-                getString(R.string.map_import_failed, e.message ?: e.toString())
+                app.getString(R.string.map_imported, installed.name)
+            } catch (e: Exception) {
+                // I/O, and a provider that refuses or has lost the grant (SecurityException,
+                // IllegalArgumentException): any of them on this bare thread would end the
+                // process, a projecting session with it.
+                app.getString(R.string.map_import_failed, e.message ?: e.toString())
             }
-            runOnUiThread {
-                Toast.makeText(this, message, Toast.LENGTH_LONG).show()
-                SessionController.note(message)
-                render()
-            }
+            importDone(app, message)
         }, "map-import").start()
     }
 
@@ -1147,24 +1148,31 @@ class ConnectionActivity : Activity() {
      * and checks it against the packaged profile before it replaces anything.
      */
     private fun importRouting(uri: Uri) {
-        val name = queryName(uri) ?: uri.lastPathSegment ?: "-"
-        val root = Routing.root(this)
+        val app = applicationContext
+        val root = Routing.root(app)
         Thread({
             val message = try {
+                val name = queryName(app, uri) ?: uri.lastPathSegment ?: "-"
                 RoutingData.installProfile(RoutingData.profiles(root))
-                val installed = contentResolver.openInputStream(uri)?.use { stream ->
+                val installed = app.contentResolver.openInputStream(uri)?.use { stream ->
                     RoutingData.install(RoutingData.segments(root), RoutingData.profiles(root), name, stream)
                 } ?: throw IOException("no input stream")
-                getString(R.string.routing_imported, installed.name)
-            } catch (e: IOException) {
-                getString(R.string.routing_import_failed, e.message ?: e.toString())
+                app.getString(R.string.routing_imported, installed.name)
+            } catch (e: Exception) {
+                // As for maps: no provider failure may escape the bare thread.
+                app.getString(R.string.routing_import_failed, e.message ?: e.toString())
             }
-            runOnUiThread {
-                Toast.makeText(this, message, Toast.LENGTH_LONG).show()
-                SessionController.note(message)
-                render()
-            }
+            importDone(app, message)
         }, "routing-import").start()
+    }
+
+    /** Reports an import's result, and refreshes this screen only if it is still there. */
+    private fun importDone(app: Context, message: String) {
+        runOnUiThread {
+            Toast.makeText(app, message, Toast.LENGTH_LONG).show()
+            SessionController.note(message)
+            if (!isDestroyed) render()
+        }
     }
 
     /**
@@ -1439,8 +1447,8 @@ class ConnectionActivity : Activity() {
     }
 
     /** The picked document's display name, for the installed file to keep. */
-    private fun queryName(uri: Uri): String? =
-        contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+    private fun queryName(context: Context, uri: Uri): String? =
+        context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
             ?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
 
     private fun writeExport(uri: Uri, text: () -> String) {

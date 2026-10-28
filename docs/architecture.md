@@ -300,6 +300,10 @@ code rule) and are enforced in the build where possible, mostly by
 
   All but `BLUETOOTH_CONNECT` are normal install-time permissions. Details are in
   [connecting.md](connecting.md).
+
+  `FOREGROUND_SERVICE_LOCATION` (normal) lets the projection service run with the
+  `location` type beside `connectedDevice` while a location permission is granted, so the
+  phone-position fallback keeps working with the screen off.
 - **Pinned OpenSSL, statically linked.** OpenSSL 3.5.8 LTS, built from a checksummed
   tarball by `tools/openssl-build.sh` (with a fixed `SOURCE_DATE_EPOCH`) and linked into
   `libaap_jni.so`. The library may need only `libc`, `libdl`, `libm` and `liblog`, so the

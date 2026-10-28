@@ -1009,6 +1009,36 @@ impl HeadUnit {
         }
     }
 
+    /// Sends `count` encrypted records of `record` plaintext bytes each on `channel` as one
+    /// FIRST frame (claiming `total`) and then MIDDLE frames, cut every `chunk` ciphertext
+    /// bytes so that no frame ends on a record boundary. No LAST frame follows: a peer
+    /// that never lets the source finish a split record.
+    pub fn send_unaligned_records(
+        &mut self,
+        channel: u8,
+        record: usize,
+        count: usize,
+        chunk: usize,
+        total: u32,
+    ) {
+        for _ in 0..count {
+            self.ssl.ssl_write(&vec![0u8; record]).unwrap();
+        }
+        let ciphertext = std::mem::take(&mut self.ssl.get_mut().outbound);
+        for (i, part) in ciphertext.chunks(chunk).enumerate() {
+            let kind = if i == 0 { 1 } else { 0 };
+            let frame = Frame {
+                header: Header {
+                    channel,
+                    flags: kind | 0x08,
+                    total: (kind == 1).then_some(total),
+                },
+                payload: part.to_vec(),
+            };
+            self.output.extend(frame.encode().unwrap());
+        }
+    }
+
     /// `{1: {1: {top, bottom, left, right}}}` — the shape Ford SYNC 4.0 sends (report
     /// 07ba8ae0: `0a0a0a080863106318002000`), built by hand because the message has no
     /// published schema. Zero-valued fields are still written, as Ford writes them.

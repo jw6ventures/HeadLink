@@ -689,6 +689,19 @@ struct PendingUnit {
     last_kind: u8,
     frames: u64,
     plaintext: Vec<u8>,
+    started: Instant,
+}
+
+impl PendingUnit {
+    /// The most plaintext a unit may hold before its record boundary: a prefix of one
+    /// message, so never more than a FIRST frame's total or the largest message the
+    /// assembler would take. Without this a peer that never ends a frame on a record
+    /// boundary grows the buffer until the phone runs out of memory.
+    fn limit(&self) -> usize {
+        self.first
+            .total
+            .map_or(aap_wire::AV_LIMIT, |t| (t as usize).min(aap_wire::AV_LIMIT))
+    }
 }
 
 pub struct Session {
@@ -908,6 +921,9 @@ impl Session {
             self.stage_deadline,
             cap,
             self.assembler.next_expiry(),
+            self.pending
+                .as_ref()
+                .map(|p| p.started + aap_wire::ASSEMBLY_LIFETIME),
             self.hold_deadline,
             self.next_ping,
         ]
@@ -965,6 +981,18 @@ impl Session {
         }
         if let Err(e) = self.assembler.expire(now) {
             return self.finish(Category::FrameInvalid, e.to_string(), now);
+        }
+        if let Some(p) = self
+            .pending
+            .as_ref()
+            .filter(|p| now.saturating_duration_since(p.started) >= aap_wire::ASSEMBLY_LIFETIME)
+        {
+            let detail = format!(
+                "TLS record split across frames on channel {} not completed within {} s",
+                p.first.channel,
+                aap_wire::ASSEMBLY_LIFETIME.as_secs()
+            );
+            return self.finish(Category::FrameInvalid, detail, now);
         }
         if stage == Stage::Ready && self.hold_deadline.is_some_and(|d| now >= d) {
             return self.begin_shutdown(ShutdownCause::Hold, now);
@@ -1059,6 +1087,7 @@ impl Session {
                 last_kind: header.kind(),
                 frames: 1,
                 plaintext,
+                started: now,
             },
             Some(mut unit) => {
                 let continues = header.channel == unit.first.channel
@@ -1077,6 +1106,14 @@ impl Session {
                 unit
             }
         };
+        if unit.plaintext.len() > unit.limit() {
+            let detail = format!(
+                "TLS records split across frames on channel {} exceed {} plaintext bytes",
+                unit.first.channel,
+                unit.limit()
+            );
+            return self.finish(Category::FrameInvalid, detail, now);
+        }
         if !boundary {
             self.report.counters.split_record_frames += 1;
             if matches!(unit.last_kind, KIND_LAST | KIND_BULK) {
