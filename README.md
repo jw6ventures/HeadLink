@@ -147,6 +147,8 @@ To set a destination, share a place to HeadLink from OsmAnd or a maps app, searc
 - Favorites, destinations and your location stay on the phone. Diagnostic reports stay on
   the phone too, unless you export them, and leave out your position and your HERE key.
 
+The full [privacy policy](PRIVACY.md) lists everything the app stores, reads and sends.
+
 ## When something goes wrong
 
 HeadLink saves a diagnostic report for every connection attempt, even if the app crashed.

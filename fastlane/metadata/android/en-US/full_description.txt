@@ -14,4 +14,4 @@ Head units only talk to a phone that presents a certificate they trust. HeadLink
 
 Tested on a 2024 Ford SYNC 4.0 head unit. Other head units may not work. No certification or vehicle compatibility is claimed. Do not operate the phone while driving.
 
-No ads, no analytics, no account. The app connects to the internet only if you turn on live traffic or the Home Assistant button.
+No ads, no analytics, no account. The app connects to the internet only if you turn on live traffic or the Home Assistant button. Privacy policy: https://github.com/jw6ventures/headlink/blob/main/PRIVACY.md
