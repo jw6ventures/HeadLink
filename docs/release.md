@@ -13,7 +13,8 @@ Pushing a tag `v<versionName>` runs `.github/workflows/release.yml`: the same bu
 (only once the repository is public: GitHub refuses them for private repositories on
 this plan), and publishes a GitHub release with `HeadLink-<versionName>.apk` and
 `SHA256SUMS`. A versionName with a hyphen (`0.5.0-beta1`) is published as a prerelease.
-The release notes are `fastlane/metadata/android/en-US/changelogs/<versionCode>.txt`.
+The release notes are `fastlane/metadata/android/en-US/changelogs/<versionCode>.txt`; a tag
+whose versionCode has no notes file fails before the build starts.
 
 ## One-time setup
 

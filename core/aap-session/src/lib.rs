@@ -325,6 +325,11 @@ pub struct Config {
     pub shutdown_wait: Duration,
     /// Bound on flushing already-decided output after a protocol outcome.
     pub linger: Duration,
+    /// Most unwritten output the session may hold. Media stops queueing at
+    /// `projection.output_limit`, but replies (pings above all) are always queued, so a
+    /// head unit that keeps sending while it has stopped reading would otherwise grow
+    /// the queue without end. Past this the session ends with `IO_ERROR`.
+    pub output_cap: usize,
     /// Projection timing and options (`stop_after=projection`).
     pub projection: ProjectionConfig,
     /// Encoder hand-off shared with the app; a private link is created when absent.
@@ -365,6 +370,7 @@ impl Default for Config {
             keepalive: KeepaliveProfile::Mirror,
             shutdown_wait: Duration::from_secs(2),
             linger: Duration::from_secs(1),
+            output_cap: 16 * 1024 * 1024,
             projection: ProjectionConfig::default(),
             media: None,
             audio: None,
@@ -1715,6 +1721,15 @@ impl Session {
             }
         }
         self.report.counters.messages_out += 1;
+        let unwritten = self.pending_output().len();
+        if unwritten > self.config.output_cap && self.report.outcome.is_none() {
+            let detail = format!(
+                "{unwritten} bytes of output unwritten (cap {}): the head unit stopped reading",
+                self.config.output_cap
+            );
+            self.finish(Category::IoError, detail, now);
+            return false;
+        }
         true
     }
 

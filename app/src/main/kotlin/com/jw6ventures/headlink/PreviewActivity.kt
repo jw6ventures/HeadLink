@@ -73,6 +73,9 @@ class PreviewActivity : Activity() {
     /** Shown only when no map is installed: the lines are then on a bare ground. */
     private lateinit var mapNoteText: TextView
 
+    /** ODbL's credit, over the map whenever one is drawn, as the dashboard's map has it. */
+    private lateinit var attributionText: TextView
+
     /** The route on show first, then each alternative in the order found, with its number. */
     private val options = ArrayList<Pair<Int, Route>>()
     private val routeLayers = ArrayList<Layer>()
@@ -125,8 +128,19 @@ class PreviewActivity : Activity() {
             addView(zoomIn, LinearLayout.LayoutParams(dp(56), dp(56)))
             addView(zoomOut, LinearLayout.LayoutParams(dp(56), dp(56)))
         }
+        attributionText = TextView(this).apply {
+            setText(R.string.preview_attribution)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            setTextColor(getColor(R.color.tab_text))
+            setBackgroundResource(R.color.card)
+            setPadding(dp(4), dp(2), dp(4), dp(2))
+        }
         val mapFrame = FrameLayout(this).apply {
             addView(mapView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            addView(
+                attributionText,
+                FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.END or Gravity.BOTTOM),
+            )
             addView(
                 controls,
                 FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.END or Gravity.TOP)
@@ -181,6 +195,7 @@ class PreviewActivity : Activity() {
         val source = tileSource()
         if (source == null) {
             mapNoteText.visibility = View.VISIBLE
+            attributionText.visibility = View.GONE
             return
         }
         val base = map.setBaseMap(source)

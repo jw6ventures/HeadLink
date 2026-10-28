@@ -68,7 +68,7 @@ application includes the components below; their license texts follow.
    Map data is supplied by the operator at runtime and is not packaged here. Where
    that data is derived from OpenStreetMap, it is © OpenStreetMap contributors and
    available under the Open Database License (ODbL) 1.0. The application displays
-   this attribution on the projected map.
+   this attribution on the projected map and on the phone's route preview.
 
 MIT License (for the components marked MIT above, each under its own copyright
 notice listed above)
