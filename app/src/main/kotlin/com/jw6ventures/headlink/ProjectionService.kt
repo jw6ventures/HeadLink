@@ -495,6 +495,22 @@ class ProjectionService : Service() {
                 // P7.5: a Resume row. The answer comes back on aap-players and is posted,
                 // like everything else the pipeline hears, to main; which app it was is
                 // never noted (Player's KDoc).
+                // The Home Assistant button: the saved service, called once, off main. The
+                // note says only how it ended; the bubble shows it in green or red.
+                if (pipeline.takeHomeAssistantPress()) {
+                    val client = HomeAssistantPrefs.client(this)
+                    Thread({
+                        val result = try {
+                            client.press()
+                        } catch (e: RuntimeException) {
+                            HomeAssistantResult(false, e.javaClass.simpleName)
+                        }
+                        main.post {
+                            SessionController.note("dashboard home assistant ${if (result.ok) "called" else "failed"}")
+                            if (running === session) session.pipeline?.homeAssistantResult(result.ok)
+                        }
+                    }, "home-assistant-press").start()
+                }
                 pipeline.takeResumePick()?.let { player ->
                     val players = session.players
                     if (players == null) {
@@ -583,6 +599,7 @@ class ProjectionService : Service() {
                 weather = saved.weather.enabled,
                 alertLevel = saved.weather.alertLevel,
                 clockFormat = saved.clockFormat,
+                homeAssistant = dashboardScene && HomeAssistantPrefs.load(this).usable,
             ),
             dashboardSaves(),
             MapData.resolveAll(this, session.attempt.settings.mapFile),
@@ -746,6 +763,10 @@ class ProjectionService : Service() {
             }
             session.weatherReport = null
             Weather.start(this, saved.weather) { session.pipeline?.followPosition() }
+            // The Home Assistant button, shown or hidden as the phone's card changes it.
+            HomeAssistantPrefs.listener = { settings ->
+                main.post { if (running === session) session.pipeline?.homeAssistantShown(settings.usable) }
+            }
             // P7.9: the in-call component is enabled only while projecting, and only with
             // the setting on (plan §5.8); releaseIfDone turns it off at the session's end.
             if (saved.callControls) {
@@ -809,6 +830,7 @@ class ProjectionService : Service() {
         session.weatherReport = Weather.report()
         Weather.listener = null
         Weather.choicesListener = null
+        HomeAssistantPrefs.listener = null
         Weather.stop()
         // Speech first, so its report counts what projection's end cut off and shows the
         // focus grant given back (P8.1, plan §4). Its counts outlive the release.
@@ -1016,6 +1038,7 @@ class ProjectionService : Service() {
                 Speaker.release()
                 Weather.listener = null
                 Weather.choicesListener = null
+                HomeAssistantPrefs.listener = null
                 Weather.stop()
                 stopPoi(session)
                 NotificationFeed.enabled = false

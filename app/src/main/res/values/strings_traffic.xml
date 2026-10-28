@@ -3,7 +3,7 @@
      P9 work does not share strings.xml's lines with other slices. -->
 <resources>
     <string name="traffic_title">Live traffic</string>
-    <string name="traffic_caption">Traffic from HERE, with your own HERE API key, while a route is being followed. With this off, the app makes no network connection at all.</string>
+    <string name="traffic_caption">Traffic from HERE, with your own HERE API key, while a route is being followed. With this off, live traffic makes no network connection.</string>
     <string name="traffic_switch">Use live traffic</string>
     <string name="traffic_switch_help">Asks HERE for traffic on the road ahead while a route is followed on the car\'s screen, to colour the route, add the delay to the arrival time and offer a faster way round. It needs your own HERE API key, saved below, before it can be turned on. The first time you turn it on, the phone shows exactly what it sends. Off, nothing is sent and nothing connects.</string>
     <string name="traffic_disclosure_title">What live traffic sends</string>

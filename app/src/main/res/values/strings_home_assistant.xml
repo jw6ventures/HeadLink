@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Settings → Home Assistant: one dashboard button that calls a service on the operator's
+     own Home Assistant server. A file of its own, as traffic's strings are. -->
+<resources>
+    <string name="ha_title">Home Assistant</string>
+    <string name="ha_caption">One button on the car\'s screen that calls a service on your own Home Assistant server, such as opening the garage door. Off, nothing connects.</string>
+    <string name="ha_switch">Show the Home Assistant button</string>
+    <string name="ha_switch_help">Puts a Home Assistant button on the car\'s dashboard. One tap calls the service below on the target below, once, and the button turns green or red to say whether Home Assistant took it. It can be turned on once the address, a token and a service are saved. Only the button press connects to your server; nothing is sent in the background.</string>
+    <string name="ha_url_label">Server address</string>
+    <string name="ha_url_hint">https://home.example.com:8123</string>
+    <string name="ha_url_help">The address you open Home Assistant at from outside your home, since the phone is usually on mobile data in the car. It must be https: Android does not allow the token to be sent over plain http. A Home Assistant Cloud address works.</string>
+    <string name="ha_token_label">Long-lived access token</string>
+    <string name="ha_token_hint">Paste the token</string>
+    <string name="ha_token_help">Made in Home Assistant under your profile, Security, Long-lived access tokens. It is stored encrypted in this app\'s private storage, never backed up and never shown again once saved, and is sent only to the server address above. Anyone with it can control your Home Assistant, so a token for a separate, non-admin user is safer.</string>
+    <string name="ha_token_save">Save token</string>
+    <string name="ha_token_remove">Remove token</string>
+    <string name="ha_token_saved">A token is saved.</string>
+    <string name="ha_token_none">No token saved.</string>
+    <string name="ha_token_invalid">That is not a token: it is empty, or has spaces in it.</string>
+    <string name="ha_service_label">Service</string>
+    <string name="ha_service_hint">cover.open_cover</string>
+    <string name="ha_service_help">The Home Assistant action to call, as domain.service. For example cover.open_cover or cover.toggle for a garage door, switch.turn_on for a switch, automation.trigger for an automation, or script.turn_on for a script. Home Assistant\'s Developer tools, Actions lists them all.</string>
+    <string name="ha_target_label">Target</string>
+    <string name="ha_target_hint">cover.garage_door</string>
+    <string name="ha_target_help">The entity the service is called on, such as cover.garage_door, switch.gate_opener or automation.im_home. Several can be given, separated by commas. Leave it empty for a service that takes no target.</string>
+    <string name="ha_save">Save</string>
+    <string name="ha_saved">Saved.</string>
+    <string name="ha_url_invalid">The server address must be an https:// address, with no user name, query or # in it.</string>
+    <string name="ha_service_invalid">The service must be domain.service, such as cover.open_cover.</string>
+    <string name="ha_target_invalid">Each target must be an entity id, such as cover.garage_door.</string>
+    <string name="ha_check">Check</string>
+    <string name="ha_check_help">Asks your server whether the address and token work, whether the service exists and whether each target is an entity it knows. It only reads: nothing is opened, switched or triggered.</string>
+    <string name="ha_checking">Checking…</string>
+    <string name="ha_check_result">Check: %1$s</string>
+    <string name="ha_check_crashed">Check stopped: %1$s</string>
+</resources>

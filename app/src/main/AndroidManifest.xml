@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- USB accessory acquisition, connectedDevice foreground service, and session
      notification (spec §5.2 baseline). TLS, authentication, and discovery add no
-     permission. From P9, INTERNET too, for live traffic alone; see its entry below.
+     permission. From P9, INTERNET too, for live traffic and later the Home Assistant
+     button alone; see its entry below.
 
      P5.1 adds no <uses-permission>. Head-unit transport buttons reach whatever is
      playing through AudioManager.dispatchMediaKeyEvent, which declares none. Reporting
@@ -50,7 +51,11 @@
          it. INTERNET is an install-time permission the operator cannot revoke on stock
          Android (GrapheneOS's Network toggle can), which is why the guarantee is in the
          code. Cleartext is allowed only in debug builds, for the lab's stand-in server
-         (src/debug/res/xml/network_security_config.xml). -->
+         (src/debug/res/xml/network_security_config.xml).
+
+         The Home Assistant button is the second, and also off by default: a press on it
+         sends one https request to the operator's own server, and the card's Check sends
+         read-only ones. Nothing else does (host-tested, HomeAssistantTest). -->
     <uses-permission android:name="android.permission.INTERNET" />
 
     <!-- P7.9: optional full call controls (docs/p7-plan.md §5.8; §9 item 3 as amended in

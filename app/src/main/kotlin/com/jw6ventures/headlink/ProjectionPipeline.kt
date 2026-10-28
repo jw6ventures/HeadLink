@@ -617,6 +617,19 @@ class ProjectionPipeline(
         dashboard?.resumeResult(key, result)
     }
 
+    /** The Home Assistant button shown or hidden from the phone mid-session. */
+    fun homeAssistantShown(on: Boolean) {
+        dashboard?.homeAssistantShown(on)
+    }
+
+    /** Whether the Home Assistant button was pressed since the last call, once. */
+    fun takeHomeAssistantPress(): Boolean = dashboard?.takeHomeAssistantPress() ?: false
+
+    /** How the Home Assistant press ended, for the bubble's green or red. */
+    fun homeAssistantResult(ok: Boolean) {
+        dashboard?.homeAssistantResult(ok)
+    }
+
     /** The notifications the flex tile lists (P7.8), newest first; replaces the list whole. */
     fun notifications(list: List<DashNotification>) {
         dashboard?.notifications(list)

@@ -77,8 +77,9 @@ Current state:
   (session token, counters, four buttons, touch crosshair). Permissions: foreground
   service, connectedDevice, notifications, location, phone state and ongoing calls,
   Bluetooth connect, companion-device presence, wake lock, network state, Breezy
-  Weather's provider, and INTERNET. INTERNET is for opt-in live traffic only: with
-  traffic off, nothing connects, and maps and routing data are never downloaded (see
+  Weather's provider, and INTERNET. INTERNET is for opt-in live traffic and the opt-in
+  Home Assistant button only: with both off, nothing connects, and maps and routing data
+  are never downloaded (see
   [Data to download and import](#data-to-download-and-import)).
 - `tools/source-harness`: offline plaintext inspector plus a TCP lab adapter
   (`--io poll|threads`) using the same engine, including a projection mode that renders the
@@ -261,7 +262,8 @@ refresh.
 
 ### Live traffic: HERE API key
 
-Live traffic is off by default, and it is the only feature that uses the network.
+Live traffic is off by default. It and the Home Assistant button below are the only
+features that use the network.
 
 1. Create a HERE platform account at <https://platform.here.com/> and make an API key.
    The free Base Plan includes 5,000 transactions a month. HeadLink stays well under that.
@@ -272,6 +274,31 @@ The key belongs to you, and you are responsible for how it's used. It is stored 
 app's private preferences and is left out of backups and diagnostic reports. It is never
 in the APK or this repository. Requests go to `data.traffic.hereapi.com`, and only while
 a route is being followed.
+
+### Home Assistant button
+
+An optional button on the car's dashboard that calls one service on your own Home
+Assistant server, such as `cover.open_cover` on `cover.garage_door`,
+`switch.turn_on` on `switch.gate_opener`, or `automation.trigger` on
+`automation.im_home`. It is off by default.
+
+1. In Home Assistant, open your profile, then **Security**, and create a long-lived
+   access token. A token for a separate, non-admin user is safer.
+2. In the **Home Assistant** card on HeadLink's **Settings** tab, enter the server's
+   https address (the one that works away from home), the token, the service as
+   `domain.service`, and the target entity (or several, separated by commas, or none).
+   Tap **Save**, then **Check**. Check only reads from the server: it confirms the token,
+   that the service exists and that each target is a known entity, without calling
+   anything.
+3. Turn on **Show the Home Assistant button**.
+
+The button sits in the dashboard's header, just left of the weather, where the header has
+room for it (1080p and 800x480 screens). On narrower headers, such as Ford's 726x480, it
+sits in the map pane's bottom row instead, right of the recentre button. One tap
+calls the service once; the button turns green with a tick or red with a cross to say
+how it went. The token is stored encrypted with a key held in the Android Keystore, is
+left out of backups and diagnostic reports, and is sent only to the address you saved.
+Plain http is not supported: Android blocks it in release builds.
 
 ### Source identity: PEM
 

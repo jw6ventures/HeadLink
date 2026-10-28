@@ -230,6 +230,7 @@ class ConnectionActivity : Activity() {
     private lateinit var searchSuggestions: SearchSuggestions
     /** P11.1: Settings → OsmAnd maps. */
     private lateinit var osmAndMapsCard: OsmAndMapsCard
+    private lateinit var homeAssistantCard: HomeAssistantCard
     private lateinit var routeButton: Button
     private lateinit var clearRouteButton: Button
     private lateinit var previewButton: Button
@@ -1626,6 +1627,7 @@ class ConnectionActivity : Activity() {
         renderTraffic()
         renderWeather()
         osmAndMapsCard.render(AppSettings.load(this).speedUnit)
+        homeAssistantCard.render()
         renderTabs()
     }
 
@@ -2781,6 +2783,7 @@ class ConnectionActivity : Activity() {
         }
         searchSuggestions = SearchSuggestions(this, ui, routeInput, ::searchPoint) { routeToSuggestion(it) }
         osmAndMapsCard = OsmAndMapsCard(this, ui) { chooseMapsFolder() }
+        homeAssistantCard = HomeAssistantCard(this, ui)
         routeButton = button(R.string.compute_route) { computeRoute() }
         clearRouteButton = button(R.string.clear_route) {
             Navigation.clear()
@@ -3021,6 +3024,8 @@ class ConnectionActivity : Activity() {
                 ui.withHelp(weatherCheck, R.string.weather_switch, R.string.weather_switch_help),
                 *weatherRows.toTypedArray(),
             ),
+            // Settings → Home Assistant: the dashboard's one Home Assistant button.
+            homeAssistantCard.view,
             // P11.1 (docs/p11-plan.md §2): the maps folder, its status, markers and search ahead.
             osmAndMapsCard.view,
             // P8.1: applies to notification reading and, from P8.2, turn prompts (plan §7).
