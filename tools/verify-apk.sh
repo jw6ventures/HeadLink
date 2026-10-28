@@ -44,11 +44,14 @@ line "native-code: 'arm64-v8a'"
 # W3 amendment): Android wakes the app when the truck it was linked to connects, and the
 # app may then start its foreground services. Both apply only while the operator has
 # linked the app to the truck through Android's companion-device dialog.
+# The 28 October 2026 amendment adds FOREGROUND_SERVICE_LOCATION (normal; spec §5.2):
+# ProjectionService runs with the location type while a location permission is granted,
+# because Android withholds while-in-use location from a foreground service without it.
 # Standby adds WAKE_LOCK (normal; spec §5.2, the standby amendment): held only while the
 # linked truck's own start request sets up (at most 90 s), and 5 s per Bluetooth frame from
 # the truck while waiting for one.
 permissions=$(printf '%s\n' "$badging" | sed -n "s/^uses-permission: name='\([^']*\)'.*/\1/p" | LC_ALL=C sort | tr '\n' ' ')
-[ "$permissions" = "android.permission.ACCESS_COARSE_LOCATION android.permission.ACCESS_FINE_LOCATION android.permission.ACCESS_NETWORK_STATE android.permission.BLUETOOTH_CONNECT android.permission.CHANGE_NETWORK_STATE android.permission.FOREGROUND_SERVICE android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE android.permission.INTERNET android.permission.MANAGE_ONGOING_CALLS android.permission.POST_NOTIFICATIONS android.permission.READ_PHONE_STATE android.permission.REQUEST_COMPANION_START_FOREGROUND_SERVICES_FROM_BACKGROUND android.permission.REQUEST_OBSERVE_COMPANION_DEVICE_PRESENCE android.permission.WAKE_LOCK org.breezyweather.READ_PROVIDER " ] \
+[ "$permissions" = "android.permission.ACCESS_COARSE_LOCATION android.permission.ACCESS_FINE_LOCATION android.permission.ACCESS_NETWORK_STATE android.permission.BLUETOOTH_CONNECT android.permission.CHANGE_NETWORK_STATE android.permission.FOREGROUND_SERVICE android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE android.permission.FOREGROUND_SERVICE_LOCATION android.permission.INTERNET android.permission.MANAGE_ONGOING_CALLS android.permission.POST_NOTIFICATIONS android.permission.READ_PHONE_STATE android.permission.REQUEST_COMPANION_START_FOREGROUND_SERVICES_FROM_BACKGROUND android.permission.REQUEST_OBSERVE_COMPANION_DEVICE_PRESENCE android.permission.WAKE_LOCK org.breezyweather.READ_PROVIDER " ] \
     || fail "unexpected permission set: $permissions"
 # One launcher entry, the main screen. The probe is reached from Diagnostics alone.
 [ "$(printf '%s\n' "$badging" | grep -c '^launchable-activity:')" = 1 ] || fail "launcher entry count"
@@ -97,8 +100,10 @@ services=$(printf '%s\n' "$manifest" | awk '
 projection=$(printf '%s\n' "$services" | grep '"com.jw6ventures.headlink.ProjectionService"') \
     || fail "ProjectionService not declared"
 printf '%s\n' "$projection" | grep -q ':exported([^)]*)=false\( \|$\)' || fail "ProjectionService must not be exported"
-printf '%s\n' "$projection" | grep -q ':foregroundServiceType([^)]*)=0x00000010' \
-    || fail "ProjectionService foregroundServiceType must be connectedDevice only"
+# connectedDevice (0x10) plus location (0x08), so the phone-location fallback keeps
+# working with the screen off; the service adds location only while it is granted.
+printf '%s\n' "$projection" | grep -q ':foregroundServiceType([^)]*)=0x00000018' \
+    || fail "ProjectionService foregroundServiceType must be connectedDevice|location"
 
 # W2/W3: the foreground while a wireless link sets up. Unexported, connectedDevice only.
 linking=$(printf '%s\n' "$services" | grep '"com.jw6ventures.headlink.WirelessLinkService"') \

@@ -522,6 +522,72 @@ fn plaintext_frame_inside_a_split_record_is_rejected() {
     assert!(detail(&s).contains("inside an incomplete TLS record"));
 }
 
+#[test]
+fn split_record_plaintext_is_bounded() {
+    let (mut s, mut hu, t0) = ready_with(hu_sim::Config::default(), |c| {
+        c.hold = Duration::from_secs(60)
+    });
+    // 16 KiB records cut every 40,000 ciphertext bytes: frames never end on a boundary,
+    // so without a bound the unit would keep growing past the 64 KiB the FIRST claims.
+    hu.send_unaligned_records(0, 16 * 1024, 12, 40_000, 64 * 1024);
+    s.receive(&hu.take_output(), t0);
+    assert_eq!(category(&s), Some(Category::FrameInvalid), "{}", detail(&s));
+    assert!(
+        detail(&s).contains("exceed 65536 plaintext bytes"),
+        "{}",
+        detail(&s)
+    );
+}
+
+#[test]
+fn split_record_plaintext_is_bounded_without_a_total() {
+    let (mut s, mut hu, t0) = ready_with(hu_sim::Config::default(), |c| {
+        c.hold = Duration::from_secs(60)
+    });
+    // A FIRST claiming more than any message may be: the unit stops at the largest
+    // message the assembler accepts rather than at the claim.
+    let records = aap_wire::AV_LIMIT / (16 * 1024) + 2;
+    hu.send_unaligned_records(0, 16 * 1024, records, 40_000, u32::MAX);
+    s.receive(&hu.take_output(), t0);
+    assert_eq!(category(&s), Some(Category::FrameInvalid), "{}", detail(&s));
+    assert!(
+        detail(&s).contains(&format!("exceed {} plaintext bytes", aap_wire::AV_LIMIT)),
+        "{}",
+        detail(&s)
+    );
+}
+
+#[test]
+fn split_record_left_incomplete_expires() {
+    let (mut s, mut hu, t0) = ready_with(hu_sim::Config::default(), |c| {
+        c.hold = Duration::from_secs(60)
+    });
+    // One record in frames of 40 ciphertext bytes; every frame but the last ends inside
+    // the record, so hold the last back.
+    hu.send_unaligned_records(0, 100, 1, 40, 4096);
+    let out = hu.take_output();
+    let mut parser = Parser::new();
+    let mut held = 0;
+    while held < out.len() {
+        let (used, _) = parser.consume(&out[held..]).unwrap();
+        if held + used == out.len() {
+            break;
+        }
+        held += used;
+    }
+    s.receive(&out[..held], t0);
+    assert_eq!(category(&s), None, "{}", detail(&s));
+    let expiry = t0 + aap_wire::ASSEMBLY_LIFETIME;
+    assert!(s.next_deadline().is_some_and(|d| d <= expiry));
+    s.on_timer(expiry);
+    assert_eq!(category(&s), Some(Category::FrameInvalid), "{}", detail(&s));
+    assert!(
+        detail(&s).contains("not completed within 10 s"),
+        "{}",
+        detail(&s)
+    );
+}
+
 /// Wraps a complete plaintext control message in one channel-0 frame.
 fn plain_frame(message: Vec<u8>) -> Vec<u8> {
     let mut frame = vec![0, 3];

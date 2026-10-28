@@ -18,6 +18,12 @@
 
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <!-- The phone-location fallback below, read by ProjectionService. Android delivers
+         while-in-use location to a foreground service only if it runs with the location
+         type, so without this the fallback stops once the screen is off. Normal and
+         install-time; ProjectionService adds the type only while a location permission
+         is granted (spec.md 5.2, the 28 October 2026 amendment). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- P5.5, the owned map and its dashboard header. Each is separately optional and
@@ -222,7 +228,7 @@
         <service
             android:name=".ProjectionService"
             android:exported="false"
-            android:foregroundServiceType="connectedDevice" />
+            android:foregroundServiceType="connectedDevice|location" />
         <!-- Enabled by the operator in Settings, never bound by this app.
              MediaSessionManager.getActiveSessions accepts only a notification listener or
              the signature-level MEDIA_CONTENT_CONTROL, so this is the one route an
