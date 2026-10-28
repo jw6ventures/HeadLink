@@ -17,7 +17,7 @@ import java.util.Locale
  * destination waits and is routed as soon as a vehicle fix arrives.
  *
  * **Nothing about the destination reaches the report or the event log** except which
- * source set it (P6 plan §5.1, §9.6): the label is often a street address, and the
+ * source set it (P6): the label is often a street address, and the
  * coordinates are the same thing in another form.
  */
 object Navigation {
@@ -107,7 +107,7 @@ object Navigation {
      * travelling, so the new route starts ahead of it.
      *
      * While live traffic is on and holds a response, every request carries its closures and
-     * jams as no-go points ([Traffic.withNogos], plan §7): new routes from the start,
+     * jams as no-go points ([Traffic.withNogos], docs/navigation.md, "Live traffic (HERE)"): new routes from the start,
      * re-routes, and a route through a chosen alternative's via point alike.
      */
     fun route(

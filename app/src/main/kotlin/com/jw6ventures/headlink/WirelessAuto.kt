@@ -24,7 +24,7 @@ import java.util.Locale
 import java.util.UUID
 
 /**
- * W3 (spec §5.2, the W3 amendment; docs/wireless-w3-procedure.md): start wireless
+ * W3 (spec §5.2, the W3 amendment; docs/connecting.md, "The companion-device link and auto-start"): start wireless
  * projection when the truck connects over Bluetooth, with the phone left in a pocket.
  *
  * The app is linked to the truck once through Android's companion-device dialog

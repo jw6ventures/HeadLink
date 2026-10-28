@@ -8,7 +8,7 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * The area to ask HERE about (P9 plan §4): the box around the route from the vehicle to
+ * The area to ask HERE about (P9): the box around the route from the vehicle to
  * [lookAheadKm][boxes] further along it, or to the destination if that is nearer, padded by
  * [PAD_M] on every side.
  *
@@ -24,7 +24,7 @@ import kotlin.math.min
  * through. Each cell is one flow and one incidents request.
  */
 object TrafficArea {
-    /** Plan §4: padding on every side of the route ahead. */
+    /** Padding on every side of the route ahead. */
     const val PAD_M = 2_000.0
 
     /** HERE's box-size limit, degrees of latitude and of longitude (P9.0, `E608006`). */
@@ -36,7 +36,7 @@ object TrafficArea {
      */
     const val MAX_SPAN_DEG = 0.999
 
-    /** Plan §3, decision 1: the Look ahead setting's default. */
+    /** The Look ahead setting's default. */
     const val DEFAULT_LOOK_AHEAD_KM = 30.0
 
     private const val METRES_PER_DEGREE = 6_371_000.0 * PI / 180.0
@@ -57,7 +57,7 @@ object TrafficArea {
 
     /**
      * The boxes to fetch for [route] from [alongM] metres along it to [lookAheadKm] further:
-     * one box in every case the plan expects, several only when one would be bigger than
+     * one box in every case the design expects, several only when one would be bigger than
      * HERE allows. Empty for a route with no points.
      */
     fun boxes(route: Route, alongM: Double, lookAheadKm: Double = DEFAULT_LOOK_AHEAD_KM): List<TrafficBox> {

@@ -10,7 +10,7 @@ import kotlin.math.hypot
 import kotlin.math.max
 
 /**
- * HERE's roads laid on our route (P9 plan §5), and the delay they add (§6).
+ * HERE's roads laid on our route (P9), and the delay they add.
  *
  * HERE describes each stretch by its own geometry and the route is BRouter's OSM geometry,
  * so matching is by shape: the route is cut into pieces of at most [PIECE_M], and each
@@ -21,7 +21,7 @@ import kotlin.math.max
  * frontage road off. A piece nothing agrees with has no data: [Congestion.NONE], which is
  * drawn as the route's normal colour and is not [Congestion.FREE].
  *
- * The three thresholds are first guesses (plan §12, "Matching quality"), for the lab and a
+ * The three thresholds are first guesses, for the lab and a
  * drive to settle; they are named here so that is one edit.
  *
  * Pure Kotlin, no Android, no state: call it from any thread. The traffic loop should call
@@ -30,10 +30,10 @@ import kotlin.math.max
  * near it rather than at all of them.
  */
 object TrafficMatch {
-    /** Plan §5: a HERE stretch this near a piece of the route may be the road it is on. */
+    /** A HERE stretch this near a piece of the route may be the road it is on. */
     const val NEAR_M = 15.0
 
-    /** Plan §5: and must run the same way to within this, degrees. */
+    /** And must run the same way to within this, degrees. */
     const val HEADING_DEG = 30.0
 
     /** The route is matched in pieces no longer than this, metres. */
@@ -63,14 +63,14 @@ object TrafficMatch {
      * the span it falls in, so one stretch can give a free run and then a queue. Pieces
      * with no data make no run.
      *
-     * **Delay** (plan §6): a run's [TrafficRun.delaySeconds] is its length at HERE's speed,
+     * **Delay**: a run's [TrafficRun.delaySeconds] is its length at HERE's speed,
      * less BRouter's own time for the same metres from [Route.pointSeconds], and never less
      * than 0 — on [Congestion.SLOW] and [Congestion.QUEUING] runs only. A free-flowing run
      * has no delay even where HERE's free-flow speed is below BRouter's model: on P9.0's
      * real Dallas routes that difference alone came to 17 and 36 s on empty roads, which
-     * would have shown "+1 min traffic" with no traffic at all (docs/p9-2-results.md §3).
-     * This departs from the plan's formula, which counts every matched stretch; the
-     * orchestrator asked for it (docs/p9-4-5-runtime-results.md §4).
+     * would have shown "+1 min traffic" with no traffic at all (docs/navigation.md, "Live traffic (HERE)").
+     * This departs from an earlier formula, which counted every matched stretch; the
+     * orchestrator asked for it (docs/navigation.md, "Live traffic (HERE)").
      *
      * **Closures.** A closed run (a span HERE marks `closed` or `reversibleNotRoutable`, or
      * a piece matched by an incident that is `roadClosed` or of type `roadClosure`) has no

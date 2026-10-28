@@ -5,7 +5,7 @@
 //! right channel an 880 Hz sine, both at a quarter of full scale; a mono configuration
 //! carries the 440 Hz channel alone. A receiver that dumps the PCM it was sent can check
 //! the fundamental and, on stereo, that the channels were not swapped — which is the
-//! round-trip check the plan asks for, and the one thing the video path has no equivalent
+//! round-trip check P5.3 called for, and the one thing the video path has no equivalent
 //! of (references.md: no wire signal distinguishes a displayed frame from a discarded
 //! one).
 //!

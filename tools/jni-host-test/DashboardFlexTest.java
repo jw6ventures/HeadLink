@@ -172,7 +172,7 @@ public final class DashboardFlexTest {
         check(l.keypadKey(1).getY() == l.keypadKey(0).getY() && l.keypadKey(3).getY() > l.keypadKey(0).getY()
             && l.keypadKey(10).getX() == l.keypadKey(1).getX(), at + "three columns, 0 under 8");
         check(l.hitKeypadKey(l.keypadKey(0).getRight() + l.getMargin() / 2, l.keypadKey(0).getCenterY()) == -1, at + "the gap misses");
-        // Much bigger than twelve keys inside the tile would be (plan section 5.8).
+        // Much bigger than twelve keys inside the tile would be.
         Box k = l.keypadKey(4);
         check(k.getWidth() * 2 > l.getFlexTile().getWidth() / 3 * 2 && k.getHeight() > l.getFlexTile().getHeight() / 5,
             at + "keys are far bigger than in the tile: " + k.getWidth() + "x" + k.getHeight());
@@ -207,12 +207,12 @@ public final class DashboardFlexTest {
         check(s.getFlex() == FlexSource.EMPTY && s.getNotificationsPaused() && s.getNotifications().isEmpty(),
             "paused with the pause: nothing drawn, and the tile says Notifications paused");
         paused.call(ringing(CallSource.TELECOM));
-        check(paused.nextFrame(NOON).getFlex() == FlexSource.CALL, "the pause does not hide a call (plan section 10 q2)");
+        check(paused.nextFrame(NOON).getFlex() == FlexSource.CALL, "the pause does not hide a call");
 
         check(FlexRules.INSTANCE.source(CallState.Companion.getNONE(), false, 0) == FlexSource.EMPTY, "the rule: nothing");
         check(FlexRules.INSTANCE.label(FlexSource.CALL, new CallState(CallPhase.ACTIVE, CALLER, NOON, true, CallSource.TELECOM)).equals("Muted"),
             "a muted call's label says Muted");
-        check("No notifications".equals(FlexRules.NO_NOTIFICATIONS) && "Notifications paused".equals(FlexRules.PAUSED), "the plan's words");
+        check("No notifications".equals(FlexRules.NO_NOTIFICATIONS) && "Notifications paused".equals(FlexRules.PAUSED), "the documented words");
     }
 
     // --- notifications ---------------------------------------------------------------

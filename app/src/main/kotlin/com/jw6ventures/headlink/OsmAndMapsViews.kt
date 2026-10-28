@@ -16,7 +16,7 @@ import android.widget.TextView
 import java.util.Locale
 
 /**
- * The live suggestions under the connection screen's destination box (P11.4, plan §4):
+ * The live suggestions under the connection screen's destination box (P11.4):
  * up to eight rows, a label and a detail line each, refreshed [PhoneSearch.DEBOUNCE_MS]
  * after the last keystroke. A tap hands the place to [onPick]. What is typed and shown
  * stays in these views: nothing is noted or reported but counts ([PhoneSearch.report]).
@@ -92,7 +92,7 @@ class SearchSuggestions(
 }
 
 /**
- * Settings → OsmAnd maps (P11.1, plan §2, §6a, §12 decision 5): the folder, its status,
+ * Settings → OsmAnd maps (P11.1, docs/navigation.md, "OsmAnd maps: search and places"): the folder, its status,
  * where OsmAnd's own setting is, and the marker and search-ahead choices ([PoiSettings]).
  * Distances are stored in miles and shown in the dashboard's speed unit.
  */

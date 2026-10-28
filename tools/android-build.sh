@@ -7,7 +7,7 @@
 # signed with the local debug key so it installs over the debug build with
 # `adb install -r` and keeps the app's data. Use it on the phone and in the vehicle: ART
 # runs a debuggable app largely unoptimised, and routing measured thirty times slower in
-# the debug build (docs/p6-3a-results.md §3.5). The emulator lab still needs the debug
+# the debug build (docs/navigation.md, "Routing"). The emulator lab still needs the debug
 # APK. The unsigned release APK stays the reproducible artifact; this one is derived.
 # Offline by default. Pass --online once to fill the Gradle cache; every downloaded
 # artifact is checked against gradle/verification-metadata.xml.

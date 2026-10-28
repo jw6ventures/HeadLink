@@ -17,7 +17,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 
 /**
- * The phone screen's building blocks (P7.7, plan §6): cards, short labels with an ⓘ
+ * The phone screen's building blocks (P7.7): cards, short labels with an ⓘ
  * that opens the long explanation, section titles and the tab bar. Platform views only —
  * spec §2.2 keeps AndroidX at zero — styled from the app theme and `res/values*`
  * colours, so the light and dark screens come from the same code.
@@ -76,7 +76,7 @@ class PhoneViews(private val activity: Activity) {
     }
 
     /**
-     * The ⓘ that opens [help] in a dialog titled [label] (plan §6.3): the careful
+     * The ⓘ that opens [help] in a dialog titled [label]: the careful
      * explanations every control used to carry inline are kept word for word, one tap
      * away instead of in the way. A 48 dp target, as Android's accessibility guidance asks.
      */

@@ -5,7 +5,7 @@ agp = "9.4.0"
 kotlin = "2.2.10"
 # VTM, the owned map renderer (P5.5). Pinned to the last release published to Maven
 # Central: 0.26.0 onwards are JitPack-only, which gives no centrally hosted artifact for
-# verification-metadata.xml to pin. See docs/p5-plan.md §5.
+# verification-metadata.xml to pin. See docs/navigation.md, "Maps".
 vtm = "0.25.0"
 # Pulled in by vtm-android alone, and the only transitive dependency VTM has.
 androidsvg = "1.4"

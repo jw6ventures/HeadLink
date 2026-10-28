@@ -25,7 +25,7 @@ import android.service.notification.StatusBarNotification
  * open to an ordinary app, and this class is it. For that purpose it only needs to be
  * named in [ComponentName]; none of its callbacks are involved.
  *
- * **What it reads, and when (P7.8, P7.9; plan §5.8, §9 item 6).** The grant covers every
+ * **What it reads, and when (P7.8, P7.9).** The grant covers every
  * notification on the phone, but this service reads only what an operator's own switch
  * asks for, and nothing otherwise:
  *
@@ -35,7 +35,7 @@ import android.service.notification.StatusBarNotification
  *    importance, group summaries, media, calls or this app's own, and not from an
  *    excluded app. They are held in memory for the session, newest first, and never
  *    written, logged or reported; the report counts them.
- *  * **A tapped notification's full text, for reading aloud** (P8.1, docs/p8-plan.md §8).
+ *  * **A tapped notification's full text, for reading aloud** (P8.1, docs/audio-and-speech.md).
  *    When the driver taps a dashboard row, [Speaker] asks for that one notification by
  *    its key, at that moment only, and hands its words to the speech engine; they are not
  *    kept, logged or reported. Only rows the feed already shows can be tapped.
@@ -118,7 +118,7 @@ class MediaAccessService : NotificationListenerService() {
     }
 
     /**
-     * One notification's words for reading aloud (plan §8), or null when it is no longer
+     * One notification's words for reading aloud, or null when it is no longer
      * on the phone or the feed is off. Asked for by key alone, so nothing else in the
      * shade is read; the answer goes straight to [ReadAloudText] and is not kept.
      */

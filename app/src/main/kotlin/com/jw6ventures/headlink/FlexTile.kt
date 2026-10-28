@@ -3,7 +3,7 @@ package com.jw6ventures.headlink
 /**
  * A list of rows that a finger scrolls and taps: the favourites tile's gesture (P6.6),
  * taken out of [Dashboard] so the flex tile's notifications (P7.8) use the same rules
- * rather than a second copy of them (plan §5.8).
+ * rather than a second copy of them.
  *
  * The rules, unchanged from P6.6: a press that comes down in the list either lifts on the
  * row it pressed, which is a tap, or moves past the slop, which makes the rest of the
@@ -95,21 +95,21 @@ class TouchList {
     }
 }
 
-/** What the flex tile is showing (plan §5.8), highest priority first. */
+/** What the flex tile is showing, highest priority first. */
 enum class FlexSource(val key: String) {
     /** A call, ringing or in progress (P7.9). */
     CALL("call"),
 
     /**
-     * P11.5: a POI card, opened by tapping a marker (docs/p11-plan.md §6) or by P11.5a's
+     * P11.5: a POI card, opened by tapping a marker (docs/navigation.md) or by P11.5a's
      * search ahead: the driver asked for it just now, so it comes before the weather view.
      */
     POI("poi"),
 
-    /** P10: the weather view, opened by tapping the header's weather item (docs/p10-plan.md §5.2). */
+    /** P10: the weather view, opened by tapping the header's weather item (docs/dashboard.md). */
     WEATHER("weather"),
 
-    /** P10: a weather alert in force at or above the chosen level and not dismissed (§5.3). */
+    /** P10: a weather alert in force at or above the chosen level and not dismissed (docs/dashboard.md, "Weather"). */
     WEATHER_ALERT("weather_alert"),
 
     /** Alerting notifications, turned on and not paused with Ⓟ (P7.8). */
@@ -140,7 +140,7 @@ enum class CallActionKind {
  * its own lock, and every call control goes through [CallControl] from the service, never
  * from the render thread.
  *
- * **[key] is a keypad digit, and digits are often PINs and account numbers** (plan §5.8).
+ * **[key] is a keypad digit, and digits are often PINs and account numbers**.
  * It exists only to reach `Call.playDtmfTone`. [toString] leaves it out, so no log line or
  * string template can carry it by accident, and [note] never names it.
  */
@@ -181,16 +181,16 @@ object FlexRules {
     /** The keypad's keys in reading order, three to a row. */
     const val KEYPAD_KEYS = "123456789*0#"
 
-    /** The empty tile's two sayings (plan §5.8). */
+    /** The empty tile's two sayings. */
     const val NO_NOTIFICATIONS = "No notifications"
     const val PAUSED = "Notifications paused"
 
     /**
      * Which source the tile shows: a call first, because a missed call is costlier than a
-     * missed message (and Ⓟ does not hide calls, plan §10 question 2); then, since P10, the
+     * missed message (and Ⓟ does not hide calls); then, since P10, the
      * weather view the driver opened, which carries any alert in its strip, and then a
      * weather alert, which Ⓟ does not hide either, since it pauses notifications and not
-     * safety information (docs/p10-plan.md §5.3); then notifications while not paused and
+     * safety information (docs/dashboard.md, "Weather"); then notifications while not paused and
      * there are any; else the quiet empty state. Weather never fills an empty tile by itself.
      * P11.5: an open POI card comes straight after a call, since it is the last thing the
      * driver tapped; opening it closes the weather view and the other way round.
@@ -227,7 +227,7 @@ object FlexRules {
 
     /**
      * The tile's label, which follows what it shows. "Muted" while the microphone is off,
-     * because a forgotten mute is the common mistake (plan §5.8).
+     * because a forgotten mute is the common mistake.
      */
     fun label(source: FlexSource, call: CallState): String = when (source) {
         FlexSource.CALL -> when (call.phase) {

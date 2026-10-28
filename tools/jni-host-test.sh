@@ -60,7 +60,7 @@
 #   backends — the multi-SIM signal rows and network label, the idle media pane's player
 #   order, the flex tile's notification filter and feed, and the call state mapping. The
 #   Android halves (TelephonyCallback, MediaBrowser, the listener, Telecom) need a phone.
-# * StatusTextTest: P7.7's status in words (every row of the plan's §6.2 table and the
+# * StatusTextTest: P7.7's status in words (every row of the status table in docs/phone-app.md and the
 #   raw-name fallback), the route summary on Home, and the Setup checklist.
 # * VoicePromptsTest: P8.2's turn prompts — when each stage fires over synthetic approaches
 #   (city, highway, close turns, joining late, straights, re-routes, arrival, stage and
@@ -71,7 +71,7 @@
 #   counts, and what a tapped notification is read as. TextToSpeech needs a phone.
 # * TrafficClientTest: P9.1's live traffic client and P9.2's response parsing - no request
 #   at all while the integration is off or keyless (the injected HTTP layer is never
-#   called), exactly the plan's two GETs with gzip, every request counted before it is sent,
+#   called), exactly the two GETs with gzip, every request counted before it is sent,
 #   the monthly cap and its reset on the 1st (UTC), both HERE error shapes with the key never
 #   in a message, flow sub-segments and closed stretches without speed, gzip with or without
 #   the header, the base-URL override honoured only when debuggable, and that a snapshot is
@@ -89,7 +89,7 @@
 #   the link factor). ROUTING_SEGMENTS with W100_N30.rd5 adds real routes on I-35 in Austin
 #   and roads in Dallas and rural Texas: points reach BRouter, a closure blocks, a jam weighs
 #   about its delay, a vehicle on a closed road still gets out, nothing leaks into the next
-#   request, a jam cannot open a closure on the same link, the plan's overpass and
+#   request, a jam cannot open a closure on the same link, the overpass and
 #   frontage-road cases, and relative timings with 50/200/400 points; with W105_N30.rd5 as
 #   well, that the top-speed step-down keeps the points.
 # * DashboardTrafficTest: P9.3, P9.4 and P9.6 on the dashboard - which traffic runs colour
@@ -124,7 +124,7 @@
 #   the alert's dismissal, the alert speech rules, and no place, temperature or headline in
 #   a report. It also parses the lab stand-in's own scenarios (tools/breezy-standin/), whose
 #   pure Scenarios.java is compiled here too. Fixtures are in Breezy's shape from its source;
-#   no real blob from a phone has been read yet (docs/p10-plan.md P10.0).
+#   no real blob from a phone has been read yet (docs/verification.md, "Feature status").
 # * HomeAssistantTest: the Home Assistant button - the settings' cleaning, repair and stored
 #   form, nothing sent while it is off or not set up, a press as exactly one POST with the
 #   token only in its header, Check as GETs only, the words for each answer, the button in the
@@ -177,7 +177,7 @@
 #   RFCOMM link, the truck's button and the wake lock need a phone and the truck.
 # LabDrive.java and LabTraffic.java are compiled here but not run: they are generators run
 # by hand, the second writing the P9 lab's stand-in HERE scenarios and traffic drive
-# (tools/here-standin/, docs/p9-lab-results.md).
+# (tools/here-standin/, docs/verification.md).
 # See each test for scope; neither proves anything about ART or Android storage.
 set -eu
 classes=app/build/intermediates/built_in_kotlinc/release/compileReleaseKotlin/classes

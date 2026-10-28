@@ -1,15 +1,15 @@
 package com.jw6ventures.headlink
 
 /**
- * P11's contract types (docs/p11-plan.md): what the OBF reader hands to search, the map's
+ * P11's contract types (docs/navigation.md): what the OBF reader hands to search, the map's
  * POI markers and search ahead. Pure JVM. The reader ([ObfFile], [ObfLibrary]) produces
  * these; nothing here knows the file format.
  *
  * Names and labels in these types are places James typed or drove near: phone only, never
- * the report or the event log (plan §8).
+ * the report or the event log.
  */
 
-/** One of the three map buttons (plan §6, decisions 3). */
+/** One of the three map buttons. */
 enum class PoiKind(val label: String) {
     /** `transportation` / `fuel` only; EV charging is left out. */
     GAS("gas"),
@@ -91,7 +91,7 @@ data class GeoBox(val south: Double, val west: Double, val north: Double, val ea
         south <= other.north && other.south <= north && west <= other.east && other.west <= east
 }
 
-/** What one search suggestion is (plan §4, §5). */
+/** What one search suggestion is. */
 enum class SuggestionKind { EXACT, INTERPOLATED, CLOSEST, STREET, CITY, POSTCODE, POI }
 
 class Suggestion(

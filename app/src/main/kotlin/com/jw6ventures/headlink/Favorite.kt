@@ -5,7 +5,7 @@ package com.jw6ventures.headlink
  * where it is.
  *
  * The name and the coordinates are the operator's own, like a shared destination's
- * label (P6 plan §5.1): they are shown on the phone and drawn on the head unit, and
+ * label (P6): they are shown on the phone and drawn on the head unit, and
  * never reach the report or the event log. Pure JVM, so tools/jni-host-test can hold the
  * stored form to its rules.
  */

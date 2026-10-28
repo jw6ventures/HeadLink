@@ -1,8 +1,8 @@
 # BRouter, vendored
 
 Offline routing engine for P6.3. **Vendored source, held unmodified.** See
-[docs/p6-plan.md](../../docs/p6-plan.md) §4 for the decision and the alternatives that
-were rejected.
+[docs/navigation.md](../../docs/navigation.md), "Routing", for why it is vendored and how
+it is used.
 
 ## Pin
 

@@ -1241,7 +1241,7 @@ private:
     QElapsedTimer clock_;
 };
 
-/// Prodigy's audio handler with the underflow injection the P5.3 plan asks for, plus a
+/// Prodigy's audio handler with the underflow injection P5.3 calls for, plus a
 /// record of what arrived. Prodigy answers the setup, the start indication and every
 /// buffer itself; the only thing missing is 0x800B, which no open-source head unit sends
 /// and which is the most valuable diagnostic in the audio path.
@@ -1411,7 +1411,8 @@ void addChannels(oaa::SessionConfig& config, const Capabilities& caps)
     if (caps.navigation) {
         // Unlike media_info this descriptor is configuration, not a marker: how often the
         // head unit will accept an update, and which presentation it wants. No image
-        // options — Ford sends none either, and this source sends no images (P6 plan §2).
+        // options — Ford sends none either, and this source sends no images
+        // (docs/navigation.md, "Instrument cluster turn-by-turn").
         oaa::proto::data::ChannelDescriptor navigation;
         navigation.set_channel_id(oaa::ChannelId::Navigation);
         auto* nav = navigation.mutable_navigation_channel();
@@ -2117,8 +2118,8 @@ int main(int argc, char** argv)
                         navLanes = snapshot.lanes.size();
                         navDestinations = snapshot.destinations.size();
                         // The road name and the instruction are not printed: they are
-                        // scripted here, and the rule they would establish is not (P6
-                        // plan §9). The maneuver and the counts are the evidence.
+                        // scripted here, and the rule they would establish is not
+                        // (spec §10). The maneuver and the counts are the evidence.
                         out << "receiver_navigation_step=maneuver=" << navManeuver
                             << " steps=" << snapshot.stepCount << " lanes=" << navLanes
                             << " destinations=" << navDestinations << "\n";
@@ -2707,7 +2708,7 @@ int main(int argc, char** argv)
     // line at street zoom is a thousand or more; a hundred is well clear of noise.
     const int TRAFFIC_AMBER_MIN = 300;
     const int TRAFFIC_CLOSED_MIN = 100;
-    // P10 (the weather script, docs/p10-plan.md §8). The header's weather item and the flex
+    // P10 (the weather script, docs/verification.md, "Emulator lab"). The header's weather item and the flex
     // tile, judged off the decoded picture. Warm is the glyph's sun (#D98200 by day, #FFC94D at
     // night: U about 60, V 160-176) and an alert's orange (#FF8C00: U 50, V 189): nothing else
     // in the header, an empty tile or a notification row is that colour. The second lab
@@ -4079,7 +4080,7 @@ int main(int argc, char** argv)
                 ++step;
                 break;
             }
-            // P9 (plan §8). Parked at the drive's first point until the source has put the
+            // P9. Parked at the drive's first point until the source has put the
             // route on the cluster, then by --traffic-mode: offer waits for the divided turn
             // card, frames it in the other palette and back (the renders for James), presses
             // Keep, waits for the next offer (the lab has made the queue heavier meanwhile) and
@@ -4334,7 +4335,7 @@ int main(int argc, char** argv)
                 step = 99;
                 break;
             }
-            // P10 (plan §8). The weather script: the header's weather item, found drawn (or,
+            // P10. The weather script: the header's weather item, found drawn (or,
             // off, not) once the first read is in, then by --weather-mode. show, stale and
             // unsupported open the view, frame it in both palettes for the renders and close it
             // with a second press; tap closes it each of the three ways and then presses it
@@ -4364,7 +4365,7 @@ int main(int argc, char** argv)
                     check(warm <= 2, QString("with weather off the header has %1 warm pixels where the item would be").arg(warm));
                 } else {
                     check(drawn, QString("the header's weather item was not drawn within 90 s (%1 warm pixels)").arg(warm));
-                    // Plan §5.1: the text never runs into the item.
+                    // The text never runs into the item.
                     check(clear >= 2, QString("the header text ends %1 px from the weather item").arg(clear));
                 }
                 weatherHeaderRef = paneLuma(pane.headerWeather);
@@ -5000,7 +5001,7 @@ int main(int argc, char** argv)
             // What the second reader made of it. The maneuver is a number, the distance
             // is the source's own text, and neither a road name nor a destination is
             // printed: this evidence is about whether the cluster was driven, not about
-            // where anybody was going (P6 plan §9).
+            // where anybody was going (spec §10).
             check(navigation->unexpected == 0,
                   QString("%1 unexpected messages on the cluster channel")
                       .arg(navigation->unexpected));
@@ -5008,7 +5009,7 @@ int main(int argc, char** argv)
                 check(navigation->states > 0, "the cluster was never told a navigation state");
                 check(navigation->notifications > 0, "no maneuver arrived on the cluster channel");
                 check(navigation->distances > 0, "no distance arrived on the cluster channel");
-                // P6 plan §2: semantic, not pictorial, and no lanes this project could
+                // Semantic, not pictorial, and no lanes this project could
                 // fill from a real route.
                 check(navLanes == 0, QString("%1 lane groups were sent").arg(navLanes));
                 // The clock format is unrecorded and the source does not know the
@@ -5017,7 +5018,7 @@ int main(int argc, char** argv)
                 check(navTimeToStep >= 0, "no time to the next maneuver was sent");
             } else {
                 // A head unit that never announced a cluster must be told nothing at all:
-                // the P6 plan §3 sequence waits for the cluster rather than assuming it.
+                // the P6 sequence waits for the cluster rather than assuming it.
                 check(navigation->states == 0,
                       QString("%1 navigation states were sent to a cluster that never "
                               "announced itself")

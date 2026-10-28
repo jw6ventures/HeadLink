@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The emulator lab's stand-in Breezy Weather (tools/breezy-standin.sh, P10 plan §8). Never
+<!-- The emulator lab's stand-in Breezy Weather (tools/breezy-standin.sh, P10). Never
      shipped and NEVER installed on a phone: it takes Breezy's real package name,
      org.breezyweather, so that the app's provider-owner check accepts it, and on the Pixel
      that name belongs to the real Breezy. The emulator has no Breezy, so without this the

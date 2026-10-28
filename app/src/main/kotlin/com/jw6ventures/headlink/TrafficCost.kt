@@ -1,9 +1,8 @@
 package com.jw6ventures.headlink
 
 /**
- * What a second of traffic delay is worth in BRouter's currency (P9.5, plan §7 "How
- * heavy"), so a jam's no-go points ([TrafficNogos]) weigh what its delay would. Measured on
- * the Texas tiles on 28 September 2026 (docs/p9-5-routing-results.md); pure Kotlin, no
+ * What a second of traffic delay is worth in BRouter's currency (P9.5), so a jam's no-go points ([TrafficNogos]) weigh what its delay would. Measured on
+ * the Texas tiles on 28 September 2026 (docs/navigation.md, "Live traffic (HERE)"); pure Kotlin, no
  * state, callable from any thread.
  *
  * **BRouter's cost is not seconds.** `car-vario` is a kinematic profile: a piece of road

@@ -19,7 +19,7 @@ data class AlternativeMark(val id: Long, val latitude: Double, val longitude: Do
 data class AlternativeBubble(val id: Long, val box: Box, val label: String, val pressed: Boolean)
 
 /**
- * The offer as the divided turn card draws it (P9.6, docs/p9-plan.md §7): "Faster: −7 min",
+ * The offer as the divided turn card draws it (P9.6, docs/navigation.md): "Faster: −7 min",
  * the reason, and which of Take and Keep a finger is on. Words only, so the chrome repaints
  * when what it says changes and not when the traffic loop republishes the same offer.
  */
@@ -35,8 +35,8 @@ enum class HomeAssistantState { IDLE, SENDING, OK, FAILED }
 data class HomeAssistantButton(val pressed: Boolean, val state: HomeAssistantState)
 
 /**
- * How the turn card divides while a faster way round is offered (P9.6). The plan leaves the
- * choice to lab renders at the truck's pane size (§11), so both are built.
+ * How the turn card divides while a faster way round is offered (P9.6). The choice was left
+ * to lab renders at the truck's pane size, so both are built.
  */
 enum class OfferLayout(val key: String) {
     /** The turn card as it always is, with the offer in a band of its own beneath it. */
@@ -51,7 +51,7 @@ enum class OfferLayout(val key: String) {
  * status header across the top, an owned map filling one half below it, and the other
  * half holding the media pane over two tiles, the first of which lists the saved places —
  * or, while a route exists, is the trip panel (P7.4) — and the second of which is the
- * flex tile (plan §5.8). The turn card lies across the top of the map during a route.
+ * flex tile. The turn card lies across the top of the map during a route.
  *
  * The map side is configurable because which side falls to hand depends on the vehicle,
  * and getting it wrong is only discoverable from the driver's seat — the same reason
@@ -174,10 +174,10 @@ class DashboardLayout @JvmOverloads constructor(
     val attributionTop: Int = map.bottom - margin / 2 - attributionTextSize
 
     /**
-     * The zoom bubbles (P7.2, plan §4.1), + above −, in the pane's bottom-right corner
+     * The zoom bubbles (P7.2), + above −, in the pane's bottom-right corner
      * above the credit: index 0 is + and 1 is −, in [ZOOM_ACTIONS] order.
      *
-     * The bottom-right because the plan decided it (§1.1): four bubbles in the one
+     * The bottom-right because four bubbles in the one
      * bottom-left stack would climb more than half the pane, and the top of the pane is
      * kept for the turn card. The same size and spacing as the left stack, so a finger
      * that has learned one knows the other.
@@ -227,7 +227,7 @@ class DashboardLayout @JvmOverloads constructor(
 
     /**
      * Cell signal, left of the battery: four bars for the primary SIM with its network
-     * type beside them, and a row of dots under the bars for each other SIM (plan §5.2).
+     * type beside them, and a row of dots under the bars for each other SIM.
      */
     val headerSignal: Box = run {
         val w = header * 11 / 10
@@ -235,7 +235,7 @@ class DashboardLayout @JvmOverloads constructor(
     }
 
     /**
-     * The header's touch targets (P7.3, plan §5.1), left of the signal, in
+     * The header's touch targets (P7.3), left of the signal, in
      * [HEADER_ACTIONS] order from the left: Ⓟ, then ☀/☾.
      *
      * Header-height squares, because the header is as tall as a target can be without
@@ -256,12 +256,12 @@ class DashboardLayout @JvmOverloads constructor(
     /**
      * How far right the header's text may run: the clock, speed and compass stop a margin
      * short of the first icon. The turn line that used to fill the rest is on the turn
-     * card since P7.4, and the room it leaves stays empty (plan §5.1).
+     * card since P7.4, and the room it leaves stays empty.
      */
     val headerTextRight: Int get() = headerIcon(0).x - margin
 
     /**
-     * P10: the weather item (docs/p10-plan.md §5.1), a margin left of Ⓟ: full header height,
+     * P10: the weather item (docs/dashboard.md), a margin left of Ⓟ: full header height,
      * like the icons, and a fixed 2.2 headers wide, so the clock and the speed never move as
      * the temperature changes. The glyph and the text sit half a margin in from each other
      * and the box's edge: with whole margins, "-12°C" did not fit by the generous
@@ -321,7 +321,7 @@ class DashboardLayout @JvmOverloads constructor(
     val headerWeatherTextSize: Float = header * 0.42f
 
     /**
-     * The temperature as the item has room for it (plan §5.1): [full], "78°F", else [short],
+     * The temperature as the item has room for it: [full], "78°F", else [short],
      * "78°". Judged by [EM_PER_CHARACTER], a generous width, so what is chosen here fits
      * whatever the font; the drawing still cuts rather than overruns.
      */
@@ -402,7 +402,7 @@ class DashboardLayout @JvmOverloads constructor(
     /** The furthest a list of [count] rows can scroll: zero while they all fit. */
     fun listMaxScroll(list: Box, rowHeight: Int, count: Int): Int = maxOf(0, count * rowHeight - list.height)
 
-    // --- P7.8, P7.9: the flex tile (plan §5.8) ---------------------------------------
+    // --- P7.8, P7.9: the flex tile ---------------------------------------
 
     /** The second tile, which shows a call, notifications, or a quiet empty state. */
     val flexTile: Box get() = tiles[FLEX_TILE]
@@ -443,7 +443,7 @@ class DashboardLayout @JvmOverloads constructor(
 
     /**
      * Answer (index 0) and Decline (1) while ringing: each half the tile's width and the
-     * full height under the name (plan §5.8). The biggest targets the tile can give: a
+     * full height under the name. The biggest targets the tile can give: a
      * ringing call wants a decision now, from the driver's seat, at arm's length.
      */
     fun ringButton(index: Int): Box {
@@ -474,7 +474,7 @@ class DashboardLayout @JvmOverloads constructor(
         actions.indices.firstOrNull { callActionBox(actions, it).contains(px, py) }?.let { actions[it] }
 
     /**
-     * The keypad (P7.9, plan §5.8): a pop-up over the whole half the map does not occupy —
+     * The keypad (P7.9): a pop-up over the whole half the map does not occupy —
      * the media pane and both tiles — so the map stays in view. Inside the tile, which is
      * about 455 px square at 1080p, twelve keys would be about 140 × 100 px; over the half
      * they are about 290 × 180.
@@ -541,7 +541,7 @@ class DashboardLayout @JvmOverloads constructor(
         MEDIA_ACTIONS.indices.firstOrNull { mediaButton(it).contains(px, py) }?.let { MEDIA_ACTIONS[it] }
 
     /**
-     * The turn card (P7.4, plan §5.3), across the top of the map pane and inset by the
+     * The turn card (P7.4), across the top of the map pane and inset by the
      * margin like the floating controls.
      *
      * A fifth of the pane: tall enough for the distance in type a driver reads at arm's
@@ -570,13 +570,13 @@ class DashboardLayout @JvmOverloads constructor(
     val markerBelow: Int = (turnCard.bottom - map.y) / 2
 
     /**
-     * The voice-guidance toggle (P8.2, P8 plan §6): at the right end of End route's row,
+     * The voice-guidance toggle (P8.2): at the right end of End route's row,
      * End route's height, a margin clear of it.
      *
-     * **Not quite the plan's square.** The row inside the tile is only about two media
+     * **Not quite the square an earlier design asked for.** The row inside the tile is only about two media
      * buttons wide (415 px beside 208 px buttons at 1080p, 174 beside 93 at 800x480), so a
      * square of End route's height would leave End route narrower than the toggle, and
-     * "End route" in type too small to read; the plan also asks for End route to stay the
+     * "End route" in type too small to read; End route is also to stay the
      * widest target on the tile. So the toggle is a square only while that leaves End
      * route at least twice its width, and narrower than it is tall otherwise: a third of
      * the row at every display the project renders. The glyph is drawn to its width.
@@ -589,9 +589,9 @@ class DashboardLayout @JvmOverloads constructor(
     }
 
     /**
-     * End route (P7.4, plan §5.4): along the bottom of the trip panel, which takes the
-     * favourites tile's place during a trip. **The height of a media button**, as the plan
-     * asks: it is the only way to cancel a route from the car, and it is the fix for a
+     * End route (P7.4): along the bottom of the trip panel, which takes the
+     * favourites tile's place during a trip. **The height of a media button**: it is the
+     * only way to cancel a route from the car, and it is the fix for a
      * mistaken favourite, so it gets the biggest target the tile can give it. Since P8.2
      * it stops a margin short of [voiceToggle], and is still the widest target there.
      */
@@ -620,7 +620,7 @@ class DashboardLayout @JvmOverloads constructor(
     }
 
     /**
-     * The later maneuvers (plan §5.4's "next two after the current one"), side by side
+     * The later maneuvers (the next two after the current one), side by side
      * between the summary and End route, in route order from the left.
      */
     fun tripLater(index: Int): Box {
@@ -635,7 +635,7 @@ class DashboardLayout @JvmOverloads constructor(
     }
 
     /**
-     * The idle media pane's one line of help (P7.5, plan §5.5), along its bottom: shown
+     * The idle media pane's one line of help (P7.5), along its bottom: shown
      * only without notification access, and small, because it is no longer the headline.
      */
     val playerHint: Box = run {
@@ -673,10 +673,10 @@ class DashboardLayout @JvmOverloads constructor(
     fun hitPlayer(px: Int, py: Int, count: Int, hint: Boolean): Int =
         (0 until minOf(count, PLAYER_ROWS)).firstOrNull { playerRow(it, hint).contains(px, py) } ?: -1
 
-    // --- P9: live traffic (docs/p9-plan.md §6, §7) ----------------------------------
+    // --- P9: live traffic (docs/navigation.md) ----------------------------------
 
     /**
-     * "Traffic © HERE" (P9.3, plan §1 clause 6.4 a): a line above the ODbL credit, in the
+     * "Traffic © HERE" (P9.3, HERE's terms, clause 6.4 a): a line above the ODbL credit, in the
      * same size and on the same kind of plate, ending a margin short of the − bubble.
      *
      * Not beside the ODbL credit on its own line: at 726x480 the two together are wider
@@ -695,7 +695,7 @@ class DashboardLayout @JvmOverloads constructor(
     }
 
     /**
-     * Text size of the trip panel's "+7 min traffic" (P9.4, plan §6), on the caption line
+     * Text size of the trip panel's "+7 min traffic" (P9.4), on the caption line
      * above the arrival time: the caption's own 0.22 of the summary, brought down if need be
      * so "+12 min traffic" fits beside a six-character time remaining. The drawing measures
      * the real text and leaves "arrive ·" in front of it only where that fits too.
@@ -707,7 +707,7 @@ class DashboardLayout @JvmOverloads constructor(
     }
 
     /**
-     * The turn card while an offer is up (P9.6, plan §7 "The offer"): the whole plate, taller
+     * The turn card while an offer is up (P9.6): the whole plate, taller
      * than [turnCard], whose part [offerTurn] keeps the next turn and part [offerPart] holds
      * the offer. Stacked, the turn part *is* [turnCard], so guidance does not move at all;
      * the offer band under it is three quarters of the card's height, and never less than a
@@ -744,8 +744,8 @@ class DashboardLayout @JvmOverloads constructor(
     }
 
     /**
-     * Whether the divided card still has room for the street (plan §7: "the street name
-     * dropped if there is no room"). Stacked it keeps its whole line; side by side the turn
+     * Whether the divided card still has room for the street (the street name is
+     * dropped if there is no room). Stacked it keeps its whole line; side by side the turn
      * part is two fifths of a card whose width the icon already takes most of.
      */
     val offerTurnStreet: Boolean = offerLayout == OfferLayout.STACKED
@@ -793,7 +793,7 @@ class DashboardLayout @JvmOverloads constructor(
         OFFER_ACTIONS.indices.firstOrNull { offerButton(it).contains(px, py) }?.let { OFFER_ACTIONS[it] }
 
     /**
-     * Where the map frames both routes while an offer is up (plan §7): the pane under the
+     * Where the map frames both routes while an offer is up: the pane under the
      * divided card, inset by a margin, so neither route is hidden behind the card.
      */
     val offerView: Box = run {
@@ -801,7 +801,7 @@ class DashboardLayout @JvmOverloads constructor(
         Box(map.x + margin, top, maxOf(0, map.width - 2 * margin), maxOf(0, map.bottom - margin - top))
     }
 
-    // --- P11.5: POI buttons, markers and the card (docs/p11-plan.md §6) --------------
+    // --- P11.5: POI buttons, markers and the card (docs/navigation.md) --------------
 
     /**
      * Where the Gas, Food and Shop column's top edge goes: a margin into the map pane, or a
@@ -893,7 +893,7 @@ class DashboardLayout @JvmOverloads constructor(
         (0 until count).firstOrNull { poiCardRow(it, count).contains(px, py) } ?: -1
 
     /**
-     * Text size for the empty favourites tile's two lines (P7.5, plan §5.7), sized so the
+     * Text size for the empty favourites tile's two lines (P7.5), sized so the
      * longer one fits the list's width rather than being cut off, as "none saved — add
      * places o…" was at 800x480. [EM_PER_CHARACTER] is a generous estimate of a character's
      * width; the drawing measures the real text and shrinks further if it has to.
@@ -934,7 +934,7 @@ class DashboardLayout @JvmOverloads constructor(
         const val FAVORITE_ROWS = 3
 
         /**
-         * The second tile, the flex tile (plan §5.8): a call, notifications, or a quiet
+         * The second tile, the flex tile: a call, notifications, or a quiet
          * empty state. A trip never displaces it: the trip panel takes [FAVORITES_TILE].
          */
         const val FLEX_TILE = 1
@@ -951,7 +951,7 @@ class DashboardLayout @JvmOverloads constructor(
         /** Player rows in the idle media pane (P7.5); see [playerRow]. */
         const val PLAYER_ROWS = 2
 
-        /** The empty favourites tile's two lines (plan §5.7), centred. */
+        /** The empty favourites tile's two lines, centred. */
         val EMPTY_FAVORITES = listOf("No favorites yet", "Add them on the phone")
 
         /** A generous width of one character, in ems, for sizing text that must not be cut. */
@@ -970,12 +970,12 @@ class DashboardLayout @JvmOverloads constructor(
         const val TRAFFIC_LABEL_CHARACTERS = 15
 
         /**
-         * Which way the card divides in layouts made from now on (P9.6). The plan leaves it
-         * to the lab's renders (§11); side by side is the default because it fits the truck's
+         * Which way the card divides in layouts made from now on (P9.6). It was left
+         * to the lab's renders; side by side is the default because it fits the truck's
          * panes better. At 726x480 it takes 99 px of the 413 px pane where stacked takes 143,
          * leaving 293 px of map under the card for the two routes against 249, and its Take
-         * and Keep are 91x44 against 67x47. It is also the plan's own description, "the next
-         * turn keeps the left part". What it costs is the street name and a smaller icon (59
+         * and Keep are 91x44 against 67x47. It is also the earlier design's own description, "the
+         * next turn keeps the left part". What it costs is the street name and a smaller icon (59
          * px against 76); stacked keeps the turn exactly as it is. Setting this before
          * projection starts renders stacked instead, for the lab to show James both.
          */
@@ -1007,7 +1007,7 @@ data class PhoneSnapshot @JvmOverloads constructor(
     /** Whether location was asked for at all; false means the permission is not held. */
     val locationEnabled: Boolean = false,
     /**
-     * P7.3 (plan §5.2): one level per additional SIM, up to [SimSignal.MAX_SECONDARY],
+     * P7.3: one level per additional SIM, up to [SimSignal.MAX_SECONDARY],
      * each 0..4 or -1 for a hollow row (inactive, out of service, unread). Empty on a
      * single-SIM phone or without `READ_PHONE_STATE`. [signalBars] stays the primary's.
      */
@@ -1078,7 +1078,7 @@ enum class PositionSource(val label: String) {
 }
 
 /**
- * The turn card's content (P7.4, plan §5.3), already in words, so the chrome repaints only
+ * The turn card's content (P7.4), already in words, so the chrome repaints only
  * when what is drawn changes. [maneuver] and [exit] are the values the cluster is sent.
  */
 data class TurnCard(
@@ -1094,7 +1094,7 @@ data class TurnCard(
 data class TripStep(val maneuver: Int, val exit: Int, val distance: String)
 
 /**
- * The trip panel (P7.4, plan §5.4), in the favourites tile's place for as long as a route
+ * The trip panel (P7.4), in the favourites tile's place for as long as a route
  * exists. Every figure is null when there is nothing honest to show (re-routing, or a
  * route with no fix on it yet); End route is drawn whatever they are.
  */
@@ -1117,7 +1117,7 @@ data class TripPanel(
     /** A finger is on the voice toggle. */
     val voicePressed: Boolean = false,
     /**
-     * "+7 min traffic" (P9.4, plan §6): the traffic delay already added into [remaining]
+     * "+7 min traffic" (P9.4): the traffic delay already added into [remaining]
      * and [arrival], labelled; null when it rounds to under a minute or there is no figure.
      */
     val traffic: String? = null,
@@ -1135,7 +1135,7 @@ data class TripPanel(
 data class DashboardChoices @JvmOverloads constructor(
     val markerColour: MarkerColour = MarkerColour.DEFAULT,
     val dayNight: DayNightMode = DayNightMode.DEFAULT,
-    /** The header's second line of debug text (plan §5.1, §6.1). */
+    /** The header's second line of debug text. */
     val diagnostics: Boolean = false,
     /** Ⓟ as last left. */
     val notificationsPaused: Boolean = false,
@@ -1284,9 +1284,9 @@ class Dashboard @JvmOverloads constructor(
         val night: Boolean = true,
         /** The ☀/☾ icon's mode; in Automatic it draws a small "A". */
         val dayNight: DayNightMode = DayNightMode.DEFAULT,
-        /** The vehicle dot and arrow (P7.2, plan §4.2). */
+        /** The vehicle dot and arrow (P7.2). */
         val markerColour: MarkerColour = MarkerColour.DEFAULT,
-        /** Whether the header draws its debug line (plan §5.1). */
+        /** Whether the header draws its debug line. */
         val diagnostics: Boolean = false,
         /** Ⓟ: bold and in the accent colour while paused. */
         val notificationsPaused: Boolean = false,
@@ -1340,13 +1340,13 @@ class Dashboard @JvmOverloads constructor(
         val keypadOpen: Boolean = false,
         /**
          * This call's keys, for the keypad's strip. **Digits are often PINs**: drawn there
-         * and held nowhere else, never logged or reported (plan §5.8).
+         * and held nowhere else, never logged or reported.
          */
         val keypadEcho: String = "",
         /** The key a finger is on, as an index into [FlexRules.KEYPAD_KEYS], or -1. */
         val pressedKey: Int = -1,
         val pressedKeypadClose: Boolean = false,
-        // P9: live traffic (docs/p9-plan.md §6, §7).
+        // P9: live traffic (docs/navigation.md, "Live traffic (HERE)").
         /** "Traffic © HERE" is owed ([TrafficDisplay.attributed]) and drawn in the map's corner. */
         val trafficAttributed: Boolean = false,
         /** A faster way round, dividing the turn card with Take and Keep; or null. */
@@ -1397,7 +1397,7 @@ class Dashboard @JvmOverloads constructor(
     /**
      * What the head unit's NIGHT_DATA last said, or null until it says anything. Kept
      * apart from the resolved palette: null is "no signal yet", which is not day
-     * (docs/p7-6-map-results.md §3.2 — reading it as day themed every night session's
+     * (docs/dashboard.md, "Day and night" — reading it as day themed every night session's
      * map day and reloaded every tile a second later).
      */
     private var headUnitNight: Boolean? = null
@@ -1539,7 +1539,7 @@ class Dashboard @JvmOverloads constructor(
     private var keypadAutoCloses = 0L
     private var keypadPresses = 0L
 
-    // P9: live traffic (docs/p9-plan.md §6, §7). The traffic loop publishes what to show;
+    // P9: live traffic (docs/navigation.md). The traffic loop publishes what to show;
     // these are what the dashboard made of it. Counts only in the report: never a place.
     private var trafficDisplay: TrafficDisplay = TrafficDisplay.EMPTY
 
@@ -1574,7 +1574,7 @@ class Dashboard @JvmOverloads constructor(
     private var homeAssistantOk = 0L
     private var homeAssistantFailed = 0L
 
-    // P10: weather (docs/p10-plan.md §5). What the feed last read, held for drawing only;
+    // P10: weather (docs/dashboard.md, "Weather"). What the feed last read, held for drawing only;
     // the report counts how the item and the views were used, never what they said.
     private var weatherOn = choices.weather
     private var alertLevel = choices.alertLevel
@@ -1600,7 +1600,7 @@ class Dashboard @JvmOverloads constructor(
     private var alertsDismissed = 0L
     private var weatherFar = false
 
-    // P11.5: the POI buttons, the markers on the map and the card (docs/p11-plan.md §6).
+    // P11.5: the POI buttons, the markers on the map and the card (docs/navigation.md).
     // Off when a projection starts and never saved. Places are drawn, never reported.
     private val poiKinds = LinkedHashSet<PoiKind>()
     private var pressedPoiButton: PoiKind? = null
@@ -1664,7 +1664,7 @@ class Dashboard @JvmOverloads constructor(
     }
 
     /**
-     * P10: what the weather feed read last (docs/p10-plan.md §3), whole, on every read; the
+     * P10: what the weather feed read last (docs/dashboard.md), whole, on every read; the
      * empty state when a projection ends or weather goes off. Main thread.
      */
     @Synchronized
@@ -1953,7 +1953,7 @@ class Dashboard @JvmOverloads constructor(
 
     /**
      * Whether speech can happen now ([Speaker.canSpeak]): without it the toggle is drawn
-     * with its warning mark, whichever way it is set (plan §6).
+     * with its warning mark, whichever way it is set.
      */
     @Synchronized
     fun speechAvailable(available: Boolean) {
@@ -2055,7 +2055,7 @@ class Dashboard @JvmOverloads constructor(
     }
 
     /**
-     * The notification being read aloud, or null (P8.1, docs/p8-plan.md §8): its row stays
+     * The notification being read aloud, or null (P8.1, docs/audio-and-speech.md): its row stays
      * lit while it is read, after the tap's own flash. From [Speaker], through the service.
      */
     @Synchronized
@@ -2075,7 +2075,7 @@ class Dashboard @JvmOverloads constructor(
      *
      * The keypad closes itself when the call can no longer take tones — it ended, went on
      * hold, or is on the notification route — and its echo is cleared when the call is
-     * over, so the next call's strip starts empty (plan §5.8). A tone still sounding is
+     * over, so the next call's strip starts empty. A tone still sounding is
      * stopped by [CallControl] itself when a call ends; a stop is queued here as well, for
      * a call put on hold under a finger.
      */
@@ -2090,7 +2090,7 @@ class Dashboard @JvmOverloads constructor(
             notificationList.cancel()
             pressedWeatherTile = null
             pressedWeatherAlert = null
-            // P10 (plan §5.2): a call closes the weather view, which does not come back.
+            // P10: a call closes the weather view, which does not come back.
             if (weatherOpen) {
                 weatherOpen = false
                 weatherClosesCall++
@@ -2173,7 +2173,7 @@ class Dashboard @JvmOverloads constructor(
     }
 
     /**
-     * Whether the media pane lists players instead of now-playing (P7.5, plan §5.5):
+     * Whether the media pane lists players instead of now-playing (P7.5):
      * nothing is playing or paused with a session. A session that is paused still has its
      * title (or at least its state), and keeps the pane it had.
      */
@@ -2294,7 +2294,7 @@ class Dashboard @JvmOverloads constructor(
                     poiDownY = py
                     poiDownAt = nowMillis
                     pressedHeaderIcon = layout.hitHeaderIcon(px, py)
-                    // P10: the weather item. During a call it does not light (plan §5.2).
+                    // P10: the weather item. During a call it does not light.
                     val onWeather = weatherOn && layout.hitHeaderWeather(px, py)
                     pressedWeatherInCall = onWeather && call.phase != CallPhase.NONE
                     pressedWeather = onWeather && !pressedWeatherInCall
@@ -2670,7 +2670,7 @@ class Dashboard @JvmOverloads constructor(
         }
     }
 
-    /** P10: the alert the tile would show now, or null (plan §5.3). */
+    /** P10: the alert the tile would show now, or null. */
     private fun shownAlert(nowMillis: Long): WeatherAlert? {
         if (!weatherOn) return null
         val reading = weatherState.reading ?: return null
@@ -2719,7 +2719,7 @@ class Dashboard @JvmOverloads constructor(
     fun vehiclePosition(): Pair<Double, Double>? = vehicle.position()
 
     /**
-     * The speed spoken prompts are timed by (P8 plan §5.1), metres a second: the head
+     * The speed spoken prompts are timed by (P8), metres a second: the head
      * unit's `car_speed`, else its `gps_speed`, each only at a scale the drive so far
      * supports ([ScaleEvidence]), else the phone's own, else null. Never reported.
      */
@@ -2742,7 +2742,7 @@ class Dashboard @JvmOverloads constructor(
     fun nextFrame(nowMillis: Long): Snapshot {
         frames++
         lastNowMillis = nowMillis
-        // P10 (plan §5.2): an untouched weather view closes by itself.
+        // P10: an untouched weather view closes by itself.
         if (weatherOpen && nowMillis - weatherOpenedAt >= WeatherRules.VIEW_TIMEOUT_MS) {
             weatherOpen = false
             weatherClosesTimeout++
@@ -2900,7 +2900,7 @@ class Dashboard @JvmOverloads constructor(
         return when (turn.text) {
             UpcomingTurn.WAITING -> null
             UpcomingTurn.REROUTING, UpcomingTurn.ARRIVED -> TurnCard(turn.maneuver, turn.exit, null, turn.text)
-            // The street on its own line (plan §5.3), and the instruction when the map
+            // The street on its own line, and the instruction when the map
             // names none: "Turn left" says more than an empty line under a left arrow.
             else -> TurnCard(turn.maneuver, turn.exit, turn.metres?.let { speedUnit.distance(it) }, turn.street ?: turn.text)
         }
@@ -3111,7 +3111,7 @@ class Dashboard @JvmOverloads constructor(
         }
 
         /**
-         * The palette to draw (P7.6, plan §5.6): Day and Night hold it; Automatic follows
+         * The palette to draw (P7.6): Day and Night hold it; Automatic follows
          * [headUnit], the head unit's `is_night`, every time it changes.
          *
          * Before the head unit has said anything, Automatic draws [remembered], the palette
@@ -3119,7 +3119,7 @@ class Dashboard @JvmOverloads constructor(
          * sent `is_night=true` (the truck's display is pinned dark), the sensor channel
          * opens a moment before the picture starts, and guessing day meant themeing the
          * map day and then reloading every tile for night a second later
-         * (docs/p7-6-map-results.md §3.2).
+         * (docs/dashboard.md, "Day and night").
          */
         fun resolveNight(mode: DayNightMode, headUnit: Boolean?, remembered: Boolean?): Boolean =
             mode.resolve(headUnit ?: remembered ?: true)

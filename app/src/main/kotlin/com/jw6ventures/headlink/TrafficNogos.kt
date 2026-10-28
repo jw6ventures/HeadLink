@@ -5,7 +5,7 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * HERE's closures and jams as BRouter no-go points (P9 plan §7), from a whole snapshot: an
+ * HERE's closures and jams as BRouter no-go points (P9), from a whole snapshot: an
  * incident or a jam off the route still matters, because it is on the roads an alternative
  * might take.
  *
@@ -19,15 +19,15 @@ import kotlin.math.min
  * shape, where the junctions are, so a cross street passing the end is not charged. The
  * same rules place points on an incident's shape.
  *
- * Two more rules, not in the plan's text but for its stated aim (§7, "a polyline nogo would
- * charge every road under an overpass"):
+ * Two more rules, not in the original placement rule but for its stated aim ("a polyline
+ * nogo would charge every road under an overpass"):
  *
  * - **Crossings.** A point that would land within [CLEAR_M] of another HERE road crossing
  *   this one (at more than [TrafficMatch.HEADING_DEG], either way) is slid along its share
  *   of the stretch to a clear place, or dropped if there is none. A jammed street over the
  *   interstate is then never charged on the interstate below. [CLEAR_M] is the point's
  *   radius plus the matching tolerance, the most HERE's shape is expected to be off OSM's.
- *   Only roads HERE sent are known: classes 4 and 5 are not fetched (plan §4), so a side
+ *   Only roads HERE sent are known: classes 4 and 5 are not fetched, so a side
  *   street crossing mid-stretch can still be charged, as it could at any junction.
  * - **A closure must block.** When the margins leave no room (a closed stretch under
  *   60 m, or a closed span within 30 m of an end), or no place along it is clear of
@@ -62,13 +62,13 @@ object TrafficNogos {
         val hard: Int get() = nogos.count { it.hard }
     }
 
-    /** Plan §7: points no further apart than this along a stretch, metres. */
+    /** Points no further apart than this along a stretch, metres. */
     const val SPACING_M = 150.0
 
-    /** Plan §7: each point's radius, so one carriageway's point does not reach the other or the frontage road. */
+    /** Each point's radius, so one carriageway's point does not reach the other or the frontage road. */
     const val RADIUS_M = 8.0
 
-    /** Plan §7: no point this near either end of a HERE shape, where the junctions are. */
+    /** No point this near either end of a HERE shape, where the junctions are. */
     const val END_MARGIN_M = 30.0
 
     /** How far a point keeps from a HERE road crossing its own: its radius and the matching tolerance. */
@@ -208,14 +208,14 @@ object TrafficNogos {
     ): List<Nogo> = of(snapshot.flow, snapshot.incidents, route, costPerSecond, limit)
 
     /**
-     * What every search around the followed route is given while traffic is on (P9.5, plan
-     * §7): [of] over the whole response, ordered by [traffic]'s route, and points on **the
+     * What every search around the followed route is given while traffic is on
+     * (P9.5): [of] over the whole response, ordered by [traffic]'s route, and points on **the
      * route's own line** for what matched it. The traffic loop computes these once per
      * response and per followed route, off the main thread ([TrafficFeed]).
      *
      * **Why points on the route's line too.** HERE's geometry is not OSM's. Along I-35E in
      * Dallas it was 12.7 m off at the 90th percentile and 20.6 m at the 95th
-     * (docs/p9-2-results.md §3), and an 8 m circle on a line 10 m off the OSM way charges
+     * (docs/navigation.md, "Live traffic (HERE)"), and an 8 m circle on a line 10 m off the OSM way charges
      * nothing and blocks nothing. What [TrafficMatch] matched to the route is known to be on
      * the route's own road, so:
      *
@@ -227,10 +227,10 @@ object TrafficNogos {
      * - **Jams** (touching [Congestion.SLOW] and [Congestion.QUEUING] runs, as one) get
      *   weighted points on the route's line **in place of** HERE's own points within
      *   [TrafficMatch.NEAR_M] of it, which are the same jam's. BRouter charges one circle per
-     *   link, the last it passed (docs/p9-5-routing-results.md §2), so two sets on one road
+     *   link, the last it passed (docs/navigation.md, "Live traffic (HERE)"), so two sets on one road
      *   would not add up; they would only cost the search, which slows by about 3 ms a point
      *   on the host. Fewer points, each where the road is, is the better trade. Their weight
-     *   is the plan's (delay × `costPerSecond` ÷ (points × 16 m)), with the run's own delay
+     *   is the design's (delay × `costPerSecond` ÷ (points × 16 m)), with the run's own delay
      *   against BRouter's time rather than HERE's free flow, and the class of the HERE
      *   stretch it matched.
      *
@@ -472,7 +472,7 @@ object TrafficNogos {
     }
 
     /**
-     * Metres along shape [k] where the points for its part [from]..[to] go (plan §7 and the
+     * Metres along shape [k] where the points for its part [from]..[to] go (see the
      * rules above). [hard] keeps one point where the others would leave none.
      */
     private fun place(index: ShapeIndex, k: Int, from: Double, to: Double, hard: Boolean): List<Double> {

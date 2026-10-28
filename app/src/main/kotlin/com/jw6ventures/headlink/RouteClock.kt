@@ -1,7 +1,7 @@
 package com.jw6ventures.headlink
 
 /**
- * The numbers Home's route line shows (P7 plan §6.5): distance and time to go, and the
+ * The numbers Home's route line shows (P7.7): distance and time to go, and the
  * wall-clock arrival, or null for no arrival. [trafficSeconds] is the live traffic delay
  * already inside [seconds] (P9.4), for its "+N min traffic"; 0 without it.
  */
@@ -54,7 +54,7 @@ class RouteFigures @JvmOverloads constructor(
 }
 
 /**
- * When the current route came back, and so what Home's route line says (§6.5).
+ * When the current route came back, and so what Home's route line says.
  *
  * [RouteResult] carries how long the search took but not when it finished. So this
  * watches [Routing.last] change, from the same session listener every route result

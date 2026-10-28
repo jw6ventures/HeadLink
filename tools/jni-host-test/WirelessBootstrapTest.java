@@ -1,4 +1,4 @@
-// W1's wireless bootstrap read on a desktop JVM (docs/wireless-investigation.md): framing
+// W1's wireless bootstrap read on a desktop JVM (docs/connecting.md, "The Bluetooth bootstrap"): framing
 // across arbitrary RFCOMM chunks, the protobuf reader, the redaction rule, and the session
 // against scripted head units in the shapes the two head-unit-side projects describe -
 // WifiStartRequest first (WirelessAndroidAutoDongle), WifiVersionRequest first with head

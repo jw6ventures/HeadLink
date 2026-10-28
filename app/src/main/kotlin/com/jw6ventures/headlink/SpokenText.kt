@@ -3,7 +3,7 @@ package com.jw6ventures.headlink
 import kotlin.math.roundToLong
 
 /**
- * How a turn prompt is said (P8 plan §5.3): distances in words, road names expanded so a
+ * How a turn prompt is said (P8): distances in words, road names expanded so a
  * speech engine does not spell them out, and the maneuver sentence built from the same
  * [Maneuvers.instruction] the turn card and the cluster show.
  *
@@ -23,7 +23,7 @@ object SpokenText {
      * "three quarters of a mile", "1 mile"; then to the half mile ("1 and a half miles").
      * Metric: metres to the fifty below a kilometre, then kilometres to the half.
      *
-     * Feet reach 1000 rather than the plan's first 0.1 mi (P8.2 deviation, §5.3): a 30 mph
+     * Feet reach 1000 rather than the original design's first 0.1 mi (P8.2 deviation): a 30 mph
      * Prepare is about 200 m, 0.12 mi, and quarters would round that up to "a quarter mile".
      *
      * Never zero: a prompt is always about something ahead, so the least it says is
@@ -71,7 +71,7 @@ object SpokenText {
 
     /**
      * Route-number prefixes a speech engine would read letter by letter, and what is said
-     * instead. Texas's, because the real map is Texas (plan §5.3); `IH` is how TxDOT itself
+     * instead. Texas's, because the real map is Texas; `IH` is how TxDOT itself
      * writes an interstate. `Loop` is a word already and is not here.
      */
     private val PREFIXES = mapOf(
@@ -157,7 +157,7 @@ object SpokenText {
     const val SAMPLE_METRES = 500 * METRES_PER_FOOT
 
     /**
-     * **Play a sample**'s words (P8.3, plan §7): "In 500 feet, turn right onto Main
+     * **Play a sample**'s words (P8.3): "In 500 feet, turn right onto Main
      * Street", built as a Prepare prompt is, so it follows the speed unit's system and the
      * Say street names switch ("In 500 feet, turn right" with it off).
      */

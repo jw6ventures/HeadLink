@@ -156,7 +156,7 @@ pub mod ids {
         /// Phone → head unit: unavailable, active, inactive, or rerouting.
         pub const STATE: u16 = 0x8003;
         /// Phone → head unit, **deprecated**: the only path that ever carried turn-image
-        /// bytes. Unused — this source sends semantic maneuvers only (P6 plan §2) — and
+        /// bytes. Unused — this source sends semantic maneuvers only (P6, docs/navigation.md, "Instrument cluster turn-by-turn") — and
         /// kept so a capture showing it is recognisable.
         pub const TURN_EVENT: u16 = 0x8004;
         /// Phone → head unit, **deprecated**: flat maneuver and distance, for head units

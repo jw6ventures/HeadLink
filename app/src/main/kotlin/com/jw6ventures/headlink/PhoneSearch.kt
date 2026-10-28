@@ -9,19 +9,19 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Typed search on the phone (docs/p11-plan.md §4, P11.4): the connection screen's
+ * Typed search on the phone (docs/navigation.md, P11.4): the connection screen's
  * destination box asks for suggestions as James types, 250 ms after the last keystroke,
  * and a newer keystroke cancels a search still running.
  *
  * [AddressSearch] does the work on one background thread over [ObfLibrary]'s open files;
  * this only debounces, cancels and counts. **Nothing typed, suggested or picked is kept
- * or reported** (plan §8, P6.4): [report] carries counts only, and there is no history.
+ * or reported** (P6.4): [report] carries counts only, and there is no history.
  */
 object PhoneSearch {
-    /** After the last keystroke, before a search starts (plan §4). */
+    /** After the last keystroke, before a search starts. */
     const val DEBOUNCE_MS = 250L
 
-    /** Rows shown under the box (plan §4). */
+    /** Rows shown under the box. */
     const val SHOWN = 8
 
     /** Shorter text is not searched: one letter matches half of Texas. */
@@ -130,10 +130,10 @@ object PhoneSearch {
             engine ?: AddressSearch { ObfLibrary.sources(context) }.also { engine = it }
         }
 
-    /** `[routing]` line: counts only, never what was typed or chosen (plan §8). */
+    /** `[routing]` line: counts only, never what was typed or chosen. */
     fun report(): String =
         "search_queries=$queries search_cancelled=$cancelled search_failures=$failures " +
             "search_suggestions_shown=$suggestionsShown search_empty=$emptyResults search_picks=$picks\n" +
-            // The engine's own counts: results by kind and query times (plan §8).
+            // The engine's own counts: results by kind and query times.
             (engine?.stats?.snapshot()?.line()?.let { "$it\n" } ?: "")
 }

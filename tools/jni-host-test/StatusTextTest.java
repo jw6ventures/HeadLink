@@ -1,4 +1,4 @@
-// P7.7's status in words on a desktop JVM: every row of the plan's section 6.2 table, the
+// P7.7's status in words on a desktop JVM: every row of the status table in docs/phone-app.md, the
 // raw-name fallback for categories it does not know, the route summary, and the Setup
 // checklist. StatusText and SetupCheck are pure Kotlin; the Home card and the buttons
 // that act on them need a phone.
@@ -43,7 +43,7 @@ public final class StatusTextTest {
         check(status.getAction() == action, row + ": action " + status.getAction());
     }
 
-    /** The plan's section 6.2 table, one row at a time, in its order and wording. */
+    /** The status table in docs/phone-app.md, one row at a time, in its order and wording. */
     private static void theTable() {
         is(idle("-", true), "Plug in to start projecting", StatusAction.NONE, "IDLE, auto-start on");
         is(idle("-", false), "Ready to connect", StatusAction.CONNECT, "IDLE, auto-start off");
@@ -169,7 +169,7 @@ public final class StatusTextTest {
     private static void routeSummary() {
         SpeedUnit mph = SpeedUnit.MPH;
         String full = TEXT.routeSummary("Home", false, false, false, 19312.0, 18 * 60, "6:40 PM", mph);
-        check("Routing to Home \u00b7 12 mi \u00b7 18 min \u00b7 arrive 6:40 PM".equals(full), "the plan's example: " + full);
+        check("Routing to Home \u00b7 12 mi \u00b7 18 min \u00b7 arrive 6:40 PM".equals(full), "the documented example: " + full);
         String noClock = TEXT.routeSummary("Home", false, false, false, 19312.0, 18 * 60, null, mph);
         check("Routing to Home \u00b7 12 mi \u00b7 18 min".equals(noClock), "no arrival when the time is unknown: " + noClock);
         String metric = TEXT.routeSummary("Home", false, false, false, 19312.0, 18 * 60, null, SpeedUnit.KMH);
@@ -239,7 +239,7 @@ public final class StatusTextTest {
         check(items(1, Set.of(), "W100_N30.rd5", true, true, true, 1, true).equals(List.of(SetupItem.NO_ROUTING)),
                 "no tiles at all is the one item, not two");
         check(items(1, tiles, null, false, false, true, 1, true).isEmpty(), "access is only missing when something wants it");
-        // P10 (docs/p10-plan.md section 4): only while Show weather is on, after location.
+        // P10 (docs/dashboard.md, "Weather"): only while Show weather is on, after location.
         check(weather(true, true, false).equals(List.of(SetupItem.WEATHER_PERMISSION)),
                 "weather on without Breezy's permission is the one item");
         check(weather(true, true, true).isEmpty(), "weather on with the permission is Ready");
@@ -260,7 +260,7 @@ public final class StatusTextTest {
         check(declined.size() == 2 && declined.stream().allMatch(SetupItem::getOptional),
                 "only optional items left");
         check(SetupItem.WEATHER_PERMISSION.getTitle().equals("Weather permission not granted")
-                && SetupItem.WEATHER_PERMISSION.getFix().equals("Grant"), "the plan's words and one Grant button");
+                && SetupItem.WEATHER_PERMISSION.getFix().equals("Grant"), "the documented words and one Grant button");
         check(SETUP.notificationAccessWanted(true, false, false, false), "media info wants it");
         check(SETUP.notificationAccessWanted(false, true, false, false), "dashboard notifications want it");
         check(SETUP.notificationAccessWanted(false, false, true, false), "call controls without the grant want it");

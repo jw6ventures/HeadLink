@@ -6,7 +6,7 @@ import android.os.Bundle
 import android.widget.Toast
 
 /**
- * Takes a destination shared from another app (P6.4, P6 plan §5.1): `ACTION_SEND` text
+ * Takes a destination shared from another app (P6.4): `ACTION_SEND` text
  * from the share sheet — OsmAnd's "Message" item — and `ACTION_VIEW geo:` from OsmAnd's
  * "Geo" item, Contacts or Calendar.
  *

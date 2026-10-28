@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- W0 wireless probe (docs/wireless-investigation.md), opened from Diagnostics, and
+<!-- W0 wireless probe (docs/connecting.md, "Diagnostics: the wireless probe"), opened from Diagnostics, and
      W2's Connect wirelessly, on the probe and on Home. -->
 <resources>
     <string name="wireless_probe_label">Wireless probe</string>

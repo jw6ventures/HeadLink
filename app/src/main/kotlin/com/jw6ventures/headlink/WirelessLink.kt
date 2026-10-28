@@ -39,7 +39,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * W2 of docs/wireless-investigation.md (spec §5.2, the W2 amendment): one wireless
+ * W2 (docs/connecting.md, "The sequence"; spec §5.2, the W2 amendment): one wireless
  * connection to the head unit, end to end.
  *
  * 1. RFCOMM to the bootstrap service, running [WirelessBootstrap.Session] in connect mode:
@@ -80,7 +80,7 @@ object WirelessLink {
      * SYNC 4.0 sometimes ends the bootstrap before its Wi-Fi details: it goes quiet after
      * our version reply (reports 9912ea14, e6fa815f) or closes RFCOMM at once (309f4dcc).
      * A later connection has always worked, so the link starts over this many more times,
-     * this far apart (docs/wireless-w3-procedure.md, truck runs 3 and 4).
+     * this far apart (docs/connecting.md, "Bootstrap retry").
      */
     private const val BOOTSTRAP_RETRIES = 2
     private const val BOOTSTRAP_RETRY_GAP_MS = 15_000L
@@ -264,7 +264,7 @@ object WirelessLink {
 
     /**
      * Paired devices with vehicles first: car audio, or hands-free, which is what Ford
-     * SYNC 4 calls itself (0x0408, docs/wireless-w0-results.md); then by name.
+     * SYNC 4 calls itself (0x0408); then by name.
      */
     fun vehiclesFirst(bonded: Collection<BluetoothDevice>): List<BluetoothDevice> {
         val vehicle = setOf(BluetoothClass.Device.AUDIO_VIDEO_CAR_AUDIO, BluetoothClass.Device.AUDIO_VIDEO_HANDSFREE)

@@ -42,7 +42,7 @@ class HouseNumber(val value: Int, val suffix: String) {
 }
 
 /**
- * One reading of what was typed into the search box (plan §4). The parser doesn't guess
+ * One reading of what was typed into the search box. The parser doesn't guess
  * where the street ends and the city begins: [AddressQuery.parse] returns every plausible
  * reading, best first, and the search runs them all.
  *

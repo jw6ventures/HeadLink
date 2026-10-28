@@ -4,7 +4,7 @@ import java.util.Locale
 import kotlin.math.cos
 
 /**
- * The POI half of [ObfFile] (plan §3.2), after OsmAnd's `BinaryMapPoiReaderAdapter`.
+ * The POI half of [ObfFile], after OsmAnd's `BinaryMapPoiReaderAdapter`.
  *
  * - **Tables, once per file:** each section's category table (a key and its subcategory
  *   keys, in file order) and its subtype table (the additional tags: `brand`,
@@ -413,7 +413,7 @@ object ObfPoiKinds {
     private val FUEL_CATEGORIES = setOf("transportation")
 
     /**
-     * The three buttons (plan §6, §12 decision 3), by the file's own keys: `fuel` only (not
+     * The three buttons (P11.5), by the file's own keys: `fuel` only (not
      * `charging_station`), four `sustenance` kinds, every `shop` subcategory.
      */
     fun kindOf(category: String, subcategory: String): PoiKind? = when {

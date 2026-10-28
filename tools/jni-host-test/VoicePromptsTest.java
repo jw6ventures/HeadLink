@@ -1,8 +1,8 @@
 // P8.2's turn prompts on a desktop JVM: VoicePrompts fed synthetic step traces at a steady
 // speed, the way Guide feeds it one step a fix, and SpokenText's distances in words and
 // road names. Both are pure Kotlin, so these are the classes the app runs. Nothing here
-// is speech or the truck: the plan's section 5.2 thresholds are checked against themselves, and whether
-// they are well placed is a drive's question.
+// is speech or the truck: the thresholds in docs/audio-and-speech.md ("Turn prompts") are checked against
+// themselves, and whether they are well placed is a drive's question.
 import btools.router.VoiceHintReader;
 import java.util.ArrayList;
 import java.util.List;
@@ -159,7 +159,7 @@ public final class VoicePromptsTest {
     // P8.3: Play a sample's words, built as a Prepare prompt is.
     private static void theSample() {
         check(SpokenText.INSTANCE.sample(SpeedUnit.MPH, true).equals("In 500 feet, turn right onto Main Street"),
-            "the plan's sample, word for word: " + SpokenText.INSTANCE.sample(SpeedUnit.MPH, true));
+            "the documented sample, word for word: " + SpokenText.INSTANCE.sample(SpeedUnit.MPH, true));
         check(SpokenText.INSTANCE.sample(SpeedUnit.MPH, false).equals("In 500 feet, turn right"), "street names off");
         check(SpokenText.INSTANCE.sample(SpeedUnit.KMH, true).equals("In 150 metres, turn right onto Main Street"),
             "in metric, the same place: " + SpokenText.INSTANCE.sample(SpeedUnit.KMH, true));
@@ -171,7 +171,7 @@ public final class VoicePromptsTest {
         double prepare70 = VoicePrompts.Companion.threshold(VoicePrompts.PREPARE, MPH70, PromptTiming.NORMAL);
         check(prepare70 > 465 && prepare70 < 475, "Prepare at 70 mph is about 470 m");
         check(VoicePrompts.Companion.threshold(VoicePrompts.EARLY, MPH30, PromptTiming.NORMAL) == 800.0, "Early at 30 mph is 800 m");
-        // The plan's text says Prepare is 150 m at 30 mph; its own formula gives 13.4 m/s x 15 s,
+        // An earlier text said Prepare is 150 m at 30 mph; its own formula gives 13.4 m/s x 15 s,
         // about 201 m, and the formula is what is built.
         check(Math.abs(VoicePrompts.Companion.threshold(VoicePrompts.PREPARE, MPH30, PromptTiming.NORMAL) - MPH30 * 15) < 1e-9,
             "Prepare at 30 mph is speed x 15 s, about 201 m");

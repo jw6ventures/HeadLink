@@ -34,7 +34,7 @@ import android.telephony.TelephonyManager
  * The vehicle's own position is preferred wherever it exists, so on a head unit that
  * populates LOCATION this class is only ever supplying the supplementary fields.
  *
- * **Signal is per subscription (P7.3, plan §5.2).** A dual-SIM or SIM-plus-eSIM phone has
+ * **Signal is per subscription (P7.3).** A dual-SIM or SIM-plus-eSIM phone has
  * one radio state per subscription, and a single `SignalStrength` only ever described the
  * default one. With `READ_PHONE_STATE`, every active subscription gets its own
  * `TelephonyManager.createForSubscriptionId` and its own [TelephonyCallback], and the set

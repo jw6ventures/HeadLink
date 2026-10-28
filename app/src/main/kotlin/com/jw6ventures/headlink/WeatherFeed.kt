@@ -1,7 +1,7 @@
 package com.jw6ventures.headlink
 
 /**
- * Breezy's provider as [WeatherFeed] asks it (plan §1, §3), so the host tests can stand in
+ * Breezy's provider as [WeatherFeed] asks it, so the host tests can stand in
  * for it: [WeatherProvider] is the ContentResolver behind it on a phone. Every call may
  * block, and may throw; the feed calls them off the main thread, one read at a time.
  */
@@ -22,7 +22,7 @@ interface WeatherSource {
     fun blob(id: String): ByteArray?
 }
 
-/** Why a read was started (plan §3), counted apart in the report. */
+/** Why a read was started, counted apart in the report. */
 enum class WeatherCue(val key: String) {
     START("start"),
     NOTIFIER("notifier"),
@@ -31,7 +31,7 @@ enum class WeatherCue(val key: String) {
 }
 
 /**
- * P10's read loop (plan §3), with no Android in it: [Weather] gives it the provider, a
+ * P10's read loop, with no Android in it: [Weather] gives it the provider, a
  * worker, the main thread and a clock. Main thread only, apart from [WeatherSource] calls,
  * which run on [work] and hand their answer back through [post].
  *
@@ -45,7 +45,7 @@ enum class WeatherCue(val key: String) {
  */
 class WeatherFeed(
     private val source: WeatherSource,
-    /** This app is a debug build: Breezy's debug package is accepted (plan §3). */
+    /** This app is a debug build: Breezy's debug package is accepted. */
     private val debuggable: Boolean,
     private val work: (Runnable) -> Unit,
     private val post: (Runnable) -> Unit,
@@ -54,14 +54,14 @@ class WeatherFeed(
     var settings = WeatherSettings()
         private set
 
-    /** Where the vehicle or phone is now, for choosing a location (plan §2). Main thread. */
+    /** Where the vehicle or phone is now, for choosing a location. Main thread. */
     var fix: () -> Pair<Double, Double>? = { null }
 
     /** Told every new state, on the main thread. */
     var listener: ((WeatherState) -> Unit)? = null
 
     /**
-     * Told an alert to speak (plan §6): the first time each id qualifies this session, and
+     * Told an alert to speak: the first time each id qualifies this session, and
      * only with Speak weather alerts on. [Speaker] applies the voice toggle and the gate.
      */
     var speak: ((WeatherAlert) -> Unit)? = null
@@ -195,7 +195,7 @@ class WeatherFeed(
         if (result.status != WeatherStatus.OK) failures++
         lastStatus = result.status
         result.permitted?.let { permission = it }
-        // A failure keeps the last good reading, so its age still shows (plan §2); a refused
+        // A failure keeps the last good reading, so its age still shows; a refused
         // provider (not installed, wrong owner, no permission, unsupported) drops it, because
         // what it said can no longer be trusted to be Breezy's.
         val keep = result.status == WeatherStatus.UNREADABLE || result.status == WeatherStatus.NO_LOCATIONS
@@ -219,7 +219,7 @@ class WeatherFeed(
     }
 
     /**
-     * `key=value` lines for the session report (plan §7): counts, the provider's state and
+     * `key=value` lines for the session report: counts, the provider's state and
      * the reading's age in minutes. Never a place, a coordinate, a headline, a temperature
      * or a condition.
      */

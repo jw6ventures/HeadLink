@@ -4,7 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 
 /**
- * Every choice the settings screen makes, as it would be saved (P7 plan §3).
+ * Every choice the settings screen makes, as it would be saved (P7.1).
  *
  * Each default is what the screen showed on a fresh launch before P7.1 — the head of each
  * spinner's list, the sensor spinner on `all`, and media info, cluster turn-by-turn and
@@ -51,22 +51,22 @@ data class SavedSettings(
     val mapOnLeft: Boolean = true,
     val speedUnit: SpeedUnit = SpeedUnit.entries[0],
     // P7 settings from here down; none reaches AttemptSettings.
-    /** Start an attempt when a matching, already-pinned head unit is plugged in (§2). */
+    /** Start an attempt when a matching, already-pinned head unit is plugged in. */
     val autoStart: Boolean = true,
-    /** The dashboard header's debug line and, from P7.7, the Diagnostics tab (§6.1). */
+    /** The dashboard header's debug line and, from P7.7, the Diagnostics tab. */
     val diagnostics: Boolean = false,
     val markerColour: MarkerColour = MarkerColour.DEFAULT,
     /** 12- or 24-hour clock times, on the dashboard and the phone. */
     val clockFormat: ClockFormat = ClockFormat.DEFAULT,
-    /** Also cycled from the dashboard's ☀/☾ icon, so it is saved from there too (§5.6). */
+    /** Also cycled from the dashboard's ☀/☾ icon, so it is saved from there too. */
     val dayNight: DayNightMode = DayNightMode.DEFAULT,
-    /** Alerting notifications in the flex tile (§5.8). Off: the listener reads none. */
+    /** Alerting notifications in the flex tile. Off: the listener reads none. */
     val notificationsOnDashboard: Boolean = false,
     /** Package names whose notifications never reach the tile. Never written to a report. */
     val notificationExclusions: Set<String> = emptySet(),
-    /** The dashboard's Ⓟ: notifications held back from the tile (§5.8). */
+    /** The dashboard's Ⓟ: notifications held back from the tile. */
     val notificationsPaused: Boolean = false,
-    /** The companion in-call service may be enabled while projecting (§5.8, P7.9). */
+    /** The companion in-call service may be enabled while projecting (P7.9). */
     val callControls: Boolean = false,
     /**
      * Wireless sessions ping the head unit often enough that the phone's Wi-Fi never dozes
@@ -78,20 +78,20 @@ data class SavedSettings(
      * starts are taken as well as its Android Auto button. Cleared, only the button starts.
      */
     val wirelessAutoStart: Boolean = true,
-    // P8 settings (docs/p8-plan.md §7).
+    // P8 settings (docs/audio-and-speech.md, "Speech").
     /** A tapped dashboard notification is read aloud; on, though the tile itself is off by default. */
     val readAloud: Boolean = true,
     /** **While speaking**: pause media (the default) or lower its volume (decision 10). */
     val speechMedia: SpeechMedia = SpeechMedia.DEFAULT,
     /**
-     * Voice guidance (§5, §7): [VoiceSettings.enabled] is the trip panel's toggle, written
+     * Voice guidance (P8): [VoiceSettings.enabled] is the trip panel's toggle, written
      * on every press like [dayNight]; the rest are P8.3's Maps & routing → Voice guidance
      * screen, stored now with the model's defaults so that screen only has to show them.
      */
     val voice: VoiceSettings = VoiceSettings(),
     /** Maps & routing → Routing: road choices and time estimates ([RouteOptions]). */
     val routing: RouteOptions = RouteOptions(),
-    /** P10: Settings → Weather (docs/p10-plan.md §4); off by default (APP09). */
+    /** P10: Settings → Weather (docs/dashboard.md, "Weather"); off by default (APP09). */
     val weather: WeatherSettings = WeatherSettings(),
 ) {
     /**
@@ -121,7 +121,7 @@ data class SavedSettings(
         )
     }
 
-    /** The trip panel's voice toggle pressed (§6): that one field, every other choice kept. */
+    /** The trip panel's voice toggle pressed: that one field, every other choice kept. */
     fun withVoiceGuidance(on: Boolean): SavedSettings = copy(voice = voice.copy(enabled = on))
 
     /**
@@ -391,7 +391,7 @@ data class SavedSettings(
 }
 
 /**
- * The options that apply to one attempt and are never saved (P7 plan §3): first-use
+ * The options that apply to one attempt and are never saved (P7.1): first-use
  * trust, the three captures, and head-unit position in the report. Only the Connect
  * button sets them, and it clears the trust and position boxes once the attempt begins;
  * a plug-in start always uses [NONE], so an unattended start can neither pin a
@@ -411,7 +411,7 @@ data class PerAttempt(
 }
 
 /**
- * Whether a USB attach should start an attempt on its own (P7 plan §2), and if not, why.
+ * Whether a USB attach should start an attempt on its own (P7.1), and if not, why.
  * The [reason] is what the event log records: it names a rule, never an accessory, a pin
  * or a head unit.
  */
@@ -482,7 +482,7 @@ enum class AutoStart(val reason: String) {
 
 /**
  * [SavedSettings] kept in the app's private preferences, the way [MapPreferences] keeps
- * the map's orientation (P7 plan §3).
+ * the map's orientation (P7.1).
  *
  * The single source of [AttemptSettings] outside lab runs. `handleLabIntent` builds its
  * own from the intent's extras and never reads or writes these, so a lab run cannot

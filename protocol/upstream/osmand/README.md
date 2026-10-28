@@ -21,5 +21,5 @@ written by hand in Kotlin from this file and from OsmAnd's own Java reader
 `BinaryMapAddressReaderAdapter.java` at OsmAnd `b75433bc9d3c2a5db714b7a5315dccca47ed4603`),
 which was read but not copied. The file is here as the reference the reader was written
 against, and so a later change to the format shows up as a diff. Its field names and
-comments are not evidence (docs/p11-2-3-results.md records where the files differ from
-them: names are text tags, not fields 6 and 7).
+comments are not evidence (docs/navigation.md, "OsmAnd maps: search and places"
+records where the files differ from them: names are text tags, not fields 6 and 7).

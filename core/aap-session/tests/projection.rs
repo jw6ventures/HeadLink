@@ -441,7 +441,7 @@ fn ford_fixture_selects_1920x1080_and_maps_touch_through_its_insets() {
     let k = &s.report().keepalive;
     assert_eq!(k.responses_encrypted, k.responses_written);
 
-    // Both report lines, pinned as text: docs/p6-plan.md §2 quotes them as the finding,
+    // Both report lines, pinned as text: they were quoted as the finding,
     // and the channel dump line carried nothing after the service name before P6.0.
     let text = s.report().to_string();
     for line in [
@@ -1293,7 +1293,7 @@ fn congestion_restart_can_be_turned_off() {
 /// Spec §8.2: a focus transition stops and restarts the stream. The head unit must see the
 /// stop indication, and the restart must carry a **new** session id — a source that pauses
 /// in place leaves Ford SYNC 4.0 believing the projection is still foreground, so its own
-/// control cannot re-enter it (docs/ford-focus-reattach-investigation.md).
+/// control cannot re-enter it (docs/protocol.md, "Video focus").
 #[test]
 fn focus_loss_stops_the_stream_and_regain_restarts_it_under_a_new_session() {
     let (mut s, mut hu, t0) = start(hu_sim::Config::default(), |_| {});
@@ -1861,7 +1861,7 @@ fn the_media_info_channel_is_opt_in_and_opens_after_input_binding() {
 
 /// A refused now-playing channel costs the integration, not the drive — the same rule as
 /// the sensor channel. Ford advertises this channel and has never been asked to open it,
-/// so a refusal is a live possibility (P5 §1).
+/// so a refusal is a live possibility.
 #[test]
 fn a_refused_media_info_channel_is_recorded_and_projection_continues() {
     let (s, hu, _) = start(
@@ -2032,7 +2032,7 @@ fn an_idle_now_playing_channel_never_leaves_a_past_deadline() {
 }
 
 /// The head unit's media buttons become named transport actions; everything else stays an
-/// ordinary key. Ford binds both kinds on the same channel (P5 §1).
+/// ordinary key. Ford binds both kinds on the same channel.
 #[test]
 fn transport_keycodes_become_transport_events_and_other_keys_stay_keys() {
     let (mut s, mut hu, t0) = start(small_frame_hu(), |c| c.projection.media_info = true);
@@ -2329,7 +2329,7 @@ fn audio_opens_sets_up_takes_focus_on_the_control_channel_and_streams_pcm() {
 
 /// Stopping always sends `RELEASE`, whatever ended the stream: SYNC 3.4 owners report a
 /// focus state machine that wedges until the cable is pulled, so no transient grant is
-/// ever left dangling (P5 §3).
+/// ever left dangling.
 #[test]
 fn stopping_sends_the_audio_stop_indication_and_always_releases_focus() {
     let (mut s, mut hu, t0, _) = start_audio(small_frame_hu(), |_| {});
@@ -2890,13 +2890,13 @@ fn a_scripted_maneuver_sequence_reaches_the_cluster_once_focus_is_granted() {
     );
     assert!(text.contains("navigation_forced=false"), "{text}");
     assert!(text.contains("TURN_NORMAL_RIGHT"), "{text}");
-    // Spec §10 and P6 plan §9: no road name and no destination in ordinary evidence,
+    // Spec §10: no road name and no destination in ordinary evidence,
     // scripted or not.
     assert!(!text.contains("Second Road"), "{text}");
     assert!(!text.contains("First Road"), "{text}");
 }
 
-/// The cluster is waited for, not assumed (P6 plan §3). A head unit that opens the
+/// The cluster is waited for, not assumed (docs/navigation.md, "Instrument cluster turn-by-turn"). A head unit that opens the
 /// channel and never announces one is told nothing at all, and the report says which of
 /// the two happened.
 #[test]

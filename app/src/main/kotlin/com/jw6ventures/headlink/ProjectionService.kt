@@ -608,7 +608,7 @@ class ProjectionService : Service() {
             // Encoder thread: tell the session, which ends with ENCODER_FAILED.
             NativeBridge.videoFailed(session.handle, detail)
         }
-        // P11: OsmAnd's maps stay open for the drive (docs/p11-plan.md §2). Held before the
+        // P11: OsmAnd's maps stay open for the drive (docs/navigation.md). Held before the
         // markers' first query, which opens nothing without a hold.
         ObfLibrary.hold(MAPS_HOLDER, true)
         // P11.5: the map's Gas, Food and Shop markers, read from OsmAnd's maps on a thread of
@@ -737,7 +737,7 @@ class ProjectionService : Service() {
             NotificationFeed.exclusions = saved.notificationExclusions
             NotificationFeed.paused = saved.notificationsPaused
             NotificationFeed.enabled = saved.notificationsOnDashboard
-            // P8.1: the speech engine, bound for the length of the projection (plan §3)
+            // P8.1: the speech engine, bound for the length of the projection
             // and released in stopProjection. The row being read stays lit.
             Speaker.readingListener = { key -> if (running === session) session.pipeline?.reading(key) }
             Speaker.bind(this, saved)
@@ -754,7 +754,7 @@ class ProjectionService : Service() {
             }
             session.speechCheck = speechCheck
             speechCheck.run()
-            // P10: weather from Breezy (docs/p10-plan.md §3), read now, on its notifier and
+            // P10: weather from Breezy (docs/dashboard.md), read now, on its notifier and
             // every 15 min, only while this projects and only with Show weather on. After
             // Speaker.bind, since an alert in the first read may be spoken.
             Weather.listener = { state -> if (running === session) session.pipeline?.weather(state) }
@@ -768,7 +768,7 @@ class ProjectionService : Service() {
                 main.post { if (running === session) session.pipeline?.homeAssistantShown(settings.usable) }
             }
             // P7.9: the in-call component is enabled only while projecting, and only with
-            // the setting on (plan §5.8); releaseIfDone turns it off at the session's end.
+            // the setting on; releaseIfDone turns it off at the session's end.
             if (saved.callControls) {
                 val route = CallControl.setEnabled(this, true)
                 SessionController.note("call controls on: ${route.name.lowercase()}")
@@ -833,7 +833,7 @@ class ProjectionService : Service() {
         HomeAssistantPrefs.listener = null
         Weather.stop()
         // Speech first, so its report counts what projection's end cut off and shows the
-        // focus grant given back (P8.1, plan §4). Its counts outlive the release.
+        // focus grant given back (P8.1). Its counts outlive the release.
         Speaker.readingListener = null
         Speaker.release()
         session.speechCheck?.let(main::removeCallbacks)
@@ -844,7 +844,7 @@ class ProjectionService : Service() {
         session.phone = null
         session.players?.let { players -> control.execute { players.release() } }
         session.players = null
-        // Between drives the listener reads nothing (plan §5.8).
+        // Between drives the listener reads nothing.
         NotificationFeed.enabled = false
         session.notificationsListener?.let(NotificationFeed::removeListener)
         session.notificationsListener = null
@@ -877,7 +877,7 @@ class ProjectionService : Service() {
      * `key=value` lines from the phone-side sources the dashboard draws from: signal and
      * battery, the player list, the notification feed, speech (P8.1) and call controls.
      * Counts and levels only; each source's own report keeps names, text and numbers out
-     * (spec §10). Speech names the engine's package, as plan §9 asks, and nothing said.
+     * (spec §10). Speech names the engine's package, as docs/audio-and-speech.md asks, and nothing said.
      */
     private fun backendsReport(session: Running): String = buildString {
         session.phone?.let { append(it.report()) }
@@ -1076,7 +1076,7 @@ class ProjectionService : Service() {
         return Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(getString(R.string.notification_title))
-            // The Home card's sentence (P7 plan §6.2), not the stage's enum name. The
+            // The Home card's sentence (P7), not the stage's enum name. The
             // destination's label may appear: this notification is the operator's own.
             .setContentText(notificationText())
             .setOngoing(true)

@@ -43,7 +43,7 @@ import kotlin.math.sin
  * [viaLat] and [viaLon], both or neither, put one point the route must pass through
  * between the two ends. The preview's own alternatives are made this way ([AlternativeFinder]).
  *
- * [nogos] (P9.5, plan §7) are live traffic's closures and jams as BRouter no-go points
+ * [nogos] (P9.5) are live traffic's closures and jams as BRouter no-go points
  * ([TrafficNogos]): a hard one is a circle the route may not enter, a weighted one charges
  * the metres of road inside it times its weight. The weights are BRouter cost at [options]'
  * top speed ([TrafficCost]); [Router.compute] rescales them if it has to time the route
@@ -159,8 +159,8 @@ class Route @JvmOverloads constructor(
     /**
      * How many traffic no-go points BRouter was given for this route (P9.5), 0 when none.
      * Above 0, HERE's data helped choose it, so "Traffic © HERE" is owed while it is shown
-     * (plan §1, 6.4 a): whether the points actually moved it cannot be known without a
-     * second search, and the attribution does not wait for one.
+     * (HERE's Platform Terms, 6.4a): whether the points actually moved it cannot be known
+     * without a second search, and the attribution does not wait for one.
      */
     val nogoCount: Int = 0,
     /**
@@ -270,10 +270,10 @@ class RoutingException @JvmOverloads constructor(message: String, val stopped: B
  * BRouter keeps its parsed profile in a process-wide cache, so everything goes through a
  * single [RoutePlanner] thread. Pure JVM, so the host tests exercise this same class.
  *
- * **Traffic no-go points** (P9.5, plan §7) go to BRouter as `RoutingContext.nogopoints`,
+ * **Traffic no-go points** (P9.5) go to BRouter as `RoutingContext.nogopoints`,
  * made afresh for every search, so nothing of one request's traffic reaches the next.
  * What the vendored BRouter does with them, read from its code and measured on the Texas
- * tiles (docs/p9-5-routing-results.md), and what is done about it here:
+ * tiles (docs/navigation.md, "Live traffic (HERE)"), and what is done about it here:
  *
  * - **One charge per link.** BRouter charges a nogo while it walks one link, the stretch
  *   of way between two junctions of its graph, and keeps only the *last* circle that
@@ -464,7 +464,7 @@ class Router(
         /**
          * How near a closure the route crossed a weighted point must be to be left out of
          * the second search, metres: the longest interstate link measured on the Texas tiles
-         * was 1.6 km (docs/p9-5-routing-results.md), and a point can only overwrite a
+         * was 1.6 km (docs/navigation.md, "Live traffic (HERE)"), and a point can only overwrite a
          * closure on the same link.
          */
         const val CLOSURE_GUARD_M = 2_000.0

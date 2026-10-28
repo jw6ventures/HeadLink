@@ -9,7 +9,7 @@ import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * P11.5a's search ahead at run time (docs/p11-plan.md §6a), one per dashboard projection:
+ * P11.5a's search ahead at run time (docs/navigation.md), one per dashboard projection:
  * a press that lights Gas, Food or Shop while a route is followed starts it; the rules are
  * [AheadSearch]'s.
  *
@@ -59,7 +59,7 @@ class AheadSearcher(
     /**
      * A POI button was pressed and left [on]. On, while guidance follows a route with a
      * destination, searches ahead for [kind]; with no route it does nothing more than the
-     * button already did (plan §6a). Off stops a search for that kind and takes its markers
+     * button already did. Off stops a search for that kind and takes its markers
      * and card away.
      */
     fun pressed(kind: PoiKind, on: Boolean) {

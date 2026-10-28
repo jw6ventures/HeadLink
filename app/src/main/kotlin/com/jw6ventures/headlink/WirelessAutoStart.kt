@@ -1,9 +1,10 @@
 package com.jw6ventures.headlink
 
 /**
- * W3 (docs/wireless-w3-procedure.md): whether the linked truck connecting over Bluetooth
- * starts wireless projection. The wireless counterpart of [AutoStart], and pure for the
- * same reason: the host test covers every branch, and [WirelessAuto] only gathers inputs.
+ * W3 (docs/connecting.md, "The companion-device link and auto-start"): whether the
+ * linked truck connecting over Bluetooth starts wireless projection. The wireless
+ * counterpart of [AutoStart], and pure for the same reason: the host test covers every
+ * branch, and [WirelessAuto] only gathers inputs.
  *
  * Being linked is the switch: Android tells the app about the truck only while the
  * operator has the truck linked, so there is no separate "off" here. START starts a link

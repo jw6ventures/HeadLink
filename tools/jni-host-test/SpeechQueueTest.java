@@ -1,4 +1,4 @@
-// P8.1's speech decisions on a desktop JVM (docs/p8-plan.md sections 4, 8 and 9): the
+// P8.1's speech decisions on a desktop JVM (docs/audio-and-speech.md, "Speech"): the
 // engine and truck-only gate, the priority between a tapped notification and a turn
 // prompt, the second tap that stops a read, the silence lead-in, one focus grant shared by
 // utterances close together and always given back, the section 14.1 call rule, the counts

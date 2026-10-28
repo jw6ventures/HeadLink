@@ -1,4 +1,4 @@
-// P9.4 and P9.5 at run time on a desktop JVM (docs/p9-plan.md sections 4, 6, 7 and 9): the
+// P9.4 and P9.5 at run time on a desktop JVM (docs/navigation.md, "Live traffic (HERE)"): the
 // traffic loop, TrafficFeed, run whole with an injected clock, injected threads (queues this
 // test drains) and the real TrafficClient over an injected HTTP layer. Nothing is sent unless
 // a route is followed with traffic on and a key saved; the first fetch, the cadence, the
@@ -12,7 +12,7 @@
 // and a report and event log with no place, road, reason or key in them.
 //
 // Every HERE response is hand-written in HERE's JSON shape and laid along a route: never a
-// real one (plan section 1, 6.4 h). With a directory holding W100_N30.rd5 as the first
+// real one (HERE's terms, 6.4 h). With a directory holding W100_N30.rd5 as the first
 // argument it also drives BRouter's real route up I-35E in Dallas with a closure laid on it,
 // which must re-route round it, and a queue laid on it, which must bring an offer.
 import java.io.ByteArrayInputStream;
@@ -93,7 +93,7 @@ public final class TrafficFeedTest {
         System.out.println("jni-host-test: ok " + passed + " traffic feed checks; " + real);
     }
 
-    // ---- plan section 9, first item, end to end through the loop ----------------------
+    // ---- the first item, end to end through the loop -----------------------------------
 
     private static void nothingIsSentWithoutARouteTrafficOrAKey() {
         Route route = northbound(40_000.0, "I-35E");
@@ -124,7 +124,7 @@ public final class TrafficFeedTest {
             feed.tick();
             host.drain();
         }
-        check(host.http.urls.isEmpty(), "no route, no request (decision 5)");
+        check(host.http.urls.isEmpty(), "no route, no request");
         // A route, but no fix on it yet: not yet followed.
         feed.onRoute(route);
         for (int i = 0; i <= 10; i++) {
@@ -139,7 +139,7 @@ public final class TrafficFeedTest {
         check(host.http.urls.isEmpty(), "nor is a route arrived at");
     }
 
-    // ---- plan section 4: when -----------------------------------------------------------
+    // ---- when -----------------------------------------------------------
 
     private static void theFirstFetchTheCadenceAndRetries() {
         Route route = northbound(60_000.0, "I-35E");
@@ -209,7 +209,7 @@ public final class TrafficFeedTest {
         check(host.http.urls.size() == 8, "at the limit nothing is sent");
         check(feed.report().contains("traffic_cap_reached=true") && feed.report().contains("traffic_last_error=limit"), "and the report says so");
 
-        // Review fix 1 (plan §4): followed means a recent fix on the route or joining it. The
+        // Review fix 1: followed means a recent fix on the route or joining it. The
         // projection ends and the phone is put away with the route still up: ticks alone, the
         // refresh long due, fetch nothing; nor do fixes that place the vehicle off the route.
         host.settings = settings(true, KEY);
@@ -309,7 +309,7 @@ public final class TrafficFeedTest {
         check(host.http.urls.size() == 6, "and no more until the refresh");
     }
 
-    // ---- plan sections 1 and 4: what is kept -------------------------------------------
+    // ---- what is kept -------------------------------------------
 
     private static void aResponseIsReplacedNeverKeptAndDroppedWhenItShouldBe() {
         Route route = northbound(60_000.0, "I-35E");
@@ -401,7 +401,7 @@ public final class TrafficFeedTest {
         check(feed.getDisplay().getTraffic() == null && feed.getDelaySeconds() == 0, "an answer for a route that ended is thrown away");
     }
 
-    // ---- plan section 6: the time --------------------------------------------------------
+    // ---- the time --------------------------------------------------------
 
     private static void theTimeIsPacedBRouterPlusTheDelayAhead() {
         Route route = northbound(40_000.0, "I-35E");
@@ -469,10 +469,10 @@ public final class TrafficFeedTest {
         calm.onPosition(route, on(0.0));
         quiet.drain();
         check(calm.getDelaySeconds() == 0 && !calm.getDisplay().getAttributed(),
-                "free flow slower than BRouter's model adds nothing, and owes no credit (orchestrator's change to section 6)");
+                "free flow slower than BRouter's model adds nothing, and owes no credit (an orchestrator's change to the time rule)");
     }
 
-    // ---- plan section 7: the points ------------------------------------------------------
+    // ---- the points ------------------------------------------------------
 
     private static void thePointsReachEveryRequest() {
         Route route = northbound(40_000.0, "I-35E");
@@ -587,7 +587,7 @@ public final class TrafficFeedTest {
         check(busy.rerouteCalls == 2 && waiting.report().contains("traffic_closure_reroutes=1"), "a refused re-route is asked again, and counted once done");
     }
 
-    // ---- plan section 7: the offer (P9.6) ------------------------------------------------
+    // ---- the offer (P9.6) ------------------------------------------------
 
     private static void theOffer() {
         Route route = northbound(40_000.0, "I-35E");
@@ -685,7 +685,7 @@ public final class TrafficFeedTest {
         check(host.looks == looks + 1, "one search for each traffic update worth one: " + (host.looks - looks));
     }
 
-    // ---- the code review's fixes (docs/p9-lab-results.md) -------------------------------------
+    // ---- the code review's fixes (docs/verification.md) -------------------------------------
 
     private static void reviewFixes() {
         // Fix 6: an answer for a dropped generation must not mark the new generation's fetch
@@ -710,7 +710,7 @@ public final class TrafficFeedTest {
         host.drain();
         check(host.http.urls.size() == 4 && feed.getDelaySeconds() >= 0, "two fetches in all: " + host.http.urls.size());
 
-        // Fix 7 (plan §7): only a way round faster because of traffic is offered. 100 s of
+        // Fix 7: only a way round faster because of traffic is offered. 100 s of
         // queue ahead and a way round BRouter makes 400 s quicker saves 500 s, but only 100 s
         // of it is traffic's: not an offer. With 300 s of queue, it is.
         Host light = new Host(settings(true, KEY));

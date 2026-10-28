@@ -5,7 +5,7 @@ import kotlin.math.cos
 import kotlin.math.hypot
 
 /**
- * One stretch of the route line ahead drawn in a traffic colour (P9.3, docs/p9-plan.md §6):
+ * One stretch of the route line ahead drawn in a traffic colour (P9.3, docs/navigation.md, "Live traffic (HERE)"):
  * its level, its points, and where it lies along the route. Built by [TrafficLines], drawn
  * by [MapEngine] as one `PathLayer` over the route line.
  */
@@ -26,7 +26,7 @@ class TrafficPiece(
  *
  * **What is drawn.** Only [Congestion.SLOW], [Congestion.QUEUING] and [Congestion.CLOSED]
  * runs get a piece. Free-flowing and no-data runs are left to the route line itself, in its
- * normal colour (plan §6 and §12: "no data" is never drawn as free-flowing, and free-flowing
+ * normal colour ("no data" is never drawn as free-flowing, and free-flowing
  * is not a colour of its own). Adjacent runs of one level are merged, and at most
  * [MAX_PIECES] are drawn, nearest first, so the layer count is bounded whatever HERE sends.
  *
@@ -154,7 +154,7 @@ class TrafficLines {
         private const val METRES_PER_DEGREE = 6_371_000.0 * PI / 180.0
 
         /**
-         * Slow (jam factor 4 to 8, plan §6): amber. Brighter and more orange than either
+         * Slow (jam factor 4 to 8): amber. Brighter and more orange than either
          * theme's arterial yellow (`#f7d57e` day, `#c9b583` night), and nowhere near the
          * route's cyan or the alternatives' grey.
          */
