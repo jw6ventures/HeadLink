@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import com.jw6ventures.headlink.Route;
 import com.jw6ventures.headlink.RoutePlanner;
 import com.jw6ventures.headlink.RouteRequest;
@@ -47,6 +48,7 @@ public final class RoutingTest {
             aDamagedTileNeverReplacesAnything(work);
             noDataIsAnErrorNotACrash(work);
             aNewerRequestSupersedesOneInProgress(work);
+            runningOutOfMemoryFailsTheRouteNotTheThread();
             String segments = args.length > 0 ? args[0] : "";
             if (!segments.isEmpty() && new File(segments, "W75_N40.rd5").isFile()) {
                 File tile = new File(segments, "W75_N40.rd5");
@@ -257,6 +259,31 @@ public final class RoutingTest {
         check(truncated != null && truncated.contains("too short"), "a cut-short import is refused: " + truncated);
         check(installed.length() == tile.length(), "and the good copy survives it");
         return installed;
+    }
+
+    /**
+     * A search that outgrows the heap is answered as a failed route, and the routing thread
+     * goes on to answer the next request. The factory throws, as the engine would.
+     */
+    private static void runningOutOfMemoryFailsTheRouteNotTheThread() throws Exception {
+        LinkedBlockingQueue<RouteResult> results = new LinkedBlockingQueue<>();
+        AtomicInteger calls = new AtomicInteger();
+        RoutePlanner planner = new RoutePlanner(() -> {
+            calls.incrementAndGet();
+            throw new OutOfMemoryError("test heap");
+        }, 10_000, () -> kotlin.Unit.INSTANCE);
+        try {
+            for (int i = 0; i < 2; i++) {
+                planner.request(labToCommon(), result -> { results.add(result); return kotlin.Unit.INSTANCE; });
+                RouteResult result = results.poll(10, TimeUnit.SECONDS);
+                check(result != null, "request " + i + " is answered after running out of memory");
+                check(result.getRoute() == null && "route search ran out of memory".equals(result.getError()),
+                    "and fails with a message: " + result.getError());
+            }
+            check(calls.get() == 2, "the same routing thread took both requests");
+        } finally {
+            planner.close();
+        }
     }
 
     private static void aCrossTownRouteIsComputedOffTheCallingThread(File work, File segments) throws Exception {

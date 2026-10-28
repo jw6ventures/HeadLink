@@ -3,6 +3,10 @@
 # android-build.sh. Shared by the ci and release workflows.
 name: Build
 description: Build the pinned images and run the Rust checks, APK build, lint and host tests
+inputs:
+  cache-key-prefix:
+    description: Dependency cache key prefix. Releases pass their own, so they never restore a cache a pull request wrote.
+    default: deps
 runs:
   using: composite
   steps:
@@ -21,15 +25,15 @@ runs:
       run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
     - name: Restore dependency caches
-      uses: actions/cache@v4
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
         path: |
           ~/.cache/openauto-android/cargo
           ~/.cache/openauto-android/sources
           ~/.cache/openauto-android/gradle/caches/modules-2
           ~/.cache/openauto-android/gradle/wrapper
-        key: deps-${{ hashFiles('Cargo.lock', 'tools/proto-gen/Cargo.lock', 'tools/fetch-deps.sh', 'gradle/verification-metadata.xml', 'gradle/libs.versions.toml', 'gradle/wrapper/gradle-wrapper.properties') }}
-        restore-keys: deps-
+        key: ${{ inputs.cache-key-prefix }}-${{ hashFiles('Cargo.lock', 'tools/proto-gen/Cargo.lock', 'tools/fetch-deps.sh', 'gradle/verification-metadata.xml', 'gradle/libs.versions.toml', 'gradle/wrapper/gradle-wrapper.properties') }}
+        restore-keys: ${{ inputs.cache-key-prefix }}-
 
     - name: Build images
       shell: bash

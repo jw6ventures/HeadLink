@@ -18,12 +18,16 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # Nothing after checkout talks to git, and the workspace is mounted into the
+          # build containers, so leave no token in .git/config.
+          persist-credentials: false
 
       - uses: ./.github/actions/build
 
       - name: Upload APKs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: apks-${{ github.sha }}
           # The debug APK is signed with the runner's throwaway debug key, so it will not

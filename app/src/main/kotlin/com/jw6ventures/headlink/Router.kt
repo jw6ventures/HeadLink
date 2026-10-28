@@ -666,6 +666,8 @@ class RoutePlanner @JvmOverloads constructor(
                     // The alternatives are extras; a failure here costs them and nothing else.
                     // Exception, not RuntimeException: router() throws RoutingException for a
                     // profile it cannot install, and nothing may escape onto this thread.
+                } catch (e: OutOfMemoryError) {
+                    // As for a route: the searches' memory is released once this unwinds.
                 } finally {
                     running = null
                     done()
@@ -706,6 +708,11 @@ class RoutePlanner @JvmOverloads constructor(
             // BRouter reports most failures as a message, but a malformed profile throws
             // from the engine's constructor; either way the app keeps running.
             RouteResult(sequence, null, e.toString(), elapsedMs(start), thread, sequence != latest.get())
+        } catch (e: OutOfMemoryError) {
+            // A search over a long trip can outgrow the heap. Its graph is garbage once
+            // this frame unwinds, so fail the route rather than let the Error end the
+            // routing thread, and with it the process.
+            RouteResult(sequence, null, "route search ran out of memory", elapsedMs(start), thread, sequence != latest.get())
         } finally {
             running = null
         }
