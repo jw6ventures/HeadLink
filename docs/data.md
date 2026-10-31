@@ -75,8 +75,8 @@ The app accepts up to 512 MiB per tile.
 
 ## OsmAnd maps: `.obf`
 
-Address search, map places (POIs) and search ahead read OsmAnd's own map files where
-OsmAnd keeps them. Nothing is copied.
+Address search, map places (POIs), search ahead and highway exit numbers and signs read
+OsmAnd's own map files where OsmAnd keeps them. Nothing is copied.
 
 1. Install OsmAnd (`net.osmand.plus` or `net.osmand`) and use it to download the regions
    you need, for example `Us_texas_austin_northamerica.obf`.

@@ -146,8 +146,18 @@ object Routing {
             // which keeps it on the phone's little cores: the first build used it, and a
             // 94 km route took 23.9 s warm on the Pixel against 2.3 s on one desktop core.
             threadSetup = { Process.setThreadPriority(THREAD_PRIORITY) },
-            annotate = { route -> StreetNames.name(route, nameMaps ?: MapData.installed(app)) },
+            annotate = { route -> signed(app, StreetNames.name(route, nameMaps ?: MapData.installed(app))) },
         ).also { planner = it }
+    }
+
+    /**
+     * [route] with the exit signs OsmAnd's maps give it ([ExitSigns]); [route] itself with
+     * no maps or when reading them fails. The routing thread's work: it opens files.
+     */
+    fun signed(context: Context, route: Route): Route = try {
+        ExitSigns.sign(route, ObfLibrary.sources(context))
+    } catch (e: RuntimeException) {
+        route
     }
 
     private fun finished(result: RouteResult) {
