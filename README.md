@@ -29,6 +29,8 @@ Assistant button, both off by default.
 - **Destinations** shared from OsmAnd or any other app, address search from OsmAnd's map
   files, places of interest on the map, saved favorites, and a route preview with
   alternatives on the phone.
+- **Find your car**: HeadLink remembers where the drive ended, and **Walk to car** on the
+  Home screen opens OsmAnd with walking directions back to it.
 - **Media controls** and now-playing for whatever is playing on the phone.
 - **Notifications on the dashboard**, optionally read aloud when tapped, and **call
   controls** (answer, decline, hang up).

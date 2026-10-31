@@ -279,6 +279,9 @@ class ConnectionActivity : Activity() {
     private lateinit var wirelessAutoCheck: CompoundButton
     private var cardAction = StatusAction.NONE
     private lateinit var routeSummaryText: TextView
+    /** Home's parked-car card ([ParkingSpot]): shown between drives while a spot is saved. */
+    private lateinit var parkingCard: LinearLayout
+    private lateinit var parkingText: TextView
     private lateinit var favoritesList: LinearLayout
     private lateinit var saveDestinationButton: Button
     private var shownFavorites: List<Favorite>? = null
@@ -1427,6 +1430,19 @@ class ConnectionActivity : Activity() {
             .show()
     }
 
+    /** Home → Walk to car: OsmAnd's walking directions to the saved spot, else any maps app. */
+    private fun walkToCar() {
+        val spot = ParkingSpot.load(this) ?: return renderState()
+        if (!ParkingSpot.openWalking(this, spot, getString(R.string.parking_title))) {
+            Toast.makeText(this, R.string.parking_no_maps_app, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun forgetParkingSpot() {
+        ParkingSpot.forget(this)
+        renderState()
+    }
+
     /**
      * Saves the destination in one tap: a place just shared from OsmAnd is the
      * likeliest one to keep. Named by its own label, else its coordinates; Rename is a
@@ -1738,6 +1754,19 @@ class ConnectionActivity : Activity() {
             figures?.trafficSeconds ?: 0,
         ) ?: getString(R.string.route_none)
         saveDestinationButton.visibility = if (destination != null) View.VISIBLE else View.GONE
+
+        val parked = if (stage == Stage.IDLE) ParkingSpot.load(this) else null
+        parkingCard.visibility = if (parked != null) View.VISIBLE else View.GONE
+        if (parked != null) {
+            val zone = ZoneId.systemDefault()
+            val time = clock.time(parked.savedAtMillis, zone)
+            val day = java.time.Instant.ofEpochMilli(parked.savedAtMillis).atZone(zone).toLocalDate()
+            // A spot from an earlier day says which day, so "5:40 PM" is never read as today's.
+            parkingText.text = getString(
+                R.string.parking_saved,
+                if (day == java.time.LocalDate.now(zone)) time else "${DateFormat.getDateFormat(this).format(Date(parked.savedAtMillis))} $time",
+            )
+        }
 
         // The places are the operator's own and may be listed here, as the destination is.
         val favorites = Favorites.list(this)
@@ -2883,6 +2912,15 @@ class ConnectionActivity : Activity() {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
             setPadding(0, ui.dp(4), 0, ui.dp(4))
         }
+        parkingText = ui.caption()
+        parkingCard = ui.card(
+            ui.title(R.string.parking_title),
+            parkingText,
+            ui.row(
+                button(R.string.parking_walk) { walkToCar() },
+                quietButton(R.string.parking_forget) { forgetParkingSpot() },
+            ),
+        ).apply { visibility = View.GONE }
         val favoritesHeader = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = android.view.Gravity.CENTER_VERTICAL
@@ -2899,6 +2937,8 @@ class ConnectionActivity : Activity() {
                 it.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
             },
             wirelessText,
+            // Between drives only: getting back to the car comes before planning the next drive.
+            parkingCard,
             ui.card(
                 ui.title(R.string.route_title), routeSummaryText, routeInput, searchSuggestions.view, ui.row(routeButton, clearRouteButton),
                 previewButton.also {
