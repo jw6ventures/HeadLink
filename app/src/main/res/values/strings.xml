@@ -146,6 +146,11 @@ Incomplete from a previous run: %3$s</string>
     <string name="help_icon">ⓘ</string>
     <string name="help_about">About %1$s</string>
     <string name="route_title">Route</string>
+    <string name="parking_title">Your car</string>
+    <string name="parking_saved">Saved where the drive ended, at %1$s.</string>
+    <string name="parking_walk">Walk to car</string>
+    <string name="parking_forget">Forget</string>
+    <string name="parking_no_maps_app">No maps app can open the spot. Install OsmAnd for walking directions.</string>
     <string name="route_none">No destination. Share a place from OsmAnd, type one below, or tap a favorite.</string>
     <string name="favorites_label">Favorites</string>
     <string name="favorites_title">Favorites · %1$d of %2$d</string>

@@ -21,6 +21,8 @@ turned off for all of it, so none of it is copied to a cloud backup or a new pho
   other.
 - **Map, routing and address files** you import. HeadLink never downloads them.
 - **Saved places and recent destinations.**
+- **Where you parked:** the car's last position when a drive ends, so you can walk back
+  to it. Only the latest one is kept, and **Forget** on the Home screen deletes it.
 - **Diagnostic reports** of each connection attempt. A report records how the connection
   went (timings, counters, what the head unit offered, errors). It does not contain your
   location, destinations, routes, callers, phone numbers, or notification content. Device

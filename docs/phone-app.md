@@ -42,8 +42,9 @@ not repeat them.
 
 ## Home
 
-From top to bottom: the status card, the large button, **Connect wirelessly**, the Route
-card, the Speech card and the Favorites card.
+From top to bottom: the status card, the large button, **Connect wirelessly**, the Your car
+card (between drives, once one has been saved), the Route card, the Speech card and the
+Favorites card.
 
 ### Status card and the large button
 
@@ -113,6 +114,28 @@ the truck. Press Android Auto on the truck's screen…", and once that button is
 appears in the wireless notification (`res/values/wireless_probe.xml`). Once projecting, the large Stop ends a wireless session as it ends a wired one. A tap while
 the app is standing by for the car's Android Auto button replaces the standby. The
 transport is covered in [connecting.md](connecting.md). **Verified:** truck.
+
+### Your car
+
+`ParkingSpot` remembers where the car was when the last drive ended. `ProjectionService`
+keeps the drive's last position, the car's own fix or else the phone's while the car had
+none (the same order guidance uses), and saves it when the session ends for any reason:
+unplugged, the wireless link dropped, or stopped from the phone. One spot is kept (its own
+`parking` preferences file), replaced by the next drive that has a position. A drive with
+no position keeps the old spot, and lab-socket runs never save one. The report notes only
+that a spot was saved, never where.
+
+While idle, the card reads "Saved where the drive ended, at 5:40 PM" (with the date if it
+was an earlier day, in the Clock setting's format) and has two buttons:
+
+- **Walk to car** opens OsmAnd (`net.osmand.plus`, else `net.osmand`) with
+  `https://osmand.net/map?end=<lat>,<lon>&profile=pedestrian`, which OsmAnd reads as a
+  pedestrian route from its current location to the spot. Without OsmAnd, any maps app
+  gets a `geo:` point labelled "Your car"; with none, a message says to install OsmAnd.
+- **Forget** clears the spot and hides the card.
+
+**Verified:** not yet tried on a phone or in the car. The OsmAnd link format was read from
+OsmAnd's source (`IntentHelper.parseNavigationIntent`, October 2026).
 
 ### Route card
 

@@ -103,6 +103,11 @@ class ProjectionService : Service() {
         var vehicle: VehicleReading? = null
         var restriction: Pair<String, String>? = null
         /**
+         * The last position guidance was given this drive (the car's, else the phone's),
+         * saved as the parking spot when the session ends ([ParkingSpot]).
+         */
+        var lastPosition: Pair<Double, Double>? = null
+        /**
          * Latest published now-playing. Media control starts with the session but the
          * encoder only at video start, so without this the scene would show nothing until
          * the next poll after projection began.
@@ -558,6 +563,7 @@ class ProjectionService : Service() {
                 // P8.2: with the speed its prompts are timed by, read at the scale the drive
                 // supports when a dashboard is keeping that evidence.
                 reading.position()?.let { (lat, lon) ->
+                    session.lastPosition = lat to lon
                     Guide.onFix(this, lat, lon, "vehicle", session.pipeline?.guidanceSpeed() ?: reading.speed())
                 }
             }
@@ -714,6 +720,7 @@ class ProjectionService : Service() {
                     val lat = snapshot.latitude
                     val lon = snapshot.longitude
                     if (lat != null && lon != null) {
+                        session.lastPosition = lat to lon
                         Guide.onFix(this, lat, lon, "phone", session.pipeline?.guidanceSpeed() ?: snapshot.speedMetresPerSecond)
                     }
                 }
@@ -999,8 +1006,23 @@ class ProjectionService : Service() {
         // Stopped from the phone (Home or the notification), a standby link waits for the button only.
         val operator = session.stopRequested || session.shutdownRequested
         if (session.attempt.settings.wireless) WirelessLink.sessionEnded(session.attempt.generation, "session ended: $category", operator)
+        // Before finish, whose render shows Home's parked-car card.
+        saveParkingSpot(session)
         SessionController.finish(session.attempt, category, detail)
         stopIfIdle()
+    }
+
+    /**
+     * The drive is over, so the car is where it last was. A drive with no position keeps
+     * the last spot rather than clearing it, and the lab receiver's made-up position is
+     * never saved. Only the outcome is noted, never the place.
+     */
+    private fun saveParkingSpot(session: Running) {
+        if (session.attempt.settings.labSocket != null) return
+        val (lat, lon) = session.lastPosition ?: return
+        session.lastPosition = null
+        ParkingSpot.save(this, lat, lon, System.currentTimeMillis())
+        SessionController.note("parking spot saved from the drive's last position")
     }
 
     /**
@@ -1078,6 +1100,7 @@ class ProjectionService : Service() {
                 }
             }
             if (session.attempt.settings.wireless) WirelessLink.sessionEnded(session.attempt.generation, "service destroyed", operator = false)
+            saveParkingSpot(session)
             SessionController.finish(session.attempt, "CANCELLED", "service destroyed")
         }
         running = null
