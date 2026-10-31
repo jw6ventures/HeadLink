@@ -137,6 +137,12 @@ class ConnectionActivity : Activity() {
     private lateinit var autoStartCheck: CompoundButton
     private lateinit var diagnosticsCheck: CompoundButton
     private lateinit var markerColourSpinner: Spinner
+    // Settings → Map zoom (docs/dashboard.md, "Adaptive zoom").
+    private lateinit var adaptiveZoomCheck: CompoundButton
+    private lateinit var adaptiveZoomLevelSpinners: List<Spinner>
+    private lateinit var adaptiveZoomOutSpinner: Spinner
+    private lateinit var adaptiveZoomInSpinner: Spinner
+    private lateinit var adaptiveZoomGlideSpinner: Spinner
     private lateinit var clockFormatSpinner: Spinner
     private lateinit var dayNightSpinner: Spinner
     private lateinit var notificationsOnDashboardCheck: CompoundButton
@@ -2647,6 +2653,15 @@ class ConnectionActivity : Activity() {
         wirelessAutoCheck = switch(R.string.wireless_auto_label)
         diagnosticsCheck = switch(R.string.diagnostics)
         markerColourSpinner = spinner(MarkerColour.LABELS)
+        // Adaptive zoom: the switch, a level per speed band, and the three times, each in
+        // AdaptiveZoomSettings' list order, which is how the rows read them.
+        adaptiveZoomCheck = switch(R.string.adaptive_zoom_label)
+        adaptiveZoomLevelSpinners = List(AdaptiveZoomSettings.BANDS) {
+            spinner(AdaptiveZoomSettings.LEVELS.map(AdaptiveZoomSettings::levelLabel))
+        }
+        adaptiveZoomOutSpinner = spinner(AdaptiveZoomSettings.OUT_SECONDS.map(AdaptiveZoomSettings::secondsLabel))
+        adaptiveZoomInSpinner = spinner(AdaptiveZoomSettings.IN_SECONDS.map(AdaptiveZoomSettings::secondsLabel))
+        adaptiveZoomGlideSpinner = spinner(AdaptiveZoomSettings.GLIDE_MILLIS.map(AdaptiveZoomSettings::glideLabel))
         clockFormatSpinner = spinner(ClockFormat.LABELS)
         dayNightSpinner = spinner(DayNightMode.LABELS)
         notificationsOnDashboardCheck = switch(R.string.notifications_on_dashboard)
@@ -2989,6 +3004,16 @@ class ConnectionActivity : Activity() {
                 ui.labelled(R.string.day_night_label, R.string.day_night_help, dayNightSpinner),
             ),
             ui.card(
+                ui.title(R.string.adaptive_zoom_title),
+                ui.withHelp(adaptiveZoomCheck, R.string.adaptive_zoom_label, R.string.adaptive_zoom_help),
+                *(0 until AdaptiveZoomSettings.BANDS).map { band ->
+                    ui.labelled(ADAPTIVE_ZOOM_BAND_LABELS[band], if (band == 0) R.string.adaptive_zoom_level_help else null, adaptiveZoomLevelSpinners[band])
+                }.toTypedArray(),
+                ui.labelled(R.string.adaptive_zoom_out_label, R.string.adaptive_zoom_out_help, adaptiveZoomOutSpinner),
+                ui.labelled(R.string.adaptive_zoom_in_label, R.string.adaptive_zoom_in_help, adaptiveZoomInSpinner),
+                ui.labelled(R.string.adaptive_zoom_glide_label, R.string.adaptive_zoom_glide_help, adaptiveZoomGlideSpinner),
+            ),
+            ui.card(
                 ui.title(R.string.settings_connecting),
                 ui.withHelp(autoStartCheck, R.string.auto_start_label, R.string.auto_start_help),
                 ui.withHelp(wirelessLinkCheck, R.string.wireless_link_label, R.string.wireless_link_help),
@@ -3183,6 +3208,13 @@ class ConnectionActivity : Activity() {
         wirelessAutoCheck.isChecked = saved.wirelessAutoStart
         diagnosticsCheck.isChecked = saved.diagnostics
         markerColourSpinner.setSelection(saved.markerColour.ordinal)
+        adaptiveZoomCheck.isChecked = saved.adaptiveZoom.enabled
+        adaptiveZoomLevelSpinners.forEachIndexed { band, spinner ->
+            spinner.setSelection(AdaptiveZoomSettings.LEVELS.indexOf(saved.adaptiveZoom.levels[band]))
+        }
+        adaptiveZoomOutSpinner.setSelection(AdaptiveZoomSettings.OUT_SECONDS.indexOf(saved.adaptiveZoom.zoomOutSeconds))
+        adaptiveZoomInSpinner.setSelection(AdaptiveZoomSettings.IN_SECONDS.indexOf(saved.adaptiveZoom.zoomInSeconds))
+        adaptiveZoomGlideSpinner.setSelection(AdaptiveZoomSettings.GLIDE_MILLIS.indexOf(saved.adaptiveZoom.glideMillis))
         clockFormatSpinner.setSelection(saved.clockFormat.ordinal)
         dayNightSpinner.setSelection(saved.dayNight.ordinal)
         notificationsOnDashboardCheck.isChecked = saved.notificationsOnDashboard
@@ -3260,6 +3292,16 @@ class ConnectionActivity : Activity() {
             s.copy(diagnostics = on)
         }
         markerColourSpinner.saves { s, i -> s.copy(markerColour = MarkerColour.entries[i]) }
+        adaptiveZoomCheck.saves { s, on -> s.copy(adaptiveZoom = s.adaptiveZoom.copy(enabled = on)) }
+        adaptiveZoomLevelSpinners.forEachIndexed { band, spinner ->
+            spinner.saves { s, i ->
+                val levels = s.adaptiveZoom.levels.toMutableList().also { it[band] = AdaptiveZoomSettings.LEVELS[i] }
+                s.copy(adaptiveZoom = s.adaptiveZoom.copy(levels = levels))
+            }
+        }
+        adaptiveZoomOutSpinner.saves { s, i -> s.copy(adaptiveZoom = s.adaptiveZoom.copy(zoomOutSeconds = AdaptiveZoomSettings.OUT_SECONDS[i])) }
+        adaptiveZoomInSpinner.saves { s, i -> s.copy(adaptiveZoom = s.adaptiveZoom.copy(zoomInSeconds = AdaptiveZoomSettings.IN_SECONDS[i])) }
+        adaptiveZoomGlideSpinner.saves { s, i -> s.copy(adaptiveZoom = s.adaptiveZoom.copy(glideMillis = AdaptiveZoomSettings.GLIDE_MILLIS[i])) }
         clockFormatSpinner.saves { s, i -> s.copy(clockFormat = ClockFormat.entries[i]) }
         dayNightSpinner.saves { s, i -> s.copy(dayNight = DayNightMode.entries[i]) }
         notificationsOnDashboardCheck.saves { s, on -> s.copy(notificationsOnDashboard = on) }
@@ -3427,6 +3469,12 @@ class ConnectionActivity : Activity() {
         private const val STATE_TAB = "tab"
         private const val MAPS_DOWNLOAD = "https://download.mapsforge.org/maps/v5/"
         private const val ROUTING_DOWNLOAD = "https://brouter.de/brouter/segments4/"
+
+        /** Adaptive zoom's band rows, slowest first, as [AdaptiveZoomSettings.levels] reads them. */
+        private val ADAPTIVE_ZOOM_BAND_LABELS = listOf(
+            R.string.adaptive_zoom_band_0, R.string.adaptive_zoom_band_1,
+            R.string.adaptive_zoom_band_2, R.string.adaptive_zoom_band_3,
+        )
 
         /** Map side choices, in the order [AttemptSettings.mapOnLeft] reads them. */
         val MAP_SIDES = listOf("map left", "map right")

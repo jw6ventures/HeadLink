@@ -16,6 +16,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import com.jw6ventures.headlink.AdaptiveZoomSettings;
 import com.jw6ventures.headlink.AlertLevel;
 import com.jw6ventures.headlink.AttemptSettings;
 import com.jw6ventures.headlink.AutoStart;
@@ -46,6 +47,7 @@ public final class AppSettingsTest {
         aStoredValueNoLongerOfferedReadsAsTheDefault();
         voiceGuidanceIsStoredWhole();
         weatherIsStoredWhole();
+        adaptiveZoomIsStoredWhole();
         markerColoursHaveStableKeysAndARim();
         clockFormatWritesTimes();
         dayNightCyclesAndResolves();
@@ -189,6 +191,27 @@ public final class AppSettingsTest {
                 "the card offers four, in AlertLevel's order");
     }
 
+    /**
+     * Settings -> Map zoom (docs/dashboard.md, "Adaptive zoom"): on by default with the
+     * agreed levels and times; the eight keys round trip, and a level or time no list offers,
+     * or a wrong type, reads as the default.
+     */
+    private static void adaptiveZoomIsStoredWhole() {
+        check(new SavedSettings().getAdaptiveZoom().equals(new AdaptiveZoomSettings()), "adaptive zoom: the model's defaults");
+        Map<String, Object> defaults = new SavedSettings().toStored();
+        check(Boolean.TRUE.equals(defaults.get("adaptive_zoom")) && Integer.valueOf(17).equals(defaults.get("adaptive_zoom_level_0"))
+                && Integer.valueOf(14).equals(defaults.get("adaptive_zoom_level_3")), "and stored so on a first launch");
+        SavedSettings changed = stored("adaptive_zoom", false, "adaptive_zoom_level_0", 18, "adaptive_zoom_level_1", 17,
+                "adaptive_zoom_level_2", 13, "adaptive_zoom_level_3", 12, "adaptive_zoom_out_seconds", 0,
+                "adaptive_zoom_in_seconds", 30, "adaptive_zoom_glide_millis", 3000);
+        check(changed.getAdaptiveZoom().equals(new AdaptiveZoomSettings(false, Arrays.asList(18, 17, 13, 12), 0, 30, 3000)),
+                "every adaptive zoom key read: " + changed.getAdaptiveZoom());
+        check(SavedSettings.Companion.fromStored(changed.toStored()).equals(changed), "the adaptive zoom settings read back whole");
+        SavedSettings odd = stored("adaptive_zoom_level_1", 40, "adaptive_zoom_out_seconds", 4, "adaptive_zoom", "yes",
+                "adaptive_zoom_glide_millis", "slow");
+        check(odd.getAdaptiveZoom().equals(new AdaptiveZoomSettings()), "an unoffered value or wrong type reads as the default");
+    }
+
     /** Each condition connect() applied before P7.1, one stop-after at a time. */
     private static void stageConditionsSurviveTheMove() {
         PerAttempt all = new PerAttempt(true, true, true, true, true);
@@ -300,7 +323,7 @@ public final class AppSettingsTest {
                 && !changed.getCongestionRestart() && !changed.getWirelessKeepAwake() && !changed.getWirelessAutoStart(),
                 "every key read: " + changed);
         Map<String, Object> form = changed.toStored();
-        check(form.size() == 58, "58 fields stored, one key each: " + form.size());
+        check(form.size() == 66, "66 fields stored, one key each: " + form.size());
         check(SavedSettings.Companion.fromStored(form).equals(changed), "the stored form reads back whole");
         check(SavedSettings.Companion.fromStored(d.toStored()).equals(d), "and so do the defaults");
         for (Object value : form.values()) {

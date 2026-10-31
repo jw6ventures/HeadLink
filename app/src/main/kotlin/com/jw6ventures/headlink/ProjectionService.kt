@@ -622,6 +622,7 @@ class ProjectionService : Service() {
                 alertLevel = saved.weather.alertLevel,
                 clockFormat = saved.clockFormat,
                 homeAssistant = dashboardScene && HomeAssistantPrefs.load(this).usable,
+                adaptiveZoom = saved.adaptiveZoom,
             ),
             dashboardSaves(),
             MapData.resolveAll(this, session.attempt.settings.mapFile),

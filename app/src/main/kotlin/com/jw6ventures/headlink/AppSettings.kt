@@ -93,6 +93,8 @@ data class SavedSettings(
     val routing: RouteOptions = RouteOptions(),
     /** P10: Settings → Weather (docs/dashboard.md, "Weather"); off by default (APP09). */
     val weather: WeatherSettings = WeatherSettings(),
+    /** Settings → Map → Adaptive zoom (docs/dashboard.md, "Adaptive zoom"); on by default. */
+    val adaptiveZoom: AdaptiveZoomSettings = AdaptiveZoomSettings(),
 ) {
     /**
      * This value with every stored choice a list no longer offers put back to its
@@ -118,6 +120,7 @@ data class SavedSettings(
             scene = pick(scene, SessionSettings.SCENES, d.scene),
             notificationExclusions = notificationExclusions.filterTo(HashSet()) { it.isNotBlank() },
             routing = routing.repaired(),
+            adaptiveZoom = adaptiveZoom.repaired(),
         )
     }
 
@@ -237,6 +240,14 @@ data class SavedSettings(
             WEATHER_ENABLED to s.weather.enabled,
             WEATHER_SPEAK_ALERTS to s.weather.speakAlerts,
             WEATHER_ALERT_LEVEL to s.weather.alertLevel.key,
+            ADAPTIVE_ZOOM to s.adaptiveZoom.enabled,
+            ADAPTIVE_ZOOM_LEVEL_0 to s.adaptiveZoom.levels[0],
+            ADAPTIVE_ZOOM_LEVEL_1 to s.adaptiveZoom.levels[1],
+            ADAPTIVE_ZOOM_LEVEL_2 to s.adaptiveZoom.levels[2],
+            ADAPTIVE_ZOOM_LEVEL_3 to s.adaptiveZoom.levels[3],
+            ADAPTIVE_ZOOM_OUT_SECONDS to s.adaptiveZoom.zoomOutSeconds,
+            ADAPTIVE_ZOOM_IN_SECONDS to s.adaptiveZoom.zoomInSeconds,
+            ADAPTIVE_ZOOM_GLIDE_MILLIS to s.adaptiveZoom.glideMillis,
         )
     }
 
@@ -325,6 +336,14 @@ data class SavedSettings(
                     speakAlerts = flag(WEATHER_SPEAK_ALERTS, d.weather.speakAlerts),
                     alertLevel = AlertLevel.of(stored[WEATHER_ALERT_LEVEL] as? String),
                 ),
+                adaptiveZoom = AdaptiveZoomSettings(
+                    enabled = flag(ADAPTIVE_ZOOM, d.adaptiveZoom.enabled),
+                    levels = listOf(ADAPTIVE_ZOOM_LEVEL_0, ADAPTIVE_ZOOM_LEVEL_1, ADAPTIVE_ZOOM_LEVEL_2, ADAPTIVE_ZOOM_LEVEL_3)
+                        .mapIndexed { i, key -> number(key, d.adaptiveZoom.levels[i]) },
+                    zoomOutSeconds = number(ADAPTIVE_ZOOM_OUT_SECONDS, d.adaptiveZoom.zoomOutSeconds),
+                    zoomInSeconds = number(ADAPTIVE_ZOOM_IN_SECONDS, d.adaptiveZoom.zoomInSeconds),
+                    glideMillis = number(ADAPTIVE_ZOOM_GLIDE_MILLIS, d.adaptiveZoom.glideMillis),
+                ),
             ).repaired()
         }
 
@@ -387,6 +406,14 @@ data class SavedSettings(
         private const val ROUTE_ETA_PERCENT = "route_eta_percent"
         private const val ROUTE_LEARN_PACE = "route_learn_pace"
         private const val ROUTE_SHOW_ALTERNATIVES = "route_show_alternatives"
+        private const val ADAPTIVE_ZOOM = "adaptive_zoom"
+        private const val ADAPTIVE_ZOOM_LEVEL_0 = "adaptive_zoom_level_0"
+        private const val ADAPTIVE_ZOOM_LEVEL_1 = "adaptive_zoom_level_1"
+        private const val ADAPTIVE_ZOOM_LEVEL_2 = "adaptive_zoom_level_2"
+        private const val ADAPTIVE_ZOOM_LEVEL_3 = "adaptive_zoom_level_3"
+        private const val ADAPTIVE_ZOOM_OUT_SECONDS = "adaptive_zoom_out_seconds"
+        private const val ADAPTIVE_ZOOM_IN_SECONDS = "adaptive_zoom_in_seconds"
+        private const val ADAPTIVE_ZOOM_GLIDE_MILLIS = "adaptive_zoom_glide_millis"
     }
 }
 

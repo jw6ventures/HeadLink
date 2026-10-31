@@ -27,6 +27,9 @@
 #   rules over the vendored BRouter jar. ROUTING_SEGMENTS=<dir holding W75_N40.rd5> adds
 #   real routes; the tile is 119 MB and not in the repository, so by default it is skipped
 #   and the summary line says so.
+# * AdaptiveZoomTest: the follow view's zoom by speed band, the waits before zooming out
+#   and in, the margin at a band's edge, the glide, that a pinch or +/- holds the zoom
+#   until recentre, that a panned map is left alone, and the settings' repair.
 # * RouteOptionsTest: Maps & routing -> Route preferences: the profile parameters each
 #   switch sends, repair, labels, the time adjustment, the stored keys, and Learn my pace
 #   over synthetic drives. ROUTING_SEGMENTS with W100_N30.rd5 adds Austin routes (Avoid toll
@@ -203,6 +206,7 @@ java -cp "$out:$classes:$stdlib" DashboardFlexTest
 java -cp "$out:$classes:$stdlib" FavoritesTest
 java -cp "$out:$classes:$stdlib" AppSettingsTest
 java -cp "$out:$classes:$stdlib:$brouter" RoutingTest "${ROUTING_SEGMENTS:-}"
+java -cp "$out:$classes:$stdlib" AdaptiveZoomTest
 java -cp "$out:$classes:$stdlib:$brouter" RouteOptionsTest "${ROUTING_SEGMENTS:-}"
 java -cp "$out:$classes:$stdlib:$brouter" RoutePreviewTest "${ROUTING_SEGMENTS:-}"
 java -cp "$out:$classes:$stdlib:$brouter" GuidanceTest "${ROUTING_SEGMENTS:-}"

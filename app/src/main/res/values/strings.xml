@@ -175,6 +175,21 @@ Incomplete from a previous run: %3$s</string>
     <string name="settings_notifications">Notifications and calls</string>
     <string name="speed_unit_label">Speed unit</string>
     <string name="day_night_help">Automatic follows the head unit\'s day and night signal. Day or Night keeps the dashboard in that palette. The ☀/☾ button on the dashboard changes the same choice.</string>
+    <!-- Settings → Map zoom (docs/dashboard.md, "Adaptive zoom"). -->
+    <string name="adaptive_zoom_title">Map zoom</string>
+    <string name="adaptive_zoom_label">Zoom with speed</string>
+    <string name="adaptive_zoom_help">While the map follows the car, it zooms in for street detail at low speed and out to see farther ahead at highway speed, using the zoom level you pick for each speed below. Pinching the map or pressing + or − holds the zoom where you put it until you press recentre. Changes take effect at the next connection.</string>
+    <string name="adaptive_zoom_band_0">Under 20 mph</string>
+    <string name="adaptive_zoom_band_1">20 to 40 mph</string>
+    <string name="adaptive_zoom_band_2">40 to 55 mph</string>
+    <string name="adaptive_zoom_band_3">Over 55 mph</string>
+    <string name="adaptive_zoom_level_help">The zoom level for each speed. Higher is closer: each step up shows half the distance across. Level 16 is the view the map always used before, about a kilometre across; 17 is about half that and 14 about four times it. A speed has to be about 2 mph past a band\'s edge to count as in the next band.</string>
+    <string name="adaptive_zoom_out_label">Wait before zooming out</string>
+    <string name="adaptive_zoom_out_help">How long a faster speed has to hold before the map zooms out to that speed\'s level. Short, so merging onto a highway shows more road soon.</string>
+    <string name="adaptive_zoom_in_label">Wait before zooming in</string>
+    <string name="adaptive_zoom_in_help">How long a slower speed has to hold before the map zooms in to that speed\'s level. Longer than zooming out, so a red light or a brief slowdown does not pump the map in and out.</string>
+    <string name="adaptive_zoom_glide_label">Zoom change takes</string>
+    <string name="adaptive_zoom_glide_help">How long the map takes to ease from one zoom level to the next. A jump changes it in one frame.</string>
     <string name="auto_start_label">Start when plugged in</string>
     <string name="media_info_label">Media controls</string>
     <string name="audio_out_label">Audio out over USB</string>
