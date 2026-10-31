@@ -1108,6 +1108,8 @@ data class TripPanel(
     val later: List<TripStep>,
     val arrived: Boolean,
     val rerouting: Boolean,
+    /** A destination with no route yet ([UpcomingTurn.FINDING], [UpcomingTurn.NO_ROUTE]): no figures, End route still shown. */
+    val searching: Boolean = false,
     /** A finger is on End route. */
     val endPressed: Boolean,
     /** Voice guidance is on (P8.2): the speaker glyph lit, else slashed. */
@@ -2912,7 +2914,8 @@ class Dashboard @JvmOverloads constructor(
         val turn = upcomingTurn ?: return null
         return when (turn.text) {
             UpcomingTurn.WAITING -> null
-            UpcomingTurn.REROUTING, UpcomingTurn.ARRIVED -> TurnCard(turn.maneuver, turn.exit, null, turn.text)
+            UpcomingTurn.REROUTING, UpcomingTurn.ARRIVED, UpcomingTurn.FINDING, UpcomingTurn.NO_ROUTE ->
+                TurnCard(turn.maneuver, turn.exit, null, turn.text)
             // The street on its own line, and the instruction when the map
             // names none: "Turn left" says more than an empty line under a left arrow.
             else -> TurnCard(turn.maneuver, turn.exit, turn.metres?.let { speedUnit.distance(it) }, turn.street ?: turn.text)
@@ -2929,8 +2932,9 @@ class Dashboard @JvmOverloads constructor(
         val turn = upcomingTurn ?: return null
         val arrived = turn.text == UpcomingTurn.ARRIVED
         val rerouting = turn.text == UpcomingTurn.REROUTING
-        val seconds = turn.destinationSeconds.takeUnless { arrived || rerouting }
-        val metres = turn.destinationMetres.takeUnless { arrived || rerouting }
+        val searching = UpcomingTurn.searching(turn.text)
+        val seconds = turn.destinationSeconds.takeUnless { arrived || rerouting || searching }
+        val metres = turn.destinationMetres.takeUnless { arrived || rerouting || searching }
         return TripPanel(
             // Rounded to the nearest minute, as the time remaining is: truncated, the first
             // lab frame said "15:23" beside "9 min" at 15:15.
@@ -2939,13 +2943,14 @@ class Dashboard @JvmOverloads constructor(
             },
             remaining = seconds?.let { StatusText.duration(it) },
             distance = metres?.let { speedUnit.distance(it) },
-            later = if (arrived || rerouting) {
+            later = if (arrived || rerouting || searching) {
                 emptyList()
             } else {
                 turn.later.map { TripStep(it.maneuver.type, it.maneuver.exit, speedUnit.distance(it.metres)) }
             },
             arrived = arrived,
             rerouting = rerouting,
+            searching = searching,
             endPressed = pressedEndRoute,
             voiceOn = voiceOn,
             voiceWarning = !speechAvailable,
