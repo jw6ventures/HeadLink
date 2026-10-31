@@ -1154,6 +1154,12 @@ data class DashboardChoices @JvmOverloads constructor(
     val clockFormat: ClockFormat = ClockFormat.DEFAULT,
     /** The Home Assistant button, shown while it is set up and on. */
     val homeAssistant: Boolean = false,
+    /**
+     * The follow view's zoom by speed (docs/dashboard.md, "Adaptive zoom"). Off here, on
+     * in [SavedSettings]: a dashboard built without the saved settings keeps the fixed zoom
+     * every test and lab run was written against.
+     */
+    val adaptiveZoom: AdaptiveZoomSettings = AdaptiveZoomSettings.OFF,
 )
 
 /**
@@ -1448,6 +1454,9 @@ class Dashboard @JvmOverloads constructor(
 
     /** Where the map pane is looking, and the gestures that move it. */
     private val mapControl = MapControl(mapOrientation)
+
+    /** Which speed band's zoom the follow view is at; [mapCamera] feeds it. */
+    private val adaptiveZoom = AdaptiveZoom(choices.adaptiveZoom)
 
     /**
      * Whether the marker is an arrow. Latched with hysteresis around [ARROW_ON_MPS] so
@@ -2888,8 +2897,12 @@ class Dashboard @JvmOverloads constructor(
      * camera this returns.
      */
     @Synchronized
-    fun mapCamera(): MapCamera? =
-        mapControl.camera(followPosition(), resolvedBearing(), if (turnCard() != null) layout.markerBelow else 0)
+    @JvmOverloads
+    fun mapCamera(nowMillis: Long = System.currentTimeMillis()): MapCamera? {
+        // Adaptive zoom eases the scale first, so the camera and the marker under it agree.
+        mapControl.adapt(adaptiveZoom.level(guidanceSpeed(), nowMillis), adaptiveZoom.settings.glideMillis.toLong(), nowMillis)
+        return mapControl.camera(followPosition(), resolvedBearing(), if (turnCard() != null) layout.markerBelow else 0)
+    }
 
     /**
      * The turn card for the route as guidance last described it (P7.4), or null: no
@@ -3003,6 +3016,13 @@ class Dashboard @JvmOverloads constructor(
             "dashboard_notifications_paused=$notificationsPaused " +
             "dashboard_pause_presses=$pausePresses dashboard_players=${players.size}\n" +
             "dashboard_map_view=${mapControl.report()}\n" +
+            // Adaptive zoom's choices and how often the band moved; never a speed.
+            "dashboard_adaptive_zoom=${adaptiveZoom.settings.enabled} " +
+            "dashboard_adaptive_zoom_levels=${adaptiveZoom.settings.levels.joinToString(",")} " +
+            "dashboard_adaptive_zoom_out_s=${adaptiveZoom.settings.zoomOutSeconds} " +
+            "dashboard_adaptive_zoom_in_s=${adaptiveZoom.settings.zoomInSeconds} " +
+            "dashboard_adaptive_zoom_glide_ms=${adaptiveZoom.settings.glideMillis} " +
+            "dashboard_adaptive_zoom_band_changes=${adaptiveZoom.changes}\n" +
             // How many places and how the tile was used; never which places.
             "dashboard_favorites=${favorites.size} dashboard_favorite_taps=${favoriteList.taps} " +
             "dashboard_favorite_scrolls=${favoriteList.scrolls}\n" +

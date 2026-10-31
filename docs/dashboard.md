@@ -513,11 +513,30 @@ traffic colours and alternatives: [navigation.md](navigation.md).
     set a route.
   - **Range.** Zoom runs from about level 16 by default, between level 4 (all of Texas)
     and 19.
+- **Adaptive zoom** (`AdaptiveZoom.kt`, `MapControl.adapt`). While following, the zoom
+  follows speed: street detail in town, a wider view on the highway. Setting *Map zoom*,
+  on by default; a dashboard built without saved settings (host tests, lab runs) has it
+  off, so the fixed level 16 they were written against stays.
+  - **Bands** are fixed, in mph: under 20, 20 to 40, 40 to 55, over 55. Each one's level
+    is a setting, 12 to 18; the defaults are 17, 16, 15 and 14 (about 500 m to 4 km
+    across a pane). A speed must be 2 mph past a band's edge to cross it, so a steady
+    40 mph does not flick between two.
+  - **Waits.** A faster band must hold 3 s before the map zooms out, a slower one 6 s
+    before it zooms in, so a red light does not pump the map. Accelerating through
+    several bands waits once. A lost speed holds the band on show. Both are settings.
+  - **Glide.** A change eases over 1.5 s (a setting; 0 jumps), evenly in zoom levels, so
+    out reads as fast as in.
+  - **Speed** is `Dashboard.guidanceSpeed`, the same as the spoken prompts use: the car's
+    own, else the phone's. It is never reported; the band changes are counted.
+  - **The driver wins.** A pinch or + or − holds the zoom where it was put until recentre
+    is pressed. A panned map and the offer's two-route view are left alone.
+  - **When it applies.** Read when projection starts, like the other display choices: a
+    change on the phone shows at the next connection.
 - **Floating bubbles.** Each is an eighth of the pane:
   - bottom-left: **recentre**, and the **compass** above it, which flips north-up and
     heading-up. The orientation is saved.
   - bottom-right: **+** above **−**, above the attribution. Zooming does not stop
-    following.
+    following, but holds adaptive zoom until recentre.
   - The top of the pane is kept for the turn card.
 - **Heading-up** holds the last heading when the bearing drops out. Spinning the map at a
   junction, where it is being read, is worse than being a few degrees stale.
@@ -587,7 +606,7 @@ traffic colours and alternatives: [navigation.md](navigation.md).
 Verified:
 
 - **Truck:** the map, pinch, the turn card, and guidance on the cluster.
-- **Never seen on the truck:** the resize fix, the POI buttons and markers, and the
-  divided offer card.
+- **Never seen on the truck:** the resize fix, the POI buttons and markers, the
+  divided offer card, and adaptive zoom.
 - **Lab and host tests only:** the zoom buttons pressed through the lab receiver, and
   marker colours.
