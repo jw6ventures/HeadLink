@@ -780,9 +780,10 @@ object DashboardDrawing {
             val caption = when {
                 trip.arrived -> "trip"
                 trip.rerouting -> "rerouting…"
+                trip.searching -> "finding route…"
                 else -> "arrive"
             }
-            val traffic = trip.traffic?.takeUnless { trip.arrived || trip.rerouting }
+            val traffic = trip.traffic?.takeUnless { trip.arrived || trip.rerouting || trip.searching }
             if (traffic == null) {
                 canvas.drawText(fit(paint, caption, summary.width.toFloat()), left, summary.y + h * 0.26f, paint)
             } else {

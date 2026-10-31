@@ -24,6 +24,11 @@ object Navigation {
     /** How old a phone fix may be and still start a route; a vehicle moves. */
     private const val PHONE_FIX_MAX_AGE_MS = 120_000L
 
+    /** [retry]'s spacing: the least time between requests, the travel that earns one, and the most time without travel. */
+    const val RETRY_MS = 10_000L
+    const val RETRY_MOVED_M = 50.0
+    const val RETRY_PARKED_MS = 60_000L
+
     var destination: Destination? = null
         private set
 
@@ -62,6 +67,25 @@ object Navigation {
     private var locating = false
 
     /**
+     * Requests for a route to [destination] that came back with none, and nothing to
+     * follow meanwhile: a start off any road the car profile can use (a field, a long
+     * private drive, a lot whose aisles are not mapped as roads) is the usual cause, since
+     * BRouter only places a start within a few hundred metres of one. Held at zero from a
+     * new destination until a route arrives. While above it the destination is asked for
+     * again as the vehicle moves ([retry]), so the route appears once a road is in reach.
+     */
+    var failures = 0
+        private set
+
+    /** Requests made by [retry]: for the report. */
+    var retries = 0
+        private set
+
+    /** Where and when the last request started, for [retry]'s spacing. Never reported. */
+    private var attemptFrom: Pair<Double, Double>? = null
+    private var attemptAt = 0L
+
+    /**
      * The vehicle's own position while a dashboard projects, installed by
      * [ProjectionService] for the life of the pipeline. Null when nothing projects.
      */
@@ -88,6 +112,7 @@ object Navigation {
         this.source = source
         via = null
         arrived = false
+        failures = 0
         // A new trip: a way round the driver kept away from on the last one may be right now.
         Traffic.newTrip()
         return route(context)
@@ -116,6 +141,7 @@ object Navigation {
         reroute: Boolean = false,
         bearing: Double? = null,
         closure: Boolean = false,
+        retry: Boolean = false,
     ): String {
         val destination = destination ?: return context.getString(R.string.destination_none)
         val source = source ?: DestinationSource.TYPED
@@ -124,10 +150,13 @@ object Navigation {
             if (!waiting) SessionController.note("destination from ${source.label} is waiting for a position")
             waiting = true
             locate(context)
+            Guide.searching()
             return context.getString(R.string.destination_waiting, describe(destination))
         }
         waiting = false
         val (point, from) = start
+        attemptFrom = point
+        attemptAt = SystemClock.elapsedRealtime()
         // A closure ahead (P9.5): the chosen route's via point may lie beyond it, on the closed
         // road, and a route kept to it could only go through the closure, which BRouter would
         // then open and this route could never leave again. The way round the closure is
@@ -151,11 +180,56 @@ object Navigation {
             when {
                 closure -> Routing.CLOSURE
                 reroute -> Routing.REROUTE
+                retry -> Routing.RETRY
                 else -> source.label
             },
             from,
         )
+        // With no route to follow yet, the dashboard says one is being looked for rather
+        // than showing nothing (a route already followed keeps its card until replaced).
+        Guide.searching()
         return context.getString(R.string.destination_routing, describe(destination))
+    }
+
+    /** [Routing] has a route to [destination]: nothing left to retry. */
+    fun routed() {
+        failures = 0
+    }
+
+    /** [Routing]'s request for [destination] found no route, and there is none to follow. */
+    fun routeFailed() {
+        if (destination == null || arrived) return
+        failures++
+    }
+
+    /**
+     * What the dashboard says while [destination] has no route to follow, or null when
+     * there is nothing to look for: no destination, or arrived. Read by [Guide] only
+     * when it has no route.
+     */
+    fun searching(): String? = when {
+        destination == null || arrived -> null
+        failures > 0 && !waiting -> UpcomingTurn.NO_ROUTE
+        else -> UpcomingTurn.FINDING
+    }
+
+    /**
+     * A fix while [destination] has no route because the last request found none ([failures]):
+     * asks again once [RETRY_MS] has passed and the vehicle has moved [RETRY_MOVED_M] from
+     * where that request started, or after [RETRY_PARKED_MS] wherever it is. So a drive
+     * that started off road is routed within seconds of reaching one, and a parked vehicle
+     * asks once a minute rather than with every fix. [bearing] is the way it is travelling.
+     */
+    fun retry(context: Context, latitude: Double, longitude: Double, bearing: Double?) {
+        if (failures == 0 || destination == null || arrived || waiting || Routing.pending != 0L) return
+        val since = SystemClock.elapsedRealtime() - attemptAt
+        if (since < RETRY_MS) return
+        val moved = attemptFrom?.let { RouteFollower.distance(it.first, it.second, latitude, longitude) } ?: Double.MAX_VALUE
+        if (moved < RETRY_MOVED_M && since < RETRY_PARKED_MS) return
+        retries++
+        // How far, never where.
+        SessionController.note("no route yet; asking again after ${moved.coerceAtMost(99_999.0).toInt()} m and ${since / 1000} s")
+        route(context, bearing = bearing, retry = true)
     }
 
     /** A vehicle fix arrived: the one thing a waiting destination was waiting for. */
@@ -183,6 +257,7 @@ object Navigation {
         via = null
         waiting = false
         arrived = false
+        failures = 0
         Routing.clear()
         Guide.clear()
         NavigationStore.changed()
@@ -250,6 +325,7 @@ object Navigation {
         this.source = source
         this.via = via
         arrived = false
+        failures = 0
     }
 
     /** What the phone calls the destination: its label, else its coordinates. */
@@ -315,5 +391,6 @@ object Navigation {
     fun report(): String =
         "routing_destination_source=${source?.label ?: "-"} routing_destination_waiting=$waiting " +
             "routing_via=${via != null} routing_arrived=$arrived " +
-            "routing_destinations_refused=$refused routing_last_refusal=$lastRefusal\n"
+            "routing_destinations_refused=$refused routing_last_refusal=$lastRefusal " +
+            "routing_failures=$failures routing_retries=$retries\n"
 }

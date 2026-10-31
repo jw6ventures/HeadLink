@@ -361,6 +361,16 @@ still off. A new route is placed at once from the fix in hand, so the cluster go
 from `REROUTING` to the first maneuver. A failed re-route keeps the old route on the map; a
 vehicle back on it is guided along it again.
 
+**No route yet.** BRouter places a start only within a few hundred metres of a road the car
+profile can use, so a destination set off road (a field, a long private drive, a lot whose
+aisles are not mapped as roads) can come back with no route. The destination is kept, and
+`Navigation.retry` asks again from each fix once 10 s have passed and the vehicle has moved
+50 m from where the last request started, or after 60 s wherever it is, until a route
+arrives. A failed first route also drops any route still followed from an earlier
+destination. Meanwhile the dashboard's turn card says `Finding route…` (computing, or
+waiting for a position) or `No route yet, retrying…`, and the trip panel keeps End route;
+the cluster stays idle. The report counts `routing_failures` and `routing_retries`.
+
 **Why re-routes don't turn round.** BRouter honours `startDirection` only as a flat 40 s
 U-turn at the start, so a re-route after a missed turn began by going back the way the
 vehicle came, and a second re-route followed seconds later. `Router.behind` adds a
