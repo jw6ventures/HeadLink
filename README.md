@@ -84,7 +84,7 @@ computer or the phone and import them:
 | --- | --- | --- |
 | A Mapsforge `.map` file | <https://download.mapsforge.org/maps/v5/> (for example `north-america/us/texas.map`) | The map |
 | BRouter `.rd5` tiles | <https://brouter.de/brouter/segments4/>, every 5°×5° tile your trips pass through | Routes and directions |
-| OsmAnd `.obf` maps (optional) | Downloaded in the OsmAnd app | Address search and places |
+| OsmAnd `.obf` maps (optional) | Downloaded in the OsmAnd app | Address search, places, and exit numbers and signs |
 
 Import them from the **Maps** tab, either one at a time with **Import map** and
 **Import routing data**, or by choosing a **drop folder** that HeadLink empties into its

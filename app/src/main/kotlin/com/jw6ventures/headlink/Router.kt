@@ -170,8 +170,17 @@ class Route @JvmOverloads constructor(
      * then not a reason to re-route again, which would only find it again.
      */
     val closuresOpened: Boolean = false,
+    /**
+     * The exit sign for the maneuver at the same position in [maneuverIndices], or null
+     * where there is none or none is known. Empty until [ExitSigns] has read OsmAnd's
+     * routing data; BRouter's has no exit numbers or destinations.
+     */
+    val exitSigns: Array<ExitSign?> = emptyArray(),
 ) {
     val points: Int get() = latitudes.size
+
+    /** The sign for the maneuver at position [k] in [maneuverIndices], or null. */
+    fun exitSign(k: Int): ExitSign? = exitSigns.getOrNull(k)
 
     /** Traffic nogos were in the search that made this route: see [nogoCount]. */
     val trafficShaped: Boolean get() = nogoCount > 0
@@ -186,7 +195,7 @@ class Route @JvmOverloads constructor(
         return Route(
             latitudes, longitudes, distanceM, (seconds * factor).roundToInt(), maneuverIndices, exitNumbers, commands,
             FloatArray(pointSeconds.size) { (pointSeconds[it] * factor).toFloat() }, roadStarts, roadNames, topSpeedKmh, via,
-            nogoCount, closuresOpened,
+            nogoCount, closuresOpened, exitSigns,
         )
     }
 
@@ -195,14 +204,23 @@ class Route @JvmOverloads constructor(
         require(starts.size == names.size) { "one name per stretch" }
         return Route(
             latitudes, longitudes, distanceM, seconds, maneuverIndices, exitNumbers, commands,
-            pointSeconds, starts, names, topSpeedKmh, via, nogoCount, closuresOpened,
+            pointSeconds, starts, names, topSpeedKmh, via, nogoCount, closuresOpened, exitSigns,
+        )
+    }
+
+    /** This route with the exit signs [ExitSigns] found, one per maneuver. */
+    fun withExitSigns(signs: Array<ExitSign?>): Route {
+        require(signs.size == maneuverIndices.size) { "one sign per maneuver" }
+        return Route(
+            latitudes, longitudes, distanceM, seconds, maneuverIndices, exitNumbers, commands,
+            pointSeconds, roadStarts, roadNames, topSpeedKmh, via, nogoCount, closuresOpened, signs,
         )
     }
 
     /** This route marked as made with [count] traffic nogos, and whether closures were opened for it. */
     fun withNogos(count: Int, opened: Boolean): Route = Route(
         latitudes, longitudes, distanceM, seconds, maneuverIndices, exitNumbers, commands,
-        pointSeconds, roadStarts, roadNames, topSpeedKmh, via, count, opened,
+        pointSeconds, roadStarts, roadNames, topSpeedKmh, via, count, opened, exitSigns,
     )
 
     /**
@@ -229,6 +247,7 @@ class Route @JvmOverloads constructor(
             IntArray(keep.size) { commands[keep[it]] }, times,
             IntArray(roads.size) { maxOf(0, roadStarts[roads[it]] - start) }, Array(roads.size) { roadNames[roads[it]] },
             topSpeedKmh, via, nogoCount, closuresOpened,
+            if (exitSigns.size == maneuverIndices.size) Array(keep.size) { exitSigns[keep[it]] } else emptyArray(),
         )
     }
 

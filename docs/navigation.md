@@ -23,7 +23,7 @@ grepping reports for marker strings.
 | Map | `MapEngine.kt`, `MapData.kt`, `MapAssets.kt`, `MapReadGuard.kt`, `MapLoaderInterrupts.kt`, `app/src/main/resources/assets/oaa/dashboard-{dark,light}.xml` |
 | Routing | `vendor/brouter/`, `Router.kt` (`RouteRequest`, `Route`, `Router`, `RoutePlanner`), `Routing.kt`, `RoutingData.kt`, `RouteOptions.kt` |
 | Destinations | `DestinationParser.kt`, `DestinationActivity.kt`, `Navigation.kt`, `NavigationStore.kt`, `Favorite.kt`, `Favorites.kt` |
-| Guidance | `Guide.kt`, `RouteFollower.kt`, `Maneuvers.kt`, `app/src/main/kotlin/btools/router/VoiceHintReader.kt`, `StreetNames.kt` |
+| Guidance | `Guide.kt`, `RouteFollower.kt`, `Maneuvers.kt`, `app/src/main/kotlin/btools/router/VoiceHintReader.kt`, `StreetNames.kt`, `ExitSigns.kt` |
 | Cluster | `core/aap-session/src/navigation.rs`, `core/aap-session/src/projection.rs`, `NativeBridge.submitGuidance` |
 | Preview, alternatives | `PreviewActivity.kt`, `RoutePreview.kt`, `LiveAlternatives.kt` |
 | Live traffic | `Traffic*.kt` |
@@ -468,6 +468,60 @@ unnamed in OSM.
 **Verified:** host tests on a real route and map, and the lab. On the truck a road name
 appears on the cluster; which field it comes from is unknown.
 
+## Exit signs
+
+**What.** At a highway exit the turn card, the cluster and the voice give the exit number
+and where the ramp goes: "Exit 23A: I 35 South / Waco" on the card and as the cluster's
+road name, "Take exit 23A toward I 35 South / Waco" as the cluster's instruction, and
+"Take exit 23A toward Interstate 35 South, Waco" spoken (just "Take exit 23A" with street
+names off in the voice settings). It needs OsmAnd maps covering the road
+([OsmAnd maps](#osmand-maps-search-and-places)); without them nothing changes.
+
+**Why OsmAnd's files.** Neither other source has the data. BRouter's `lookups.dat` keeps
+no `motorway_junction` and no `destination`. The Mapsforge writer keeps an exit's point and
+its `name`, but VTM's `MapFile` reads only a point's name, house number and elevation, so
+the junction's `ref`, which is the exit number, is gone, and the writer's default tag
+mapping keeps no `destination` at all (checked against `mapsforge-map-writer` 0.25.0 and
+VTM 0.25.0 sources). OsmAnd's routing section (`OsmAndRoutingIndex`, field 9) keeps all of
+it on the same OSM ways BRouter drives.
+
+**The reader** (`ObfRouteReader`, behind `ObfFile.roadWays`). Written from OsmAnd's
+`BinaryMapRouteReaderAdapter` and `RouteDataObject` at `b75433b`. The table of contents
+notes where each routing section is and reads nothing more; the section's rules and root
+boxes are read on the first query. Rules are a tag and value each, numbered from 1 in
+order unless they carry an id. Root boxes have absolute zoom-31 bounds and children deltas
+from their parent; a box outside the query is skipped with everything under it, and the
+`basemapBoxes` are never read. A box's `shiftToData` is a big-endian offset from the box's
+own body to a varint-prefixed `RouteDataBlock`. Points are zoom-31 positions shifted right
+by 4 (about 0.3 m), deltas from the box's left and top. Text tags (`destination`, a
+junction's `ref`) are rule ids paired with an index into the block's string table. Box
+headers and the last 64 decoded blocks are cached per file.
+
+**The matching** (`ExitSigns`, pure JVM, run with `StreetNames` in `RoutePlanner`'s
+`annotate` and on live traffic's alternatives). For each maneuver except the destination,
+roundabouts and U-turns, the roads within 260 m are read. The route past the maneuver
+(`StreetNames.samples`) must lie, by a majority of samples within 8 m, on one `*_link`
+road: a "keep left" that stays on the highway at an exit gets no sign. The destination is
+the ramp's `destination:ref` then `destination` (the `:forward` or `:backward` form for
+the way the ramp is driven, when it has one), OSM's `;` read as " / ". The number is the
+ramp's `junction:ref`, else the `ref` of a `motorway_junction` point within 40 m of the
+maneuver or the ramp's first point, OsmAnd's `getExitRef` order; an on-ramp from a surface
+street has no junction near it, so it gets a destination and no number. With no
+destination, the junction's `exit_to`, the ramp's `junction:name` or the junction's `name`
+stands in. A file that fails to read leaves the maneuver unsigned.
+
+`Route.exitSigns` holds one `ExitSign` (or null) per maneuver, kept through scaling,
+naming, `remainder` and the route file (version 4; versions 2 and 3 still read).
+`RouteFollower` puts the sign's label in `NextStep.onto` and its instruction in
+`NextStep.instruction`, so the card and cluster need no change of their own.
+
+**Not done.** Routes adopted from the phone's route preview carry no signs until the next
+re-route: the preview runs in its own process, which holds no OsmAnd files. Lane guidance
+is in the same OsmAnd data and still out of scope.
+
+**Verified:** host tests on a synthetic file built from the proto (`ExitSignsTest`). Not
+yet checked against a real OsmAnd file or on the truck.
+
 ## Route preview and alternatives
 
 **Phone preview.** Home → **Preview route and alternatives** opens `PreviewActivity`: the
@@ -637,8 +691,9 @@ vs stacked card choice and the night queue red being close to motorway red are o
 Older code comments call this P11.
 
 **What.** HeadLink reads OsmAnd's own `.obf` map files in place, read-only, for typed
-address search on the phone, Gas/Food/Shop markers on the car's map, and "search ahead"
-along the route. It never routes on OBF data, renders it, or writes anything. BRouter and
+address search on the phone, Gas/Food/Shop markers on the car's map, "search ahead"
+along the route, and exit numbers and signs ([Exit signs](#exit-signs)). It never routes
+on OBF data, renders it, or writes anything. BRouter and
 the Mapsforge map are unchanged. Settings tab → **OsmAnd maps**; folder setup in
 [data.md](data.md).
 
@@ -657,8 +712,8 @@ modified time.
 own walker against OsmAnd's `OBF.proto`, vendored unmodified in
 `protocol/upstream/osmand/` with no code generated: OsmAnd frames large sections with its
 own wire type 6, a 4-byte **big-endian** length (8 bytes if the top bit is set), which no
-generator understands, and its offsets are big-endian too. Only the address (7) and POI
-(8) sections are opened. Lessons from real files:
+generator understands, and its offsets are big-endian too. Only the address (7), POI
+(8) and, for exit signs, routing (9) sections are opened. Lessons from real files:
 
 - **POI names are text tags, not fields 6/7.** The first run decoded every name empty. The
   same holds for `name:en`, `brand` and `opening_hours`. Schema names are not evidence.

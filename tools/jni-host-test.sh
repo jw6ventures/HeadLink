@@ -41,6 +41,10 @@
 # * StreetNamesTest: road names read from the map onto a route's maneuvers, the cluster
 #   instruction that names them, and the dashboard header's turn line. ROUTING_SEGMENTS
 #   with W75_N40.rd5 and MAP_FILE covering Lexington to Boston add a real route.
+# * ExitSignsTest: exit numbers and sign text from OsmAnd's routing section - a synthetic
+#   .obf built from the proto (rules, the box tree with a pruned child, points, point tags,
+#   the string table), an exit, a "keep left" past one, an on-ramp driven against its stored
+#   order, the card, cluster and spoken words, and the route file. No real file yet.
 # * DestinationTest: P6.4's reading of what OsmAnd and other apps share — geo: URIs,
 #   OsmAnd's message text and links, bare pairs — its refusals, and the swapped-sign hint.
 #   Written against OsmAnd's source; only a real share on the phone confirms the strings.
@@ -232,6 +236,7 @@ java -cp "$out:$classes:$stdlib:$brouter" TrafficFeedTest "${ROUTING_SEGMENTS:-}
 java -cp "$out:$classes:$stdlib" WeatherTest tools/breezy-standin/scenarios
 java -cp "$out:$classes:$stdlib" HomeAssistantTest
 java -cp "$out:$classes:$stdlib" ObfTest "${OBF_DIR:-}"
+java -cp "$out:$classes:$stdlib:$brouter" ExitSignsTest
 java -cp "$out:$classes:$stdlib" AddressSearchTest "${OBF_DIR:-}"
 java -cp "$out:$classes:$stdlib:$brouter" SearchAheadTest "${ROUTING_SEGMENTS:-}" "${OBF_DIR:-}"
 java -cp "$out:$classes:$stdlib" WirelessProbeTest

@@ -106,6 +106,7 @@ Audited at the pinned commits on 16 September 2026:
 | aasdk | File headers GPL-3.0-or-later (f1x.studio); README "GNU GPLv3"; **no LICENSE file at the pin** | Compatible; supply GPL text from this project if anything is ever derived. |
 | Android common kernel `f_accessory.c` | SPDX GPL-2.0 | Read for behavior only; no code copied (GPL-2.0-only is not a copy source for this project). |
 | OsmAnd `OsmAnd-java` (`BinaryMapIndexReader`, `BinaryMapPoiReaderAdapter`, `BinaryMapAddressReaderAdapter`, `MapUtils`, `Amenity`, `MapObject`) at `b75433b`, read 3 October 2026 for P11.2–P11.3 | Repository LICENSE GPLv3 | Read to learn the OBF framing (wire type 6, big-endian offsets, the POI box tree, `precisionXY`, text-tag names); no code copied. |
+| OsmAnd `OsmAnd-java` (`BinaryMapRouteReaderAdapter`, `RouteDataObject`, `router/ExitInfo`) at `b75433b`, read 31 October 2026 for exit signs | Repository LICENSE GPLv3 | Read to learn the routing section's layout (rules, the route box tree, `shiftToData` from a box's body, points shifted by 4, point types and names) and OsmAnd's exit number and destination tag order; `ObfRouteReader.kt` and `ExitSigns.kt` are original, no code copied. |
 
 The APK packages `assets/NOTICES.txt` (shown by **Third-party notices** in the app and
 checked by `tools/verify-apk.sh`) covering the linked components and generated schema
