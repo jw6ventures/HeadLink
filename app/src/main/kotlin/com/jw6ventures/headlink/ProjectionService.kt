@@ -43,6 +43,12 @@ private data class NowPlaying(
     val artist: String,
     /** App-owned, already scaled cover art, or null. Never sent on the wire. */
     val art: android.graphics.Bitmap? = null,
+    /** Position in the track as of [atMillis], or -1; drawn on the media pane only. */
+    val positionMs: Long = -1L,
+    /** Track length, or -1 when the player does not say (a live stream). */
+    val durationMs: Long = -1L,
+    /** Wall-clock time [positionMs] was read, so a replay carries it forward. */
+    val atMillis: Long = 0L,
 )
 
 class ProjectionService : Service() {
@@ -354,12 +360,15 @@ class ProjectionService : Service() {
                         this,
                         result.handle,
                         { SessionController.note(it) },
-                    ) { access, state, source, title, artist, art ->
+                    ) { access, state, source, title, artist, art, positionMs, durationMs ->
+                        // Read here, on the media thread, so the time the position was
+                        // true is not shifted by however long main takes to get to it.
+                        val at = System.currentTimeMillis()
                         // Media thread: the pipeline and the scene are owned on main.
                         main.post {
                             if (running === session) {
-                                session.nowPlaying = NowPlaying(access, state, source, title, artist, art)
-                                session.pipeline?.nowPlaying(access, state, source, title, artist, art)
+                                session.nowPlaying = NowPlaying(access, state, source, title, artist, art, positionMs, durationMs, at)
+                                session.pipeline?.nowPlaying(access, state, source, title, artist, art, positionMs, durationMs, at)
                             }
                         }
                     }
@@ -699,7 +708,7 @@ class ProjectionService : Service() {
         Guide.attach(session.handle)
         // Whatever was last published, so the first projected frame already shows it.
         session.nowPlaying?.let {
-            pipeline.nowPlaying(it.access, it.state, it.source, it.title, it.artist, it.art)
+            pipeline.nowPlaying(it.access, it.state, it.source, it.title, it.artist, it.art, it.positionMs, it.durationMs, it.atMillis)
         }
         // The same for anything the sensor channel already reported: it opens before
         // the video start indication, so these normally arrive before this pipeline

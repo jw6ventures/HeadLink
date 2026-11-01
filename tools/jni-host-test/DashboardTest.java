@@ -11,6 +11,7 @@ import com.jw6ventures.headlink.AlertLevel;
 import com.jw6ventures.headlink.Box;
 import com.jw6ventures.headlink.ClockFormat;
 import com.jw6ventures.headlink.Dashboard;
+import com.jw6ventures.headlink.MediaProgress;
 import com.jw6ventures.headlink.DashboardChoices;
 import com.jw6ventures.headlink.DashboardLayout;
 import com.jw6ventures.headlink.DashboardPalette;
@@ -38,6 +39,7 @@ public final class DashboardTest {
         anUnpopulatedFixIsNotFollowed();
         theReportCarriesNoPosition();
         mediaPressesReturnTheirAction();
+        theMediaPaneShowsHowFarIntoTheTrack();
         theFloatingMapControlsSitInTheBottomLeftOfThePane();
         aDragPansTheMapAndRecentreBringsItBack();
         aPinchZoomsAboutTheVehicleAndATwistRotates();
@@ -289,6 +291,39 @@ public final class DashboardTest {
         fresh.touch("down", tile.getCenterX(), tile.getCenterY());
         fresh.touch("up", tile.getCenterX(), tile.getCenterY());
         check(taps(fresh)[1] == 1, "a press and release inside the tile is a tap");
+    }
+
+    /** The progress row: ticks while playing, holds while paused, absent for a stream. */
+    private static void theMediaPaneShowsHowFarIntoTheTrack() {
+        Dashboard dashboard = dashboard();
+        long t = 1_000_000L;
+        dashboard.nowPlaying(true, "playing", "Some App", "A Track", "An Artist", null, 61_500L, 245_000L, t);
+        MediaProgress progress = dashboard.nextFrame(t).getMediaProgress();
+        check(progress != null, "a track with a length has a bar");
+        check(progress.getElapsedSeconds() == 61 && progress.getDurationSeconds() == 245, "position and length in seconds");
+        check("1:01".equals(progress.getElapsed()) && "4:05".equals(progress.getDuration()), "drawn as m:ss");
+        check(dashboard.nextFrame(t + 2_600L).getMediaProgress().getElapsedSeconds() == 64,
+                "carried forward between the phone's reports while playing");
+        check(dashboard.nextFrame(t + 999_000L).getMediaProgress().getElapsedSeconds() == 245,
+                "never past the end");
+
+        dashboard.nowPlaying(true, "paused", "Some App", "A Track", "An Artist", null, 61_500L, 245_000L, t);
+        check(dashboard.nextFrame(t + 10_000L).getMediaProgress().getElapsedSeconds() == 61, "held while paused");
+
+        dashboard.nowPlaying(true, "playing", "Radio", "A Station", "", null, 3_600_000L, -1L, t);
+        check(dashboard.nextFrame(t).getMediaProgress() == null, "a live stream has no length and no bar");
+
+        dashboard.nowPlaying(true, "stopped", "", "", "", null, -1L, -1L, t);
+        check(dashboard.nextFrame(t).getMediaProgress() == null, "an idle pane has no bar");
+
+        check("1:02:07".equals(MediaProgress.clock(3727)), "hours when the track is that long");
+
+        DashboardLayout layout = dashboard.getLayout();
+        Box row = layout.getMediaProgress();
+        check(row.getHeight() > 0 && row.getWidth() > 0, "the row has room");
+        check(row.getBottom() <= layout.mediaButton(0).getY(), "and sits above the buttons");
+        check(row.getX() == layout.mediaTextX(), "lined up with the title");
+        check(dashboard.report().contains("dashboard_media_progress_frames="), "drawing it is counted");
     }
 
     /**
