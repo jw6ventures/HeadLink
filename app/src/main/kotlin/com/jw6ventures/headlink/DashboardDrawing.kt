@@ -1151,6 +1151,8 @@ object DashboardDrawing {
             canvas.drawText(fit(paint, second, textWidth), textX, tile.y + tile.height * 0.38f, paint)
         }
 
+        snapshot.mediaProgress?.let { drawMediaProgress(canvas, paint, layout.mediaProgress, it, palette) }
+
         DashboardLayout.MEDIA_ACTIONS.forEachIndexed { index, action ->
             val button = layout.mediaButton(index)
             paint.color =
@@ -1179,6 +1181,45 @@ object DashboardDrawing {
                     triangle(canvas, paint, cx - size * 0.3f, cy, size, true)
                 }
             }
+        }
+    }
+
+    /**
+     * Elapsed time, a bar, and the track's length, in one row. The times are in the dim
+     * colour and the filled part of the bar in the accent, so the eye finds the bar first
+     * and the numbers only if it looks for them.
+     */
+    private fun drawMediaProgress(
+        canvas: Canvas,
+        paint: Paint,
+        box: Box,
+        progress: MediaProgress,
+        palette: DashboardPalette,
+    ) {
+        if (box.width <= 0 || box.height <= 0) return
+        val elapsed = progress.elapsed
+        val duration = progress.duration
+        paint.textSize = box.height * 0.8f
+        paint.color = palette.dim
+        val baseline = box.y + box.height * 0.8f
+        val gap = box.height * 0.5f
+        val elapsedWidth = paint.measureText(elapsed)
+        val durationWidth = paint.measureText(duration)
+        canvas.drawText(elapsed, box.x.toFloat(), baseline, paint)
+        canvas.drawText(duration, box.right - durationWidth, baseline, paint)
+
+        val left = box.x + elapsedWidth + gap
+        val right = box.right - durationWidth - gap
+        if (right - left < box.height) return
+        val thickness = maxOf(2f, box.height * 0.22f)
+        val cy = box.y + box.height * 0.5f
+        val radius = thickness / 2f
+        paint.color = palette.button
+        canvas.drawRoundRect(left, cy - radius, right, cy + radius, radius, radius, paint)
+        val filled = left + (right - left) * progress.fraction
+        if (filled > left) {
+            paint.color = palette.accent
+            canvas.drawRoundRect(left, cy - radius, maxOf(filled, left + thickness), cy + radius, radius, radius, paint)
         }
     }
 

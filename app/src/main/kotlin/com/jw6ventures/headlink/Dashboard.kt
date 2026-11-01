@@ -536,6 +536,17 @@ class DashboardLayout @JvmOverloads constructor(
 
     fun mediaTextWidth(): Int = maxOf(0, media.right - margin - mediaContentX)
 
+    /**
+     * The progress row: elapsed time, bar, track length, in the gap between the artist
+     * line and the transport buttons. Not a target; seeking is the rewind and
+     * fast-forward the head unit's own buttons already send.
+     */
+    val mediaProgress: Box = run {
+        val top = media.y + (media.height * 0.41f).toInt()
+        val bottom = media.y + media.height / 2 - margin / 2
+        Box(mediaContentX, top, mediaTextWidth(), maxOf(0, bottom - top))
+    }
+
     /** The transport action at a point, or null. */
     fun hitMedia(px: Int, py: Int): String? =
         MEDIA_ACTIONS.indices.firstOrNull { mediaButton(it).contains(px, py) }?.let { MEDIA_ACTIONS[it] }
@@ -1090,6 +1101,49 @@ data class TurnCard(
     val line: String,
 )
 
+/**
+ * How far into the track the media pane is, in whole seconds, so the chrome repaints
+ * once a second while playing and not on every frame.
+ */
+data class MediaProgress(val elapsedSeconds: Int, val durationSeconds: Int) {
+    /** 0 to 1 along the bar. */
+    val fraction: Float
+        get() = if (durationSeconds <= 0) 0f else (elapsedSeconds.toFloat() / durationSeconds).coerceIn(0f, 1f)
+
+    val elapsed: String get() = clock(elapsedSeconds)
+    val duration: String get() = clock(durationSeconds)
+
+    companion object {
+        /**
+         * The progress to draw [nowMillis], or null when there is nothing honest to show:
+         * no position, or no duration (a live stream or radio, where the session's
+         * position counts up forever and a bar would be meaningless).
+         *
+         * [positionMs] is what the session said at [atMillis]. While [playing] it is
+         * carried forward from there, because the phone reports about once a second and a
+         * clock that jumps is worse than one that ticks.
+         */
+        @JvmStatic
+        fun at(positionMs: Long, durationMs: Long, atMillis: Long, playing: Boolean, nowMillis: Long): MediaProgress? {
+            if (positionMs < 0 || durationMs <= 0) return null
+            val since = if (playing) (nowMillis - atMillis).coerceAtLeast(0L) else 0L
+            val position = (positionMs + since).coerceIn(0L, durationMs)
+            return MediaProgress((position / 1000L).toInt(), (durationMs / 1000L).toInt())
+        }
+
+        /** "3:07", or "1:02:07" past the hour. */
+        @JvmStatic
+        fun clock(seconds: Int): String {
+            val s = seconds.coerceAtLeast(0)
+            val h = s / 3600
+            val m = (s % 3600) / 60
+            val r = s % 60
+            return if (h > 0) String.format(java.util.Locale.ROOT, "%d:%02d:%02d", h, m, r)
+            else String.format(java.util.Locale.ROOT, "%d:%02d", m, r)
+        }
+    }
+}
+
 /** One maneuver on the trip panel: the cluster's values and the distance to it, in words. */
 data class TripStep(val maneuver: Int, val exit: Int, val distance: String)
 
@@ -1239,6 +1293,8 @@ class Dashboard @JvmOverloads constructor(
          */
         val artKey: String?,
         val playing: Boolean,
+        /** The bar under the artist, or null with no track length to measure against. */
+        val mediaProgress: MediaProgress? = null,
         val transport: String?,
         val restriction: String,
         val pressedTile: Int,
@@ -1398,6 +1454,12 @@ class Dashboard @JvmOverloads constructor(
     private var artist: String? = null
     private var artKey: String? = null
     private var playing = false
+    /** The session's position in ms as of [mediaPositionAt], or -1 with none. */
+    private var mediaPositionMs = -1L
+    private var mediaDurationMs = -1L
+    private var mediaPositionAt = 0L
+    /** Frames drawn with the progress bar, for the report. */
+    private var mediaProgressFrames = 0L
     private var transports = 0L
     private var lastTransport = "-"
     private var restriction = "-"
@@ -2222,8 +2284,14 @@ class Dashboard @JvmOverloads constructor(
         title: String,
         artist: String,
         artKey: String? = null,
+        positionMs: Long = -1L,
+        durationMs: Long = -1L,
+        atMillis: Long = System.currentTimeMillis(),
     ) {
         playing = state == "playing"
+        mediaPositionMs = positionMs
+        mediaDurationMs = durationMs
+        mediaPositionAt = atMillis
         mediaAccess = access
         this.title = title.ifEmpty { null }
         this.artist = artist.ifEmpty { null }
@@ -2824,6 +2892,8 @@ class Dashboard @JvmOverloads constructor(
             artist = artist,
             artKey = artKey,
             playing = playing,
+            mediaProgress = if (idle) null else MediaProgress.at(mediaPositionMs, mediaDurationMs, mediaPositionAt, playing, nowMillis)
+                ?.also { mediaProgressFrames++ },
             transport = if (transports == 0L) null else "$lastTransport x$transports",
             restriction = restriction,
             pressedTile = pressedTile,
@@ -3040,6 +3110,8 @@ class Dashboard @JvmOverloads constructor(
             "dashboard_voice_toggle_presses=$voicePresses dashboard_voice_guidance=${if (voiceOn) "on" else "off"}\n" +
             // P7.5: how many players were offered and what Resume did; never which app.
             "dashboard_media_idle=${mediaIdle()} dashboard_media_access=$mediaAccess " +
+            // Whether the progress bar was drawn; never the track or how far into it.
+            "dashboard_media_progress_frames=$mediaProgressFrames " +
             "dashboard_player_rows=$playerRows dashboard_player_rows_max=$playerRowsMax " +
             "dashboard_resume_presses=$resumePresses dashboard_resume_played=$resumePlayed " +
             "dashboard_resume_failures=$resumeFailures\n" +

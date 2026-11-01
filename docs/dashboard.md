@@ -279,6 +279,13 @@ transport buttons smaller than a fingertip.
     than a guess. What is published on the head unit's `media_info` channel, and the
     wheel buttons, are covered in [protocol.md](protocol.md) and
     [audio-and-speech.md](audio-and-speech.md).
+  - **Progress** sits between the artist and the buttons: elapsed time, a bar, and the
+    track's length, from the session's position and `METADATA_KEY_DURATION`. The phone
+    polls once a second and the dashboard carries the position forward between polls
+    while playing, so the clock ticks rather than jumps. It is left out when the player
+    gives no length (live radio and streams). Not a touch target; the head unit's
+    rewind and fast-forward already seek. The report counts frames drawn with it, never
+    the track or the position.
   - **Cover art** is copied and scaled to at most 512 px when the track changes, because
     the framework may recycle its own bitmap mid-frame. It is drawn on the dashboard only,
     never sent on `media_info`: the art field is unbounded, and Ford's limit is unknown.
@@ -298,7 +305,7 @@ transport buttons smaller than a fingertip.
 
 Verified: transport buttons and the now-playing text are verified on the truck, with
 Spotify. Real cover art and Resume have been exercised only in the emulator, with a lab
-player app.
+player app. The progress row is host-tested only, not yet seen on a phone or head unit.
 
 ## Favourites tile and trip panel
 
