@@ -90,7 +90,8 @@ public final class ExitSignsTest {
 
     // --- the file
 
-    private static byte[] syntheticObf() throws IOException {
+    /** The file, for OsmAndRoutingTest too. */
+    static byte[] syntheticObf() throws IOException {
         ByteArrayOutputStream f = new ByteArrayOutputStream();
         tag(f, 1, 0); varint(f, 2);
         byte[] routing = routingSection();

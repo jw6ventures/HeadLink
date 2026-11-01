@@ -75,7 +75,9 @@ object Navigation {
     fun set(context: Context, destination: Destination, source: DestinationSource): String {
         val tiles = Routing.installed(context).map { it.name }.toSet()
         val needed = RoutingData.tileFor(destination.latitude, destination.longitude)
-        if (needed !in tiles) {
+        // OsmAnd's router needs no tile: its maps cover what they cover, and a destination
+        // outside them comes back as a route that failed, with the reason in the report.
+        if (!AppSettings.load(context).routing.osmAndRouting && needed !in tiles) {
             refuse(Refusal.NO_ROUTING_DATA, source)
             val mirrored = DestinationParser.mirroredLongitude(destination.latitude, destination.longitude, tiles)
             return if (mirrored != null) {

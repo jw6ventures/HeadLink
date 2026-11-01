@@ -522,6 +522,59 @@ is in the same OsmAnd data and still out of scope.
 **Verified:** host tests on a synthetic file built from the proto (`ExitSignsTest`). Not
 yet checked against a real OsmAnd file or on the truck.
 
+## Routing on OsmAnd maps
+
+**What.** Settings -> Route preferences -> **Route with OsmAnd maps (test)**, off by
+default. On, every route, re-route, traffic re-route, alternative and phone preview is
+computed by OsmAnd's own router over the `.obf` files in the OsmAnd maps folder
+([OsmAnd maps](#osmand-maps-search-and-places)), and no `.rd5` tile is needed. Off,
+BRouter routes as before. This is phase 1 of moving to one set of files that OsmAnd
+maintains: OsmAnd routing behind a setting, then made the default, then the map drawn from
+the same files, then BRouter and Mapsforge dropped. BRouter stays only until OsmAnd's
+routing has proven itself on the road.
+
+**The engine.** `vendor/osmand` is OsmAnd-java's router and file reader as source, pinned
+and described in its README. `OsmAndRouter` implements the same `RouteEngine` as BRouter's
+`Router`, and `EngineChoice` picks one per request from `RouteOptions.osmAndRouting`, so
+`RoutePlanner`, `AheadSearcher`, `LiveAlternatives` and the preview need no other change.
+Files are opened through `/proc/self/fd` paths of the folder's document descriptors and
+kept open, keyed by name, size and modification time, so a replaced file is reopened.
+The car profile is OsmAnd's `routing.xml`, unmodified; the top speed is its `max_speed`
+and Avoid motorways, Avoid toll roads and Avoid unpaved roads are its own parameters.
+Prefer bypassing towns and Allow tracks have no counterpart and do nothing here, which the
+switch's help text says. The starting bearing goes in as OsmAnd's initial direction.
+
+**Traffic and future knobs.** With nothing to steer round, OsmAnd's precomputed highway
+hierarchy answers in milliseconds. A request with traffic points or earlier alternatives
+uses the plain search with `PenaltyRouter`, a `GeneralRouter` whose per-step obstacle
+time is where every penalty goes: a closure makes a step impassable; a jam adds the metres
+inside its circle times its weight, priced as BRouter prices it (`TrafficCost`), so the
+same jam moves both engines alike; and a step an earlier alternative drove costs double,
+as BRouter's alternatives do. Closures with no way round are opened rather than failing,
+and a route whose end lands more than 250 m from the destination is treated the same way.
+Toll penalties, a learned preferred route and other knobs are meant to be added here, as
+more per-step costs, each behind its own switch.
+
+**What the route carries.** Geometry, per-point times (scaled by the time adjustment, as
+with BRouter), maneuvers from OsmAnd's turn types, road names or refs, and exit signs read
+straight from the route's own roads: a keep left or right from a motorway or trunk onto a
+`*_link` is the exit, its number is the link's `junction:ref` or the nearby
+`motorway_junction` point's `ref`, and its words are the link's `destination:ref` and
+`destination`. `StreetNames` and `ExitSigns` are skipped because the router already filled
+them in, and the phone preview's routes carry signs too.
+
+**Logging.** OsmAnd prints route details, including road names and coordinates, to the
+console. Those switches are off, and its INFO lines are logged at FINE, which Android
+drops.
+
+**Not done.** Lane guidance (in the same data, not yet carried into `Route`). Search,
+drawing the map from `.obf`, and dropping Mapsforge and BRouter are later phases.
+
+**Verified:** host tests on `ExitSignsTest`'s synthetic file (`OsmAndRoutingTest`): the
+exit with its number and signs, times, closures, jams, opened closures, the second
+alternative, a stopped search and no maps. Not yet checked against a real OsmAnd file, on
+the phone's ART, or in the car.
+
 ## Route preview and alternatives
 
 **Phone preview.** Home → **Preview route and alternatives** opens `PreviewActivity`: the

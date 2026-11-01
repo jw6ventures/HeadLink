@@ -1,0 +1,981 @@
+package net.osmand.router;
+
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.sql.SQLException;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Comparator;
+import java.util.List;
+import java.util.PriorityQueue;
+import java.util.Queue;
+import java.util.TreeMap;
+
+import com.google.protobuf.CodedInputStream;
+
+import gnu.trove.iterator.TIntObjectIterator;
+import gnu.trove.iterator.TLongObjectIterator;
+import gnu.trove.map.hash.TIntObjectHashMap;
+import gnu.trove.map.hash.TLongObjectHashMap;
+import net.osmand.binary.BinaryHHRouteReaderAdapter;
+import net.osmand.binary.BinaryHHRouteReaderAdapter.HHRouteRegion;
+import net.osmand.binary.BinaryMapIndexReader;
+import net.osmand.binary.BinaryMapIndexReader.TagValuePair;
+import net.osmand.data.DataTileManager;
+import net.osmand.data.LatLon;
+import net.osmand.router.BinaryRoutePlanner.FinalRouteSegment;
+import net.osmand.router.BinaryRoutePlanner.RouteSegment;
+import net.osmand.router.BinaryRoutePlanner.RouteSegmentPoint;
+import net.osmand.router.RouteResultPreparation.RouteCalcResult;
+import net.osmand.util.MapUtils;
+
+public class HHRouteDataStructure {
+	
+	public static class HHRoutingConfig {
+		public final static int CALCULATE_ALL_DETAILED = 3;
+		public static int STATS_VERBOSE_LEVEL = 1; // 0 less verbose
+		float HEURISTIC_COEFFICIENT = 0; // A* - 1, Dijkstra - 0
+		float DIJKSTRA_DIRECTION = 0; // 0 - 2 directions, 1 - positive, -1 - reverse
+		public HHRoutingContext<NetworkDBPoint> cacheCtx;
+		
+		// tweaks for route recalculations
+		int FULL_DIJKSTRA_NETWORK_RECALC = 10;
+		int MAX_START_END_REITERATIONS = 50;
+		int MAX_START_END_REITERATIONS_WITH_MISSING_MAPS = 5;
+
+		double MAX_INC_COST_CF = 1.25;
+		double MAX_INC_COST_CF_VIGILANT = 1.15;
+
+		int MAX_COUNT_REITERATION = 30; // 3 is enough for 90%, 30 is for 10% (100-750km with 1.5m months live updates)
+		int MAX_COUNT_REITERATION_WITH_MISSING_MAPS = 3; // speed up HH-to-A* fallback if outdated maps were found
+
+		Double INITIAL_DIRECTION = null;
+
+		boolean STRICT_BEST_GROUP_MAPS = false; // derived from RoutePlannerFrontEnd.CALCULATE_MISSING_MAPS
+
+		boolean ROUTE_LAST_MILE = false;
+		boolean ROUTE_ALL_SEGMENTS = false;
+		boolean ROUTE_ALL_ALT_SEGMENTS = false;
+		boolean PRELOAD_SEGMENTS = false;
+		// max hub-graph edges kept in memory, oldest expanded points are unloaded first (0 - unlimited)
+		public int MAX_LOADED_EDGES = 250_000;
+		
+		boolean CACHE_CALCULATION_CONTEXT = false;
+		public boolean CALC_ALTERNATIVES = false;
+		boolean USE_GC_MORE_OFTEN = false;
+		
+		// ---- alternative routes (plateau / via-node method), see HHRoutePlanner.calcAlternativeRoute ----
+		// A candidate route goes through a "via node" v settled by both search trees: sp(s,v) + sp(v,t).
+		// Its plateau is the maximal chain of hub-graph edges around v that belongs to BOTH trees, i.e.
+		// the stretch the alternative drives as its own optimal road. Three explicit admissibility rules:
+		//   1) stretch    cost(alt) <= (1 + ALT_STRETCH) * cost(opt) + ALT_STRETCH_ABS
+		//   2) plateau    plateau(v) >= ALT_MIN_PLATEAU * cost(alt)          (local optimality)
+		//   3) distinct   own roads >= max(ALT_MIN_DISTINCT_FLOOR, ALT_MIN_DISTINCT_REL * len(opt))
+		//   4) no loop    the leg to v and the leg from v waste <= ALT_MAX_LOOP m coming back to each other
+		// ALT_STRETCH also bounds the search horizon, so it directly trades quality for speed.
+		public int ALT_MAX_COUNT = 2; // how many alternatives to return
+		public double ALT_STRETCH = 0.4; // hard limit of relative cost overhead (and search bound)
+		public double ALT_STRETCH_PREFERRED = 0.15; // alternatives below this limit are proposed first
+		// A relative limit alone is harsh on a short route: on a 7 minute drive it rejects everything
+		// that is not within 3 minutes of the fastest way, and the only other way through a city block
+		// rarely is. On a route long enough for ALT_STRETCH to mean minutes this allowance is nothing.
+		public double ALT_STRETCH_ABS = 180; // seconds allowed on top of ALT_STRETCH
+		public double ALT_MIN_PLATEAU = 0.1; // min share of the route driven as its own optimal road
+		public double ALT_MIN_DISTINCT_REL = 0.2; // exact geometry filter (stage 2), share of main length
+		// Only a floor under the relative rule, for routes too short to make it meaningful: a fixed
+		// requirement of a kilometre or two is a third of a 4 km city route and rejects everything
+		// there, while asking nothing extra of a route long enough for the relative rule to bind.
+		public double ALT_MIN_DISTINCT_FLOOR = 300; // exact geometry filter (stage 2), meters
+		// Max detailed expansions in stage 2 (time guard). Retries of a candidate whose shortcuts
+		// disagree with the detailed roads count against it, so this is not "number of candidates".
+		// It only binds where alternatives are scarce: a route finds its two within a few expansions
+		// and stops. Hub sharing cannot see two chains of shortcuts over the same motorway, so on a
+		// motorway route the variants of the last few kilometres rank first and each costs an
+		// expansion (Tours -> Nouatre: the two real corridors rank 19th and 20th, ~55 ms each).
+		public int ALT_MAX_EXPAND = 20;
+		// Each leg of a candidate is a shortest path; what their concatenation can add is driving out
+		// and back - the same road twice, or down one carriageway of a dual road and up the other.
+		// Measured against the best way between the two ends of the loop, so an interchange passes.
+		public double ALT_MAX_LOOP = 500; // meters the two legs may waste to come back to each other
+		// The detailed graph is searched again when the hub graph offers nothing, and that search grows
+		// with the route: measured 44 ms at 423 s of cost, 197 ms at 645 s, 274 ms at 978 s and 700 ms
+		// on a 140 km route that had no alternative to find anyway. Beyond a city hop it is not worth it.
+		public double ALT_DETAILED_MAX_COST = 900; // seconds, above this only the hub graph is searched
+		public double ALT_RANK_COST_WEIGHT = 3; // rank: (1 - shared) - weight * stretch
+
+		double MAX_COST;
+		int MAX_DEPTH = -1; // max depth to go to
+		int MAX_SETTLE_POINTS = -1; // max points to settle
+		
+		boolean USE_CH;
+		boolean USE_CH_SHORTCUTS;
+
+		boolean USE_MIDPOINT;
+		int MIDPOINT_ERROR = 3;
+		int MIDPOINT_MAX_DEPTH = 20 + MIDPOINT_ERROR;
+
+		public static HHRoutingConfig dijkstra(int direction) {
+			HHRoutingConfig df = new HHRoutingConfig();
+			df.HEURISTIC_COEFFICIENT = 0;
+			df.DIJKSTRA_DIRECTION = direction;
+			return df;
+		}
+		
+		public static HHRoutingConfig astar(int direction) {
+			HHRoutingConfig df = new HHRoutingConfig();
+			df.HEURISTIC_COEFFICIENT = 1;
+			df.DIJKSTRA_DIRECTION = direction;
+			return df;
+		}
+		
+		public static HHRoutingConfig ch() {
+			HHRoutingConfig df = new HHRoutingConfig();
+			df.HEURISTIC_COEFFICIENT = 0;
+			df.USE_CH = true;
+			df.USE_CH_SHORTCUTS = true;
+			df.DIJKSTRA_DIRECTION = 0;
+			return df;
+		}
+		
+		public static HHRoutingConfig midPoints(boolean astar, int dir) {
+			HHRoutingConfig df = new HHRoutingConfig();
+			df.HEURISTIC_COEFFICIENT = astar ? 1 : 0;
+			df.USE_MIDPOINT = true;
+			df.DIJKSTRA_DIRECTION = dir;
+			return df;
+		}
+		
+		public HHRoutingConfig preloadSegments() {
+			this.PRELOAD_SEGMENTS = true;
+			return this;
+		}
+		
+		public HHRoutingConfig cacheContext(HHRoutingContext<NetworkDBPoint> toCache) {
+			this.CACHE_CALCULATION_CONTEXT = true;
+			this.cacheCtx = toCache;
+			return this;
+		}
+		
+		public HHRoutingConfig calcAlternative() {
+			this.CALC_ALTERNATIVES = true;
+			return this;
+		}
+
+		public HHRoutingConfig calcAlternative(int maxCount) {
+			this.CALC_ALTERNATIVES = maxCount > 0;
+			this.ALT_MAX_COUNT = maxCount;
+			return this;
+		}
+		
+		public HHRoutingConfig calcDetailed(int segments) {
+			this.ROUTE_LAST_MILE = true;
+			this.ROUTE_ALL_SEGMENTS = segments >= 1;
+			this.ROUTE_ALL_ALT_SEGMENTS = segments >= 2;
+			return this;
+		}
+
+		public HHRoutingConfig useShortcuts() {
+			USE_CH_SHORTCUTS = true;
+			return this;
+		}
+		
+		public HHRoutingConfig gc() {
+			USE_GC_MORE_OFTEN = true;
+			return this;
+		}
+		
+		public HHRoutingConfig maxCost(double cost) {
+			MAX_COST = cost;
+			return this;
+		}
+		
+		public HHRoutingConfig maxDepth(int depth) {
+			MAX_DEPTH = depth;
+			return this;
+		}
+		
+		public HHRoutingConfig maxSettlePoints(int maxPoints) {
+			MAX_SETTLE_POINTS = maxPoints;
+			return this;
+		}
+
+		public HHRoutingConfig applyCalculateMissingMaps(boolean calculateMissingMaps) {
+			STRICT_BEST_GROUP_MAPS = calculateMissingMaps;
+			return this;
+		}
+
+		@Override
+		public String toString() {
+			return toString(null, null);
+		}
+		
+		public String toString(LatLon start, LatLon end) {
+			return String.format("Routing %s -> %s (HC %d, dir %d)", start == null ? "?" : start.toString(),
+					end == null ? "?" : end.toString(), (int) HEURISTIC_COEFFICIENT, (int) DIJKSTRA_DIRECTION);
+		}
+	}
+
+	public static class HHRouteRegionPointsCtx<T extends NetworkDBPoint> {
+		final HHRoutingDB networkDB;
+		final BinaryMapIndexReader file;
+		final HHRouteRegion fileRegion;
+		public final short id;
+		int routingProfile = 0;
+		TLongObjectHashMap<T> pntsByFileId = new TLongObjectHashMap<T>();
+		
+		public HHRouteRegionPointsCtx(short id, HHRoutingDB networkDB) {
+			this.id = id;
+			this.fileRegion = null;
+			this.file = null;
+			this.networkDB = networkDB;
+		}
+		
+		public HHRouteRegionPointsCtx(short id, HHRouteRegion fileRegion, BinaryMapIndexReader file, int routingProfile) {
+			this.id = id;
+			this.fileRegion = fileRegion;
+			this.file = file;
+			this.networkDB = null;
+			if (routingProfile >= 0) {
+				this.routingProfile = routingProfile;
+			}
+		}
+		
+		public int getRoutingProfile() {
+			return routingProfile;
+		}
+		
+		public HHRouteRegion getFileRegion() {
+			return fileRegion;
+		}
+		
+		
+		public T getPoint(int pntFileId) {
+			return pntsByFileId.get(pntFileId);
+		}
+		
+		
+	}
+	
+	public static class HHRoutingContext<T extends NetworkDBPoint> {
+		// faster when roads are in 1 global network but doesn't make sense for isolated islands
+		static boolean USE_GLOBAL_QUEUE = false; 
+		
+		// Initial data structure
+		RoutingContext rctx; 
+		List<HHRouteRegionPointsCtx<T>> regions = new ArrayList<>();
+		TreeMap<String, String> filterRoutingParameters = new TreeMap<>();
+		
+		TLongObjectHashMap<T> pointsById; 
+		TLongObjectHashMap<T> pointsByGeo;
+		TIntObjectHashMap<List<T>> clusterInPoints;
+		TIntObjectHashMap<List<T>> clusterOutPoints;
+
+		DataTileManager<T> pointsRect = new DataTileManager<>(11); // 20km tile
+		TLongObjectHashMap<RouteSegment> boundaries;
+		boolean initialized = false;
+		
+		// Route specific details
+		RoutingStats stats = new RoutingStats();
+		HHRoutingConfig config;
+		int startX, startY, endX, endY;
+		// Route runtime vars
+		long loadedEdges;
+		ArrayDeque<T> expandedPoints = new ArrayDeque<>(); // unload order
+		List<T> queueAdded = new ArrayList<>();
+		List<T> visited = new ArrayList<>();
+		List<T> visitedRev = new ArrayList<>();
+		
+		Queue<NetworkDBPointCost<T>> queue = createQueue();
+		Queue<NetworkDBPointCost<T>> queuePos = createQueue();
+		Queue<NetworkDBPointCost<T>> queueRev = createQueue();
+
+		/**
+		 * The road segments the route actually starts and ends on, as chosen by the last-mile search
+		 * (they can differ from the nearest ones after a reiteration). Kept because the alternatives
+		 * of a short route are searched on the detailed graph - see HHAlternativeRoutes.
+		 */
+		RouteSegmentPoint startSegment, endSegment;
+
+
+
+		private PriorityQueue<NetworkDBPointCost<T>> createQueue() {
+			return new PriorityQueue<>(new Comparator<NetworkDBPointCost<T>>() {
+				@Override
+				public int compare(NetworkDBPointCost<T> o1, NetworkDBPointCost<T> o2) {
+					return Double.compare(o1.cost, o2.cost);
+				}
+			});
+		}
+		
+		public void clearAll(TLongObjectHashMap<T> stPoints, TLongObjectHashMap<T> endPoints) {
+			clearVisited();
+			if (stPoints != null) {
+				for (NetworkDBPoint p : stPoints.valueCollection()) {
+					p.clearRouting();
+				}
+			}
+			if (endPoints != null) {
+				for (NetworkDBPoint p : endPoints.valueCollection()) {
+					p.clearRouting();
+				}
+			}
+		}
+		
+		public void clearSegments() {
+			for (T p : pointsById.valueCollection()) {
+				p.markSegmentsNotLoaded();
+			}
+		}
+
+		public void clearVisited() {
+			queue(false).clear();
+			queue(true).clear();
+			for (NetworkDBPoint p : queueAdded) {
+				p.clearRouting();
+			}
+			queueAdded.clear();
+			visited.clear();
+			visitedRev.clear();
+		}
+
+		public List<T> getIncomingPoints(T point) {
+			return clusterInPoints.get(point.clusterId);
+		}
+		
+		public List<T> getOutgoingPoints(T point) {
+			return clusterOutPoints.get(point.dualPoint.clusterId);
+		}
+
+		public void clearVisited(TLongObjectHashMap<T> stPoints, TLongObjectHashMap<T> endPoints) {
+			queue(false).clear();
+			queue(true).clear();
+			for (NetworkDBPoint p : queueAdded) {
+				FinalRouteSegment pos = p.rt(false).rtDetailedRoute;
+				FinalRouteSegment rev = p.rt(true).rtDetailedRoute;
+				p.clearRouting();
+				if (pos != null && stPoints.containsKey(p.index)) {
+					p.setDistanceToEnd(false, distanceToEnd(false, p));
+					p.setDetailedParentRt(false, pos);
+				}
+				if (rev != null && endPoints.containsKey(p.index)) {
+					p.setDistanceToEnd(true, distanceToEnd(true, p));
+					p.setDetailedParentRt(true, rev);
+				}
+			}
+			queueAdded.clear();
+			visited.clear();
+			visitedRev.clear();
+		}
+
+		public void unloadAllConnections() {
+			for (NetworkDBPoint p : pointsById.valueCollection()) {
+				p.markSegmentsNotLoaded();
+			}
+			loadedEdges = 0;
+			expandedPoints.clear();
+		}
+
+		public void setStartEnd(LatLon start, LatLon end) {
+			if (start != null) {
+				startY = MapUtils.get31TileNumberY(start.getLatitude());
+				startX = MapUtils.get31TileNumberX(start.getLongitude());
+			}
+			if (end != null) {
+				endY = MapUtils.get31TileNumberY(end.getLatitude());
+				endX = MapUtils.get31TileNumberX(end.getLongitude());
+			}
+		}
+
+		public Queue<NetworkDBPointCost<T>> queue(boolean rev) {
+			return USE_GLOBAL_QUEUE ? queue : (rev ? queueRev : queuePos);
+		}
+
+		public TLongObjectHashMap<T> loadNetworkPoints(Class<T> pointClass) throws SQLException, IOException {
+			TLongObjectHashMap<T> points = new TLongObjectHashMap<>();
+			for (HHRouteRegionPointsCtx<T> r : regions) {
+				TLongObjectHashMap<T> pnts = null;
+				if (r.networkDB != null) {
+					pnts = r.networkDB.loadNetworkPoints(r.id, pointClass);
+				}
+				if (r.file != null) {
+					pnts = r.file.initHHPoints(r.fileRegion, r.id, pointClass);
+				}
+				if (pnts != null) {
+					TLongObjectIterator<T> it = pnts.iterator();
+					while (it.hasNext()) {
+						it.advance();
+						T pnt = it.value();
+						if (!pnt.incomplete || !points.contains(it.key())) {
+							points.put(it.key(), pnt);
+						}
+					}
+				}
+			}
+			return points;
+		}
+
+		/**
+		 * Copies the points of an initialized context for another routing context over the same file
+		 * (each routing context has its own reader): nothing is parsed or filtered again.
+		 * Segments are not copied, the copy loads them lazily. Returns null if the copy isn't possible.
+		 */
+		public static HHRoutingContext<NetworkDBPoint> copy(HHRoutingContext<NetworkDBPoint> src, RoutingContext rctx) {
+			if (!src.initialized) {
+				return null;
+			}
+			HHRoutingContext<NetworkDBPoint> c = new HHRoutingContext<>();
+			c.rctx = rctx;
+			for (HHRouteRegionPointsCtx<NetworkDBPoint> r : src.regions) {
+				HHRouteRegion fileRegion = null;
+				BinaryMapIndexReader file = null;
+				for (BinaryMapIndexReader reader : rctx.map.keySet()) {
+					for (HHRouteRegion h : reader.getHHRoutingIndexes()) {
+						if (r.file != null && reader.getFile().equals(r.file.getFile())
+								&& h.getFilePointer() == r.fileRegion.getFilePointer()) {
+							fileRegion = h;
+							file = reader;
+						}
+					}
+				}
+				if (fileRegion == null) {
+					return null;
+				}
+				BinaryHHRouteReaderAdapter.copySegmentHeaders(r.fileRegion, fileRegion);
+				c.regions.add(new HHRouteRegionPointsCtx<>(r.id, fileRegion, file, r.routingProfile));
+			}
+			int maxIndex = 0;
+			for (NetworkDBPoint p : src.pointsById.valueCollection()) {
+				if (p.getClass() != NetworkDBPoint.class) {
+					return null;
+				}
+				maxIndex = Math.max(maxIndex, p.index);
+			}
+			// index is a dense global id
+			NetworkDBPoint[] byIndex = new NetworkDBPoint[maxIndex + 1];
+			c.pointsById = new TLongObjectHashMap<>(src.pointsById.size());
+			TLongObjectIterator<NetworkDBPoint> it = src.pointsById.iterator();
+			while (it.hasNext()) {
+				it.advance();
+				NetworkDBPoint s = it.value();
+				NetworkDBPoint p = new NetworkDBPoint();
+				p.tagValues = s.tagValues;
+				p.index = s.index;
+				p.clusterId = s.clusterId;
+				p.fileId = s.fileId;
+				p.mapId = s.mapId;
+				p.incomplete = s.incomplete;
+				p.roadId = s.roadId;
+				p.start = s.start;
+				p.end = s.end;
+				p.startX = s.startX;
+				p.startY = s.startY;
+				p.endX = s.endX;
+				p.endY = s.endY;
+				p.rtExclude = s.rtExclude;
+				p.markSegmentsNotLoaded();
+				byIndex[p.index] = p;
+				c.pointsById.put(it.key(), p);
+			}
+			for (NetworkDBPoint s : src.pointsById.valueCollection()) {
+				if (s.dualPoint != null) {
+					byIndex[s.index].dualPoint = byIndex[s.dualPoint.index];
+				}
+			}
+			c.pointsByGeo = new TLongObjectHashMap<>(src.pointsByGeo.size());
+			c.boundaries = new TLongObjectHashMap<>(src.pointsByGeo.size());
+			it = src.pointsByGeo.iterator();
+			while (it.hasNext()) {
+				it.advance();
+				c.pointsByGeo.put(it.key(), byIndex[it.value().index]);
+				// not copied from src.boundaries: it holds the start and end of a route running there
+				c.boundaries.put(it.key(), null);
+			}
+			c.clusterInPoints = copyClusters(src.clusterInPoints, byIndex);
+			c.clusterOutPoints = copyClusters(src.clusterOutPoints, byIndex);
+			for (NetworkDBPoint p : c.pointsById.valueCollection()) {
+				LatLon latlon = p.getPoint();
+				c.pointsRect.registerObject(latlon.getLatitude(), latlon.getLongitude(), p);
+			}
+			for (int i = 0; i < src.regions.size(); i++) {
+				it = src.regions.get(i).pntsByFileId.iterator();
+				while (it.hasNext()) {
+					it.advance();
+					c.regions.get(i).pntsByFileId.put(it.key(), byIndex[it.value().index]);
+				}
+			}
+			c.filterRoutingParameters = new TreeMap<>(src.filterRoutingParameters);
+			rctx.hhHasUnsupportedParameters = src.rctx.hhHasUnsupportedParameters;
+			c.initialized = true;
+			return c;
+		}
+
+		private static TIntObjectHashMap<List<NetworkDBPoint>> copyClusters(TIntObjectHashMap<List<NetworkDBPoint>> src,
+				NetworkDBPoint[] byIndex) {
+			TIntObjectHashMap<List<NetworkDBPoint>> res = new TIntObjectHashMap<>(src.size());
+			TIntObjectIterator<List<NetworkDBPoint>> it = src.iterator();
+			while (it.hasNext()) {
+				it.advance();
+				List<NetworkDBPoint> l = new ArrayList<>(it.value().size());
+				for (NetworkDBPoint p : it.value()) {
+					l.add(byIndex[p.index]);
+				}
+				res.put(it.key(), l);
+			}
+			return res;
+		}
+
+		public int loadNetworkSegments(Collection<T> valueCollection) throws SQLException {
+			int loaded = 0;
+			for (HHRouteRegionPointsCtx<T> r : regions) {
+				if (r.networkDB != null) {
+					loaded += r.networkDB.loadNetworkSegments(valueCollection, r.routingProfile);
+				} else {
+					throw new UnsupportedOperationException();
+				}
+			}
+			return loaded;
+		}
+
+		public boolean loadGeometry(NetworkDBSegment segment, boolean reload) throws SQLException {
+			if (!segment.getGeometry().isEmpty() && !reload) {
+				return true;
+			}
+			for (HHRouteRegionPointsCtx<T> r : regions) {
+				if (r.networkDB != null && !r.networkDB.compactDB) {
+					if (r.networkDB.loadGeometry(segment, r.routingProfile, reload)) {
+						return true;
+					}
+				}
+			}
+			return false;
+		}
+
+		public int loadNetworkSegmentPoint(T point, boolean reverse) throws SQLException, IOException {
+			short mapId = point.mapId;
+			HHRouteRegionPointsCtx<T> r = regions.get(mapId);
+			int loaded;
+			if (r.networkDB != null) {
+				loaded = r.networkDB.loadNetworkSegmentPoint(this, r, point, reverse);
+			} else if (r.file != null) {
+				loaded = r.file.loadNetworkSegmentPoint(this, r, point, reverse);
+			} else {
+				throw new UnsupportedOperationException();
+			}
+			loadedEdges += loaded;
+			return loaded;
+		}
+
+		// edges could be unloaded, so load before reading outside of main search
+		@SuppressWarnings("unchecked")
+		public void ensureSegmentsLoaded(NetworkDBPoint point, boolean reverse) {
+			try {
+				loadNetworkSegmentPoint((T) point, reverse);
+			} catch (SQLException | IOException e) {
+				throw new IllegalStateException(e);
+			}
+		}
+
+		// unload with delay: point could be expanded again soon with a better cost
+		public void unloadExpandedSegments(T point) {
+			expandedPoints.add(point);
+			while (config.MAX_LOADED_EDGES > 0 && loadedEdges > config.MAX_LOADED_EDGES && expandedPoints.size() > 1) {
+				T p = expandedPoints.poll();
+				if (p.edgesEdited) {
+					continue;
+				}
+				loadedEdges -= p.connected == null ? 0 : p.connected.size();
+				loadedEdges -= p.connectedReverse == null ? 0 : p.connectedReverse.size();
+				p.markSegmentsNotLoaded();
+			}
+		}
+
+		public String getRoutingInfo() {
+			StringBuilder b = new StringBuilder();
+			for (HHRouteRegionPointsCtx<T> r : regions) {
+				if(b.length() > 0) {
+					b.append(", ");
+				}
+				if (r.networkDB != null) {
+					b.append(String.format("db %s [%s]", r.networkDB.getRoutingProfile(),
+							r.networkDB.getRoutingProfiles().get(r.routingProfile)));
+				} else if (r.fileRegion != null) {
+					b.append(String.format("%s %s [%s]", r.file.getFile().getName(), r.fileRegion.profile,
+							r.fileRegion.profileParams.get(r.routingProfile)));
+				} else {
+					b.append("unknown");
+				}
+			} 
+			return b.toString();
+		}
+		
+		public double distanceToEnd(boolean reverse,  NetworkDBPoint nextPoint) {
+			if (config.HEURISTIC_COEFFICIENT > 0) {
+				double distanceToEnd = nextPoint.rt(reverse).rtDistanceToEnd;
+				if (distanceToEnd == 0) {
+					double dist = HHRoutePlanner.squareRootDist31(reverse ? startX : endX, reverse ? startY : endY,
+							nextPoint.midX(), nextPoint.midY());
+					distanceToEnd = config.HEURISTIC_COEFFICIENT * dist / rctx.getRouter().getMaxSpeed();
+					nextPoint.setDistanceToEnd(reverse, distanceToEnd);
+				}
+				return distanceToEnd;
+			}
+			return 0;
+		}
+	}
+
+	static class NetworkDBPointCost<T> {
+		final T point;
+		final double cost;
+		final boolean rev;
+		
+		NetworkDBPointCost(T p, double cost, boolean rev) {
+			point = p;
+			this.cost = cost;
+			this.rev = rev;
+		}
+	}
+	
+	public static class RoutingStats {
+		int firstRouteVisitedVertices = 0;
+		int visitedVertices = 0;
+		int uniqueVisitedVertices = 0;
+		int addedVertices = 0;
+
+		double loadPointsTime = 0;
+		int loadEdgesCnt;
+		double loadEdgesTime = 0;
+		double altRoutingTime;
+		double routingTime = 0;
+		double searchPointsTime = 0;
+		double addQueueTime = 0;
+		double pollQueueTime = 0;
+		double prepTime = 0;
+	}
+	
+	public static class HHNetworkRouteRes extends RouteCalcResult {
+
+		public RoutingStats stats;
+		public List<HHNetworkSegmentRes> segments = new ArrayList<>();
+		public List<HHNetworkRouteRes> altRoutes = new ArrayList<>();
+		
+		public HHNetworkRouteRes() {
+			super(new ArrayList<RouteSegmentResult>());
+		}
+		
+		public HHNetworkRouteRes(String error) {
+			super(error);
+		}
+		
+		
+		public double getHHRoutingTime() {
+			double d = 0;
+			for (HHNetworkSegmentRes r : segments) {
+				d += r.rtTimeHHSegments;
+			}
+			return d;
+		}
+		
+		@Override
+		public List<List<RouteSegmentResult>> getAlternatives() {
+			// altRoutes is the storage - this is the same list seen through the generic result
+			List<List<RouteSegmentResult>> alts = new ArrayList<>(altRoutes.size());
+			for (HHNetworkRouteRes alt : altRoutes) {
+				alts.add(alt.detailed);
+			}
+			return alts;
+		}
+
+		public double getHHRoutingDetailed() {
+			double d = 0;
+			for (HHNetworkSegmentRes r : segments) {
+				d += r.rtTimeDetailed;
+			}
+			return d;
+		}
+
+		public void append(HHNetworkRouteRes res) {
+			if (res == null || res.error != null) {
+				this.error = "Can't build a route with intermediate point";
+			} else {
+				detailed.addAll(res.detailed);
+				segments.addAll(res.segments);
+				altRoutes.clear(); // not supported with intermediate points
+			}
+		}
+		
+	}
+	
+	public static class HHNetworkSegmentRes {
+		public NetworkDBSegment segment;
+		public List<RouteSegmentResult> list = null;
+		public double rtTimeDetailed;
+		public double rtTimeHHSegments;
+		public HHNetworkSegmentRes(NetworkDBSegment s) {
+			segment = s;
+		}
+	}
+	
+	public static <T extends NetworkDBPoint> void setSegments(HHRoutingContext<T> ctx, T point,
+			byte[] in, byte[] out, boolean reverse) {
+		// search expands point in one direction, other direction is loaded on demand
+		if (reverse) {
+			point.connectedSet(true, HHRouteDataStructure.parseSegments(in, ctx.pointsById,
+					ctx.getIncomingPoints(point), point, false));
+		} else {
+			point.connectedSet(false, HHRouteDataStructure.parseSegments(out, ctx.pointsById,
+					ctx.getOutgoingPoints(point), point, true));
+		}
+	}
+	
+	private static List<NetworkDBSegment> parseSegments(byte[] bytes, TLongObjectHashMap<? extends NetworkDBPoint> pntsById,
+			List<? extends NetworkDBPoint> lst, NetworkDBPoint pnt, boolean out)  {
+		try {
+			List<NetworkDBSegment> l = new ArrayList<>();
+			if (bytes == null || bytes.length == 0 || pnt.incomplete) {
+				return l;
+			}
+			ByteArrayInputStream str = new ByteArrayInputStream(bytes);
+			for (int i = 0; i < lst.size(); i++) {
+				int d = CodedInputStream.readRawVarint32(str);
+				if (d <= 0) {
+					continue;
+				}
+				double dist = d / 10.0;
+				NetworkDBPoint start = out ? pnt : lst.get(i);
+				NetworkDBPoint end = out ? lst.get(i) : pnt;
+				NetworkDBSegment seg = new NetworkDBSegment(start, end, dist, out, false);
+				l.add(seg);
+			}
+			if (str.available() > 0) {
+				System.err.println("Error reading file: " + pnt + " " + out);
+			}
+
+			return l;
+		} catch (IOException e) {
+			throw new IllegalStateException(e);
+		}
+		
+	}
+	
+
+	static class NetworkDBSegment {
+		final boolean direction;
+		final NetworkDBPoint start;
+		final NetworkDBPoint end;
+		final boolean shortcut;
+		double dist;
+		List<LatLon> geom;
+		
+		public NetworkDBSegment(NetworkDBPoint start, NetworkDBPoint end, double dist, boolean direction, boolean shortcut) {
+			this.direction = direction;
+			this.start = start;
+			this.end = end;
+			this.shortcut = shortcut;
+			this.dist = dist;
+		}
+		
+		// edited cost can't be restored from file, so edges of both points are never unloaded
+		public void editDist(double dist) {
+			this.dist = dist;
+			start.edgesEdited = true;
+			end.edgesEdited = true;
+		}
+
+		public List<LatLon> getGeometry() {
+			if (geom == null) {
+				geom = new ArrayList<LatLon>();
+			}
+			return geom;
+		}
+		
+		@Override
+		public String toString() {
+			return String.format("Segment %s -> %s [%.2f] %s", start, end, dist, shortcut ? "sh" : "bs");
+		}
+		
+	}
+	
+	
+	static class NetworkDBPointRouteInfo {
+		NetworkDBPoint rtRouteToPoint;
+		boolean rtVisited;
+		double rtDistanceFromStart;
+		int rtDepth = -1; // possibly not needed (used 1)
+		double rtDistanceToEnd; // possibly not needed (used 1)
+		double rtCost;
+		FinalRouteSegment rtDetailedRoute;
+		
+		public int getDepth(boolean rev) {
+			if (rtDepth > 0) {
+				return rtDepth;
+			}
+			if (rtRouteToPoint != null) {
+				rtDepth = rtRouteToPoint.rt(rev).getDepth(rev) + 1; 
+				return rtDepth ;
+			}
+			return 0;
+		}
+		
+		public void setDetailedParentRt(FinalRouteSegment r) {
+			double segmentDist = r.getDistanceFromStart();
+			rtRouteToPoint = null;
+			rtCost = rtDistanceToEnd + segmentDist;
+			rtDetailedRoute = r;
+			rtDistanceFromStart = segmentDist;
+		}
+		
+		public void setCostParentRt(boolean rev, double cost, NetworkDBPoint point, double segmentDist) {
+			rtCost = cost;
+			rtRouteToPoint = point;
+			rtDistanceFromStart = (point == null ? 0 : point.rt(rev).rtDistanceFromStart) + segmentDist;
+		}
+	}
+	
+	
+	
+	public static class NetworkDBPoint {
+		public List<TagValuePair> tagValues = null;
+		public NetworkDBPoint dualPoint;
+		public int index;
+		public int clusterId;
+		public int fileId;
+		public short mapId;
+		public boolean incomplete;
+
+		public long roadId;
+		public short start;
+		public short end;
+		public int startX;
+		public int startY;
+		public int endX;
+		public int endY;
+		
+		boolean rtExclude;
+		boolean edgesEdited; // edges are changed and can't be unloaded
+		NetworkDBPointRouteInfo rtRev;
+		NetworkDBPointRouteInfo rtPos;
+		
+		List<NetworkDBSegment> connected = new ArrayList<NetworkDBSegment>();
+		List<NetworkDBSegment> connectedReverse = new ArrayList<NetworkDBSegment>();
+		
+		public int midX() {
+			return startX / 2 + endX / 2 ;
+		}
+		
+		public int midY() {
+			return startY / 2 + endY/ 2 ;
+		}
+		
+		public NetworkDBPointRouteInfo rt(boolean rev) {
+			if (rev) {
+				if (rtRev == null) {
+					rtRev = new NetworkDBPointRouteInfo();
+				}
+				return rtRev;
+			} else {
+				if (rtPos == null) {
+					rtPos = new NetworkDBPointRouteInfo();
+				}
+				return rtPos;
+			}
+		}
+		
+		public List<NetworkDBSegment> connected(boolean rev) {
+			return rev ? connectedReverse : connected;
+		}
+		
+		public void setDistanceToEnd(boolean rev, double segmentDist) {
+			rt(rev).rtDistanceToEnd = segmentDist;
+		}
+		
+
+		public void markVisited(boolean rev) {
+			rt(rev).rtVisited = true;
+		}
+		
+		public void connectedSet(boolean rev, List<NetworkDBSegment> l) {
+			if (rev) {
+				connectedReverse = l;
+			} else {
+				connected = l;
+			}
+		}
+		
+		public void setCostParentRt(boolean reverse, double cost, NetworkDBPoint point, double segmentDist) {
+			rt(reverse).setCostParentRt(reverse, cost, point, segmentDist);
+		}
+		
+		public void setDetailedParentRt(boolean reverse, FinalRouteSegment r) {
+			rt(reverse).setDetailedParentRt(r);
+		}
+		
+		public void markSegmentsNotLoaded() {
+			connected = null;
+			connectedReverse = null;
+		}
+		
+		@Override
+		public String toString() {
+			return String.format("Point %d (%d %d-%d)", index, roadId / 64, start, end);
+		}
+		
+		public LatLon getPoint() {
+			return new LatLon(MapUtils.get31LatitudeY(this.startY / 2 + this.endY / 2),
+					MapUtils.get31LongitudeX(this.startX / 2 + this.endX / 2));
+		}
+		
+		public NetworkDBSegment getSegment(NetworkDBPoint target, boolean dir) {
+			List<NetworkDBSegment> l = (dir ? connected : connectedReverse);
+			if (l == null) {
+				return null;
+			}
+			for (NetworkDBSegment s : l) {
+				if (dir && s.end == target) {
+					return s;
+				} else if (!dir && s.start == target) {
+					return s;
+				}
+			}
+			return null;
+		}
+
+		public void clearRouting() {
+			rtExclude = false;
+			rtPos = null;
+			rtRev = null;
+		}
+
+		public int chInd() {
+			return 0;
+		}
+
+		public int midPntDepth() {
+			return 0;
+		}
+
+		public long getGeoPntId() {
+			return HHRoutePlanner.calculateRoutePointInternalId(roadId, start, end);
+		}
+		
+	}
+
+	static class NetworkDBPointMid extends NetworkDBPoint  {
+		
+		int rtMidPointDepth = 0;
+		
+		public int midPntDepth() {
+			return rtMidPointDepth;
+		}
+	}
+
+	static class NetworkDBPointCh extends NetworkDBPoint {
+		int chInd;
+		
+		public int chInd() {
+			return chInd;
+		}
+	}
+
+	
+}

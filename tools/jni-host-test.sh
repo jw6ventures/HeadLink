@@ -45,6 +45,11 @@
 #   .obf built from the proto (rules, the box tree with a pruned child, points, point tags,
 #   the string table), an exit, a "keep left" past one, an on-ramp driven against its stored
 #   order, the card, cluster and spoken words, and the route file. No real file yet.
+# * OsmAndRoutingTest: OsmAnd's router (vendor/osmand) behind HeadLink's RouteEngine over
+#   ExitSignsTest's synthetic .obf - the exit maneuver with its number and signs, the times,
+#   a closure and a costly jam moving the route and a cheap one not, closures with no way
+#   round opened, the second alternative, a stopped search, no maps, and the profile's
+#   parameters. No real file, no phone.
 # * DestinationTest: P6.4's reading of what OsmAnd and other apps share — geo: URIs,
 #   OsmAnd's message text and links, bare pairs — its refusals, and the swapped-sign hint.
 #   Written against OsmAnd's source; only a real share on the phone confirms the strings.
@@ -195,11 +200,19 @@ stdlib=$(find "$GRADLE_USER_HOME/caches/modules-2" -name kotlin-stdlib-2.2.10.ja
 [ -n "$stdlib" ] || { echo "jni-host-test: kotlin-stdlib 2.2.10 not in the Gradle cache" >&2; exit 1; }
 vtm=$(find "$GRADLE_USER_HOME/caches/modules-2" -name vtm-0.25.0.jar | head -n 1)
 [ -n "$vtm" ] || { echo "jni-host-test: vtm 0.25.0 not in the Gradle cache" >&2; exit 1; }
+osmand=vendor/osmand/build/libs/osmand.jar
+[ -f "$osmand" ] || { echo "jni-host-test: $osmand missing; build the app first" >&2; exit 1; }
+# vendor/osmand's dependencies, and the two it compiles against that Android supplies.
+for jar in trove4j-3.0.3 jts-core-1.14.0 openlocationcode-1.0.4 gson-2.8.9 json-20171018 kxml2-2.1.8; do
+    found=$(find "$GRADLE_USER_HOME/caches/modules-2" -name "$jar.jar" | head -n 1)
+    [ -n "$found" ] || { echo "jni-host-test: $jar not in the Gradle cache" >&2; exit 1; }
+    osmand="$osmand:$found"
+done
 cargo build -p aap-jni --release --offline --locked
 out=target/jni-host-test
 rm -rf "$out"
 mkdir -p "$out"
-javac -encoding UTF-8 -Xlint:all -Werror -d "$out" -cp "$classes:$stdlib:$brouter:$vtm" tools/jni-host-test/*.java \
+javac -encoding UTF-8 -Xlint:all -Werror -d "$out" -cp "$classes:$stdlib:$brouter:$vtm:$osmand" tools/jni-host-test/*.java \
     tools/breezy-standin/src/org/breezyweather/standin/Scenarios.java
 java -cp "$out:$classes:$stdlib" ReportStoreTest
 java -cp "$out:$classes:$stdlib" TrustStoreTest
@@ -237,6 +250,7 @@ java -cp "$out:$classes:$stdlib" WeatherTest tools/breezy-standin/scenarios
 java -cp "$out:$classes:$stdlib" HomeAssistantTest
 java -cp "$out:$classes:$stdlib" ObfTest "${OBF_DIR:-}"
 java -cp "$out:$classes:$stdlib:$brouter" ExitSignsTest
+java -cp "$out:$classes:$stdlib:$brouter:$osmand" OsmAndRoutingTest
 java -cp "$out:$classes:$stdlib" AddressSearchTest "${OBF_DIR:-}"
 java -cp "$out:$classes:$stdlib:$brouter" SearchAheadTest "${ROUTING_SEGMENTS:-}" "${OBF_DIR:-}"
 java -cp "$out:$classes:$stdlib" WirelessProbeTest

@@ -284,6 +284,38 @@ class RouteResult(
  */
 class RoutingException @JvmOverloads constructor(message: String, val stopped: Boolean = false) : Exception(message)
 
+/** Stops one search in progress, from any thread. Each engine hands one out as a search begins. */
+fun interface SearchHandle {
+    fun terminate()
+}
+
+/**
+ * Something that computes a [Route]: BRouter over `.rd5` tiles ([Router]) or OsmAnd's router
+ * over `.obf` maps ([OsmAndRouter]). Blocking, and used from one thread at a time.
+ */
+interface RouteEngine {
+    /**
+     * Computes one route or throws [RoutingException]. [started] receives a handle before
+     * each search begins, which is the only way another thread can stop it; an engine may
+     * search more than once for one request, and the handle is always the running search's.
+     */
+    @Throws(RoutingException::class)
+    fun compute(request: RouteRequest, maxRunningMs: Long, started: (SearchHandle) -> Unit = {}): Route
+}
+
+/**
+ * The engine each request asked for ([RouteOptions.osmAndRouting]), so a change on the
+ * Routing screen takes effect with the next route and nothing has to be rebuilt. Each
+ * engine is made on first use, on the routing thread.
+ */
+class EngineChoice(
+    private val brouter: () -> RouteEngine,
+    private val osmand: () -> RouteEngine,
+) : RouteEngine {
+    override fun compute(request: RouteRequest, maxRunningMs: Long, started: (SearchHandle) -> Unit): Route =
+        (if (request.options.osmAndRouting) osmand() else brouter()).compute(request, maxRunningMs, started)
+}
+
 /**
  * BRouter over one segment directory and one profile. Blocking, and not thread-safe:
  * BRouter keeps its parsed profile in a process-wide cache, so everything goes through a
@@ -319,7 +351,7 @@ class Router(
     private val profile: File,
     /** BRouter's node-cache budget in MiB; 64 is upstream's own default for its service. */
     private val memoryClassMb: Int = 64,
-) {
+) : RouteEngine {
     /**
      * Computes one route or throws [RoutingException] with BRouter's own message.
      *
@@ -328,7 +360,7 @@ class Router(
      * than one search (see the class notes); it is always the running one.
      */
     @Throws(RoutingException::class)
-    fun compute(request: RouteRequest, maxRunningMs: Long, started: (RoutingEngine) -> Unit = {}): Route {
+    override fun compute(request: RouteRequest, maxRunningMs: Long, started: (SearchHandle) -> Unit): Route {
         if (!profile.isFile) throw RoutingException("no routing profile at ${profile.name}")
         if (!segments.isDirectory) throw RoutingException("no routing data installed")
         if (request.nogos.isEmpty()) return computeStepping(request, emptyList(), maxRunningMs, started)
@@ -349,7 +381,7 @@ class Router(
      * again: first without the weighted points within [CLOSURE_GUARD_M] of the closures it
      * crossed, then without any weighted point, when nothing is left to overwrite them.
      */
-    private fun computeKeepingClosures(request: RouteRequest, maxRunningMs: Long, started: (RoutingEngine) -> Unit): Route {
+    private fun computeKeepingClosures(request: RouteRequest, maxRunningMs: Long, started: (SearchHandle) -> Unit): Route {
         var nogos = request.nogos
         for (attempt in 0 until 2) {
             val route = computeStepping(request, nogos, maxRunningMs, started)
@@ -378,7 +410,7 @@ class Router(
         request: RouteRequest,
         nogos: List<Nogo>,
         maxRunningMs: Long,
-        started: (RoutingEngine) -> Unit,
+        started: (SearchHandle) -> Unit,
     ): Route {
         var options = request.options
         while (true) {
@@ -399,7 +431,7 @@ class Router(
         options: RouteOptions,
         nogos: List<Nogo>,
         maxRunningMs: Long,
-        started: (RoutingEngine) -> Unit,
+        started: (SearchHandle) -> Unit,
     ): Route {
         val context = RoutingContext()
         context.localFunction = profile.absolutePath
@@ -440,7 +472,7 @@ class Router(
         val engine = RoutingEngine(null, null, segments, waypoints, context)
         // Otherwise a route with no output file is printed to stdout as GPX.
         engine.quite = true
-        started(engine)
+        started(SearchHandle { engine.terminate() })
         engine.doRun(maxRunningMs)
         engine.getErrorMessage()?.let { throw RoutingException(it, engine.isTerminated() || it.contains(TIMED_OUT)) }
         val track = engine.getFoundTrack() ?: throw RoutingException("no route found")
@@ -622,21 +654,22 @@ class Router(
  * [done] is called on the routing thread, once per request, including superseded ones.
  */
 class RoutePlanner @JvmOverloads constructor(
-    private val router: () -> Router,
+    private val router: () -> RouteEngine,
     private val maxRunningMs: Long = MAX_RUNNING_MS,
     /** Runs first on the routing thread; the app lowers its scheduling priority here. */
     threadSetup: () -> Unit = {},
     /**
      * Runs on the routing thread on every route found, before [RoutePlanner.request]'s
-     * callback: the app names its streets here ([StreetNames]). What it throws is dropped
-     * with the route kept as found, because a name is never worth losing a route over.
+     * callback, with the request that made it: the app names its streets here
+     * ([StreetNames]). What it throws is dropped with the route kept as found, because a
+     * name is never worth losing a route over.
      */
-    private val annotate: (Route) -> Route = { it },
+    private val annotate: (RouteRequest, Route) -> Route = { _, route -> route },
 ) : AutoCloseable {
     private val latest = AtomicLong()
 
     @Volatile
-    private var running: RoutingEngine? = null
+    private var running: SearchHandle? = null
 
     private val executor: ExecutorService =
         Executors.newSingleThreadExecutor { runnable ->
@@ -666,7 +699,7 @@ class RoutePlanner @JvmOverloads constructor(
      */
     fun explore(
         done: () -> Unit = {},
-        work: (router: Router, started: (RoutingEngine) -> Unit, cancelled: () -> Boolean) -> Unit,
+        work: (router: RouteEngine, started: (SearchHandle) -> Unit, cancelled: () -> Boolean) -> Unit,
     ) {
         val at = latest.get()
         try {
@@ -711,7 +744,7 @@ class RoutePlanner @JvmOverloads constructor(
             val naming = System.nanoTime()
             val named = if (sequence == latest.get()) {
                 try {
-                    annotate(route)
+                    annotate(request, route)
                 } catch (e: RuntimeException) {
                     route
                 }

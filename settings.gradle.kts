@@ -16,3 +16,5 @@ include(":app")
 // BRouter's routing engine, vendored as source rather than resolved as a dependency:
 // it publishes no Maven Central artifact at all. See vendor/brouter/README.md.
 include(":vendor:brouter")
+// OsmAnd's router and .obf reader, vendored for the same reason. See vendor/osmand/README.md.
+include(":vendor:osmand")
