@@ -1,10 +1,10 @@
+// Modified by HeadLink, 2026-11-01: the UTM and MGRS readings in parseLocation are removed,
+// with their three imports, because they need BBN OpenMap's classes, whose licence is not
+// GPL-compatible. Everything else is upstream's, unchanged.
 package net.osmand.util;
 
 import com.google.openlocationcode.OpenLocationCode;
 import com.google.openlocationcode.OpenLocationCode.CodeArea;
-import com.jwetherell.openmap.common.LatLonPoint;
-import com.jwetherell.openmap.common.MGRSPoint;
-import com.jwetherell.openmap.common.UTMPoint;
 
 import net.osmand.data.LatLon;
 
@@ -113,51 +113,9 @@ public class LocationParser {
 		if (d.size() == 0) {
 			return null;
 		}
-		// detect UTM
-		if (all.size() == 4 && d.size() == 3 && all.get(1) instanceof String str && str.length() == 1) {
-			char ch = str.charAt(0);
-			if (Character.isLetter(ch)) {
-				// UTMPoint accepts only 'N' or 'S'; UTM band letters C-X must be mapped to hemisphere
-				char hemisphere = utmZoneLetterToHemisphere(ch);
-				if (hemisphere != 0) {
-					// UTMPoint(northing, easting, zoneNumber, zoneLetter) - zoneLetter is N or S
-					UTMPoint uPoint = new UTMPoint(d.get(2), d.get(1), d.get(0).intValue(), hemisphere);
-					LatLonPoint ll = uPoint.toLatLonPoint(); // null for a zone out of 0-60
-					if (ll != null) {
-						return validateAndCreateLatLon(ll.getLatitude(), ll.getLongitude());
-					}
-				}
-			}
-		}
-
-		if (all.size() == 3 && d.size() == 2 && all.get(1) instanceof String && ((String) all.get(1)).length() == 1) {
-			char ch = all.get(1).toString().charAt(0);
-			String combined = strings.get(2);
-			if (Character.isLetter(ch)) {
-				try {
-					String east = combined.substring(0, combined.length() / 2);
-					String north = combined.substring(combined.length() / 2);
-					UTMPoint upoint = new UTMPoint(Double.parseDouble(north), Double.parseDouble(east), d.get(0)
-							.intValue(), ch);
-					LatLonPoint ll = upoint.toLatLonPoint();
-					if (ll != null) {
-						return validateAndCreateLatLon(ll.getLatitude(), ll.getLongitude());
-					}
-				} catch (NumberFormatException e) {
-				}
-			}
-		}
-
-		//detect MGRS
-		if (all.size() >= 3 && (d.size() == 2 || d.size() == 3) && all.get(1) instanceof String) {
-			try {
-				MGRSPoint mgrsPoint = new MGRSPoint(locPhrase);
-				LatLonPoint ll = mgrsPoint.toLatLonPoint();
-				return validateAndCreateLatLon(ll.getLatitude(), ll.getLongitude());
-			} catch (NumberFormatException e) {
-				//do nothing
-			}
-		}
+		// HeadLink: upstream reads UTM and MGRS here through BBN OpenMap's UTMPoint and
+		// MGRSPoint, which are not vendored (README.md, "Replaced files"). Such phrases fall
+		// through to the plain lat/lon reading below and, not being one, give null.
 		// try to find split lat/lon position
 		int jointNumbers = 0;
 		int lastJoin = 0;

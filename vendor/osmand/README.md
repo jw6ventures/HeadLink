@@ -27,22 +27,21 @@ source keeps the build offline and free of prebuilt jars, the same reasoning as
 ## What was taken
 
 The import closure of `net.osmand.router.RoutePlannerFrontEnd` and
-`net.osmand.binary.BinaryMapIndexReader`, complete and unmodified: **221 files, 8.3 MB**
+`net.osmand.binary.BinaryMapIndexReader`, unmodified, less the files below: **212 files**
 under `src/main/java`.
 
 | Package | Files | What for |
 | --- | --- | --- |
 | `net.osmand.router` | 32 | The router: A*, highway hierarchy (HH), turn types, `routing.xml` profiles |
 | `net.osmand.binary` | 24 | The `.obf` reader and its protobuf messages (`OsmandOdb`) |
-| `net.osmand.data`, `net.osmand.osm`, `net.osmand.util`, `net.osmand` | 59 | Shared types the two above use |
+| `net.osmand.data`, `net.osmand.osm`, `net.osmand.util`, `net.osmand` | 58 | Shared types the two above use |
 | `net.osmand.search` and below | 33 | Reached through the reader's address and POI types; never run |
 | `net.osmand.gpx`, `net.osmand.render`, `net.osmand.map` | 17 | Reached through types; never run |
 | `com.google.protobuf` | 41 | OsmAnd's in-tree protobuf runtime, which `OsmandOdb` is generated against |
-| `com.jwetherell.openmap.common` | 8 | Coordinate conversions the data types reference |
 
 **Not taken:** the rest of OsmAnd-java (rendering, map creation, tests), the Android app,
 OsmAnd-shared (Kotlin multiplatform; the few names used are replaced below), the native
-library, and junidecode.
+library, junidecode, and BBN OpenMap (`com.jwetherell.openmap.common`, 8 files), whose "All rights reserved" OpenMap licence is not GPL-compatible.
 
 ### Replaced files
 
@@ -55,6 +54,8 @@ re-sync can never silently overwrite one.
 | `net/osmand/PlatformUtil.java` | Upstream's uses commons-logging and loads `regions.ocbf`. This one logs through `java.util.logging` (INFO lines at FINE, because they name roads), uses the platform's XmlPullParser, and gives an `OsmandRegions` that knows no regions, so the router never looks for maps to download. HH routing works without regions |
 | `org/apache/commons/logging/Log.java` | The logging interface the upstream sources are written against, declared here because Android lint rejects the commons-logging artifact (DuplicatePlatformClasses) |
 | `net/osmand/router/ExcludeTLongObjectMap.java` | Upstream's, with five method signatures changed for trove4j 3.0.3's wildcard procedures. Bodies unchanged; the file says so at the top |
+| `net/osmand/util/LocationParser.java` | Upstream's, with the UTM and MGRS readings in `parseLocation` removed, because they need OpenMap. Only search uses it, and HeadLink does not run OsmAnd's search. The file says so at the top |
+| `com/jwetherell/openmap/common/MoreMath.java` | HeadLink's own, not OpenMap's: just the quarter-pi constant upstream's `MapUtils` imports, so `MapUtils` stays unmodified |
 | `net/osmand/util/TransliterationHelper.java` | Same methods, returns names unchanged, so junidecode is not needed |
 | `net/osmand/shared/routing/GeneralRouterProfile.java` | OsmAnd-shared's Kotlin enum written out in Java |
 | `net/osmand/shared/gpx/GpxFile.java`, `net/osmand/shared/wiki/WikiHelper.java`, `WikiImage.java`, `net/osmand/shared/util/PlatformUtil.java` | Stand-ins for the one constant or method each the closure names from OsmAnd-shared. No network |
@@ -85,10 +86,10 @@ All from Maven Central, pinned by SHA-256 in `gradle/verification-metadata.xml`.
 
 ## Re-syncing
 
-1. Clone OsmAnd at the new commit and copy the same 221 paths from
+1. Clone OsmAnd at the new commit and copy the same 212 paths from
    `OsmAnd-java/src/main/java` over `src/main/java`. If the closure grew, compile errors
    name the missing classes; take them from the same tree.
-2. Compare each replaced file's upstream original for changes the replacement should follow.
+2. Check the closure still needs nothing from `com.jwetherell` beyond `MoreMath.QUAD_PI_D`. Compare each replaced file's upstream original for changes the replacement should follow.
 3. Copy `routing/routing.xml` from OsmAnd-resources at a matching commit.
 4. Update the pins above, `docs/licenses.md` and `app/src/main/assets/NOTICES.txt`, and run
    `tools/jni-host-test.sh` (`OsmAndRoutingTest`).

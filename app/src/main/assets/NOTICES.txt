@@ -65,9 +65,7 @@ application includes the components below; their license texts follow.
      https://github.com/osmandapp/OsmAnd-resources. The GPL-3.0 text follows below.
      OsmAnd-java carries a patched copy of Protocol Buffers' Java runtime
      (com.google.protobuf), Copyright 2008 Google Inc., under the BSD license
-     below, and BBN Technologies' OpenMap coordinate classes
-     (com.jwetherell.openmap.common), Copyright (C) BBNT Solutions LLC, as
-     OsmAnd distributes them.
+     below.
    Trove (trove4j) 3.0.3                         GNU LGPL v2.1
      Copyright (c) 2001 Eric D. Friedman; Copyright (c) 2009 Rob Eden, Jeff Randall
      Used unmodified, as published to Maven Central. Source:
