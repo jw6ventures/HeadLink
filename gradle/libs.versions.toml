@@ -9,6 +9,15 @@ kotlin = "2.2.10"
 vtm = "0.25.0"
 # Pulled in by vtm-android alone, and the only transitive dependency VTM has.
 androidsvg = "1.4"
+# OsmAnd's router and .obf reader (vendor/osmand) and what it needs from Maven Central.
+# Versions are the ones OsmAnd-java builds with, except Trove: OsmAnd ships its own
+# patched jar, and 3.0.3 is the release its API matches (vendor/osmand/README.md).
+trove4j = "3.0.3"
+jts = "1.14.0"
+openlocationcode = "1.0.4"
+gson = "2.8.9"
+json = "20171018"
+kxml2 = "2.1.8"
 
 [libraries]
 kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
@@ -16,6 +25,12 @@ vtm = { module = "org.mapsforge:vtm", version.ref = "vtm" }
 vtm-android = { module = "org.mapsforge:vtm-android", version.ref = "vtm" }
 vtm-themes = { module = "org.mapsforge:vtm-themes", version.ref = "vtm" }
 androidsvg = { module = "com.caverock:androidsvg", version.ref = "androidsvg" }
+trove4j = { module = "net.sf.trove4j:trove4j", version.ref = "trove4j" }
+jts-core = { module = "com.vividsolutions:jts-core", version.ref = "jts" }
+openlocationcode = { module = "com.google.openlocationcode:openlocationcode", version.ref = "openlocationcode" }
+gson = { module = "com.google.code.gson:gson", version.ref = "gson" }
+json = { module = "org.json:json", version.ref = "json" }
+kxml2 = { module = "net.sf.kxml:kxml2", version.ref = "kxml2" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

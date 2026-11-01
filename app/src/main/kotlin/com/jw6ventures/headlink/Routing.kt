@@ -122,7 +122,7 @@ object Routing {
     fun explore(
         context: Context,
         done: () -> Unit = {},
-        work: (Router, (btools.router.RoutingEngine) -> Unit, () -> Boolean) -> Unit,
+        work: (RouteEngine, (SearchHandle) -> Unit, () -> Boolean) -> Unit,
     ) {
         planner(context).explore(done, work)
     }
@@ -133,8 +133,10 @@ object Routing {
         val root = root(context)
         // The planner outlives this call, so it keeps the application, never an activity.
         val app = context.applicationContext
-        return RoutePlanner(
-            router = {
+        // One for the planner's life, so OsmAnd's readers stay open between routes.
+        val osmand = OsmAndRouter { ObfLibrary.routingMaps(app) }
+        val engines = EngineChoice(
+            brouter = {
                 // On the routing thread: the profile copy is file I/O too.
                 val profile = try {
                     RoutingData.installProfile(RoutingData.profiles(root))
@@ -143,14 +145,34 @@ object Routing {
                 }
                 Router(RoutingData.segments(root), profile)
             },
+            osmand = { osmand },
+        )
+        return RoutePlanner(
+            router = { engines },
             // Below the scene and encoder threads, which run at the default and have a
             // frame deadline this does not — but deliberately not THREAD_PRIORITY_BACKGROUND.
             // Android moves a thread at that level into the background scheduling group,
             // which keeps it on the phone's little cores: the first build used it, and a
             // 94 km route took 23.9 s warm on the Pixel against 2.3 s on one desktop core.
             threadSetup = { Process.setThreadPriority(THREAD_PRIORITY) },
-            annotate = { route -> signed(app, StreetNames.name(route, nameMaps ?: MapData.installed(app))) },
+            annotate = { request, route -> annotated(app, route, request.options, nameMaps) },
         ).also { planner = it }
+    }
+
+    /**
+     * [route] with its street names ([StreetNames], from [maps] or else every installed map)
+     * and exit signs ([signed]), when BRouter made it. One OsmAnd's router made under
+     * [options] already has both from the same maps, and is returned as it is. The
+     * routing thread's work: it opens files.
+     */
+    fun annotated(context: Context, route: Route, options: RouteOptions, maps: List<File>?): Route {
+        if (options.osmAndRouting) return route
+        val named = try {
+            StreetNames.name(route, maps ?: MapData.installed(context))
+        } catch (e: RuntimeException) {
+            route
+        }
+        return signed(context, named)
     }
 
     /**

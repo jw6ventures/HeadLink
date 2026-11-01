@@ -16,7 +16,6 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
-import btools.router.RoutingEngine
 import org.oscim.android.MapView
 import org.oscim.core.BoundingBox
 import org.oscim.core.GeoPoint
@@ -57,7 +56,7 @@ class PreviewActivity : Activity() {
     private val worker = Executors.newSingleThreadExecutor { Thread(it, "preview-route").apply { isDaemon = true } }
 
     @Volatile
-    private var running: RoutingEngine? = null
+    private var running: SearchHandle? = null
 
     @Volatile
     private var closed = false
@@ -311,13 +310,18 @@ class PreviewActivity : Activity() {
      * numbered in the order found, and each row says how much longer it is.
      */
     private fun findAlternatives() {
-        if (RoutingData.installed(RoutingData.segments(RoutingData.root(filesDir))).isEmpty()) return
+        val osmand = request.options.osmAndRouting
+        if (!osmand && RoutingData.installed(RoutingData.segments(RoutingData.root(filesDir))).isEmpty()) return
         statusText.setText(R.string.preview_finding)
         val app = applicationContext
         worker.execute {
             val root = RoutingData.root(app.filesDir)
+            // OsmAnd's router reads the maps folder, which this process opens for itself
+            // while it searches and lets go of after.
+            if (osmand) ObfLibrary.hold(MAPS_HOLDER, true)
+            val osmandRouter = if (osmand) OsmAndRouter { ObfLibrary.routingMaps(app) } else null
             val router = try {
-                Router(RoutingData.segments(root), RoutingData.installProfile(RoutingData.profiles(root)))
+                osmandRouter ?: Router(RoutingData.segments(root), RoutingData.installProfile(RoutingData.profiles(root)))
             } catch (e: IOException) {
                 main.post { if (!closed) statusText.text = getString(R.string.preview_failed, e.message ?: e.toString()) }
                 return@execute
@@ -325,10 +329,15 @@ class PreviewActivity : Activity() {
             val finder = AlternativeFinder(router, request, started = { running = it }, cancelled = { closed })
             val failure = try {
                 finder.find { found ->
-                    val named = try {
-                        StreetNames.name(found, MapData.installed(app))
-                    } catch (e: RuntimeException) {
+                    // OsmAnd's routes come named from the same maps.
+                    val named = if (osmand) {
                         found
+                    } else {
+                        try {
+                            StreetNames.name(found, MapData.installed(app))
+                        } catch (e: RuntimeException) {
+                            found
+                        }
                     }
                     main.post {
                         if (closed || RoutePreview.duplicate(named, options.map { it.second })) return@post
@@ -341,6 +350,8 @@ class PreviewActivity : Activity() {
                 e.toString()
             } finally {
                 running = null
+                osmandRouter?.close()
+                if (osmand) ObfLibrary.hold(MAPS_HOLDER, false)
             }
             if (closed) return@execute
             main.post {
@@ -393,6 +404,9 @@ class PreviewActivity : Activity() {
     companion object {
         /** The end of this activity's process name; [SourceApplication] skips its setup there. */
         const val PROCESS_SUFFIX = ":preview"
+
+        /** This process's hold on OsmAnd's maps while it looks for alternatives ([ObfLibrary.hold]). */
+        private const val MAPS_HOLDER = "preview"
 
         /** The [PreviewRequest.token] a choice was made against. */
         const val EXTRA_TOKEN = "preview_token"

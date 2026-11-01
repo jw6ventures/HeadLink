@@ -64,11 +64,11 @@ class PreviewRequest @JvmOverloads constructor(
  * alternative is handed to [find]'s callback as soon as it is chosen.
  */
 class AlternativeFinder(
-    private val router: Router,
+    private val router: RouteEngine,
     private val trip: PreviewRequest,
     private val maxRunningMs: Long = RoutePlanner.MAX_RUNNING_MS,
     /** Receives each engine before its search, so the caller can stop it. */
-    private val started: (btools.router.RoutingEngine) -> Unit = {},
+    private val started: (SearchHandle) -> Unit = {},
     /** Checked between searches; true stops the search for more. */
     private val cancelled: () -> Boolean = { false },
 ) {
@@ -208,7 +208,7 @@ object RoutePreview {
         out.writeDouble(request.toLon)
         out.writeDouble(request.startBearing ?: Double.NaN)
         val o = request.options
-        for (flag in listOf(o.avoidHighways, o.avoidTolls, o.avoidUnpaved, o.bypassTowns, o.allowTracks, o.learnPace, o.showAlternatives)) {
+        for (flag in listOf(o.avoidHighways, o.avoidTolls, o.avoidUnpaved, o.bypassTowns, o.allowTracks, o.learnPace, o.showAlternatives, o.osmAndRouting)) {
             out.writeBoolean(flag)
         }
         out.writeInt(o.topSpeedKmh)
@@ -224,7 +224,7 @@ object RoutePreview {
         val toLat = input.readDouble()
         val toLon = input.readDouble()
         val bearing = input.readDouble().takeUnless { it.isNaN() }
-        val flags = BooleanArray(7) { input.readBoolean() }
+        val flags = BooleanArray(8) { input.readBoolean() }
         val options = RouteOptions(
             avoidHighways = flags[0],
             avoidTolls = flags[1],
@@ -233,6 +233,7 @@ object RoutePreview {
             allowTracks = flags[4],
             learnPace = flags[5],
             showAlternatives = flags[6],
+            osmAndRouting = flags[7],
             topSpeedKmh = input.readInt(),
             etaPercent = input.readInt(),
         ).repaired()

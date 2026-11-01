@@ -56,7 +56,7 @@ public final class RouteOptionsTest {
 
     private static RouteOptions options(boolean highways, boolean tolls, boolean unpaved, boolean towns, boolean tracks,
             int kmh, int percent, boolean pace) {
-        return new RouteOptions(highways, tolls, unpaved, towns, tracks, kmh, percent, pace, true);
+        return new RouteOptions(highways, tolls, unpaved, towns, tracks, kmh, percent, pace, true, false);
     }
 
     private static void theDefaultsAreTheTexasOnes() {
@@ -98,7 +98,7 @@ public final class RouteOptionsTest {
         check(d.routeDiffers(options(false, false, false, false, false, 105, 0, true)), "a top speed recomputes");
         check(d.routeDiffers(options(false, false, false, false, false, 121, 10, true)), "a time adjustment recomputes");
         check(!d.routeDiffers(d), "the same options recompute nothing");
-        check(!d.routeDiffers(new RouteOptions(false, false, false, false, false, 121, 0, true, false)),
+        check(!d.routeDiffers(new RouteOptions(false, false, false, false, false, 121, 0, true, false, false)),
                 "nor does hiding the map's alternatives");
         check(d.getShowAlternatives(), "the map's alternatives are on by default");
     }
@@ -144,6 +144,10 @@ public final class RouteOptionsTest {
                 "route_top_speed_kmh", 300, "route_eta_percent", "ten", "route_avoid_tolls", "yes"));
         check(odd.getRouting().equals(new RouteOptions()), "unknown or mistyped routing values read as the defaults");
         check(back.withVoiceGuidance(false).getRouting().equals(changed), "a voice toggle press leaves the routing options alone");
+        SavedSettings osmAnd = SavedSettings.Companion.fromStored(java.util.Map.of("route_osmand", true));
+        check(osmAnd.getRouting().getOsmAndRouting() && Boolean.TRUE.equals(osmAnd.toStored().get("route_osmand"))
+                && !new RouteOptions().getOsmAndRouting(), "Route with OsmAnd maps is stored, and off by default");
+        check(osmAnd.getRouting().report().contains("routing_osmand=true"), "and the report says which router ran");
     }
 
     /** One fix a second along a route whose estimate falls [perSecond] a second. */

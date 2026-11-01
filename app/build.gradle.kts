@@ -87,6 +87,10 @@ dependencies {
     // publishes nothing to Maven Central, so there is no checksummed coordinate for
     // verification-metadata.xml to pin. Pure Java, no native library, no new ABI.
     implementation(project(":vendor:brouter"))
+    // OsmAnd's router and .obf reader (vendor/osmand/README.md), behind Settings ->
+    // Route preferences -> Route with OsmAnd maps. Vendored source for the same reason:
+    // OsmAnd publishes no checksummed artifact. Pure Java, no native library.
+    implementation(project(":vendor:osmand"))
 }
 
 val checkRustJniLibs = tasks.register("checkRustJniLibs") {
