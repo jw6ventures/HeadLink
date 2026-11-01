@@ -300,6 +300,21 @@ public final class DashboardTripTest {
         check(s.getTurnCard() == null && s.getTrip() != null && s.getTrip().getArrival() == null,
             "a route with no fix yet: no card, but the panel and End route");
 
+        // A destination with no route yet: being computed, or none found from off road and
+        // retrying. The card says so and the panel keeps End route, with no figures.
+        for (String searching : List.of(UpcomingTurn.FINDING, UpcomingTurn.NO_ROUTE)) {
+            d.upcomingTurn(new UpcomingTurn(searching, null));
+            s = d.nextFrame(NOON);
+            check(s.getTurnCard() != null && s.getTurnCard().getDistance() == null && searching.equals(s.getTurnCard().getLine()),
+                "no route yet: the card says " + searching);
+            check(s.getTrip() != null && s.getTrip().getSearching() && !s.getTrip().getRerouting()
+                && s.getTrip().getArrival() == null && s.getTrip().getRemaining() == null && s.getTrip().getLater().isEmpty(),
+                "and the panel keeps End route with no figures");
+        }
+        check(UpcomingTurn.Companion.searching(UpcomingTurn.FINDING) && UpcomingTurn.Companion.searching(UpcomingTurn.NO_ROUTE)
+            && !UpcomingTurn.Companion.searching(UpcomingTurn.REROUTING) && !UpcomingTurn.Companion.searching(UpcomingTurn.WAITING),
+            "only the two no-route texts are searching");
+
         d.upcomingTurn(null);
         s = d.nextFrame(NOON);
         check(s.getTurnCard() == null && s.getTrip() == null, "the card and the panel go with the route");

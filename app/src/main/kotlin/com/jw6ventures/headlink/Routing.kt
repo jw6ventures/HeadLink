@@ -46,6 +46,9 @@ object Routing {
     /** [origin] for a re-route round a closure on the route ahead. */
     const val CLOSURE = "closure"
 
+    /** [origin] for asking again after a request found no route and there was none to keep ([Navigation.retry]). */
+    const val RETRY = "retry"
+
     /** Routes computed with live traffic's no-go points (P9.5), and those that had to open a closure. */
     var trafficRoutes = 0
         private set
@@ -182,7 +185,15 @@ object Routing {
         token++
         if (route != null && route.trafficShaped) trafficRoutes++
         if (route != null && route.closuresOpened) closuresOpened++
-        route?.let { Guide.onRoute(it) } ?: Guide.onRouteFailed()
+        if (route != null) {
+            Navigation.routed()
+            Guide.onRoute(route)
+        } else {
+            // Nothing to follow: the destination is held and asked for again as the vehicle
+            // moves ([Navigation.retry]), and the dashboard says so meanwhile.
+            Navigation.routeFailed()
+            Guide.onRouteLost()
+        }
         NavigationStore.changed()
         // No coordinates, only totals: the event log is part of the saved report.
         SessionController.note(

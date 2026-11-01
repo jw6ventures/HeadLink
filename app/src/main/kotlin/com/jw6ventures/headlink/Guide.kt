@@ -346,6 +346,34 @@ object Guide {
      * starting, a route with no fix on it yet) stays idle and keeps the cluster.
      */
     fun clear() {
+        drop()
+        publish(ended = true)
+    }
+
+    /**
+     * A request found no route and [Routing] took the line off the map: a new destination's
+     * first route, or a re-route with no route left to keep. A route still followed from
+     * an earlier destination goes too, since it leads somewhere the driver no longer wants
+     * to go. The destination stays ([Navigation.retry] asks again), so this publishes the
+     * search rather than an ended route: the cluster stays idle, and the dashboard keeps a
+     * card that says a route is being looked for, with End route under it.
+     */
+    fun onRouteLost() {
+        if (rerouting) rerouteFailures++
+        drop()
+        publish()
+    }
+
+    /**
+     * [Navigation] asked for a route, or is waiting for a position to ask from. With no
+     * route followed, the dashboard is told so at once; a followed route keeps its card
+     * until the new one replaces it.
+     */
+    fun searching() {
+        if (follower == null) publish()
+    }
+
+    private fun drop() {
         cancelArrivalEnd()
         follower = null
         last = null
@@ -355,7 +383,6 @@ object Guide {
         pace.reset()
         voice.reset()
         LiveAlternatives.clear()
-        publish(ended = true)
     }
 
     /**
@@ -375,7 +402,12 @@ object Guide {
             heading = RouteFollower.bearing(from.first, from.second, latitude, longitude)
             headingFrom = latitude to longitude
         }
-        val follower = follower ?: return
+        val follower = follower ?: run {
+            // A destination with no route yet, because the last request found none (a start
+            // off road): each fix may be the one that brings a road within reach.
+            Navigation.retry(context, latitude, longitude, heading)
+            return
+        }
         val now = SystemClock.elapsedRealtime()
         fixes++
         lastSource = source
@@ -477,7 +509,11 @@ object Guide {
         val step = result?.step
         turnListener?.invoke(
             when {
-                follower == null -> null
+                // A destination with no route yet (P6.4): being computed, waiting for a
+                // position, or found none and retrying. The card says so, and the trip
+                // panel keeps End route, rather than the dashboard looking as if nothing
+                // had been asked for.
+                follower == null -> Navigation.searching()?.let { UpcomingTurn(it, null) }
                 rerouting -> UpcomingTurn(UpcomingTurn.REROUTING, null)
                 result?.state == FollowState.ARRIVED -> UpcomingTurn(
                     UpcomingTurn.ARRIVED, null, Maneuvers.DESTINATION,
@@ -579,7 +615,7 @@ object Guide {
  * `@JvmOverloads` so the host tests can build the plain two-argument form.
  */
 class UpcomingTurn @JvmOverloads constructor(
-    /** The instruction the cluster gets, or [REROUTING], [ARRIVED] or [WAITING]. */
+    /** The instruction the cluster gets, or [REROUTING], [ARRIVED], [WAITING], [FINDING] or [NO_ROUTE]. */
     val text: String,
     /** Metres to the maneuver, or null when there is none to count down to. */
     val metres: Double?,
@@ -602,6 +638,15 @@ class UpcomingTurn @JvmOverloads constructor(
     companion object {
         const val REROUTING = "Rerouting…"
         const val ARRIVED = "You have arrived"
+
+        /** A destination with no route yet: being computed, or waiting for a position to start from. */
+        const val FINDING = "Finding route…"
+
+        /** A destination whose last request found no route (a start off road); asked again as the vehicle moves. */
+        const val NO_ROUTE = "No route yet, retrying…"
+
+        /** Whether [text] says there is a destination and no route to it yet. */
+        fun searching(text: String): Boolean = text == FINDING || text == NO_ROUTE
 
         /** A route with no fix on it yet. Blank: the card draws nothing for it. */
         const val WAITING = ""
