@@ -1,5 +1,6 @@
 package com.jw6ventures.headlink
 
+import btools.mapaccess.OsmNodePairSet
 import btools.router.OsmNodeNamed
 import btools.router.ProfileCache
 import btools.router.RoutingContext
@@ -419,6 +420,7 @@ class Router(
             if (via) doubleArrayOf(request.fromLat, request.viaLat!!, request.toLat) else doubleArrayOf(request.fromLat, request.toLat),
         )
         val engine = RoutingEngine(null, null, segments, waypoints, context)
+        widenIslandCheck(engine)
         // Otherwise a route with no output file is printed to stdout as GPX.
         engine.quite = true
         started(engine)
@@ -455,6 +457,47 @@ class Router(
     }
 
     companion object {
+        /**
+         * Links BRouter may visit before a road network the start or destination snapped to
+         * stops counting as cut off. Upstream's 500 catches a lone parking aisle; a
+         * fairground's or a campus's lots and drives, joined to the public road only through a
+         * gate or a private way the car profile will not use, run to thousands, so the
+         * destination stayed snapped inside them and the search failed with "no route"
+         * (a pin on the Travis County Expo Center, 2026-10-31). Found cut off, BRouter
+         * excludes every link it visited and snaps again, to the nearest road the vehicle
+         * can actually reach: the route ends there, at the gate.
+         *
+         * The cost is the check's own search, run from the destination before every route:
+         * at most this many links, a fraction of a second on the phone, where a route across
+         * town visits hundreds of thousands.
+         */
+        const val ISLAND_CHECK_LINKS = 20_000
+
+        /**
+         * Sets [ISLAND_CHECK_LINKS] on [engine]. The vendored BRouter is held unmodified
+         * (vendor/brouter/README.md) and keeps the limit and its pair set in private fields
+         * sized at construction, so they are set by reflection; the host test pins both
+         * names, so a re-sync that renames them fails there. False, and upstream's limit
+         * kept, if either cannot be set. The pair set goes first: a limit raised over a set
+         * still sized for 500 would record only part of a network it found cut off.
+         */
+        @JvmStatic
+        fun widenIslandCheck(engine: RoutingEngine): Boolean = try {
+            RoutingEngine::class.java.getDeclaredField(ISLAND_PAIRS_FIELD).apply { isAccessible = true }
+                .set(engine, OsmNodePairSet(ISLAND_CHECK_LINKS))
+            RoutingEngine::class.java.getDeclaredField(ISLAND_LIMIT_FIELD).apply { isAccessible = true }
+                .setInt(engine, ISLAND_CHECK_LINKS)
+            true
+        } catch (e: ReflectiveOperationException) {
+            false
+        } catch (e: RuntimeException) {
+            false
+        }
+
+        /** BRouter's private fields [widenIslandCheck] sets. */
+        const val ISLAND_PAIRS_FIELD = "islandNodePairs"
+        const val ISLAND_LIMIT_FIELD = "MAXNODES_ISLAND_CHECK"
+
         /** BRouter's `osmand` style, the one its own parameter collector maps car clients to. */
         const val TURN_INSTRUCTION_MODE = 3
 

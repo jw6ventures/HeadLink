@@ -36,6 +36,29 @@ public final class RoutingTest {
     private static final double COMMON_LAT = 42.3551;
     private static final double COMMON_LON = -71.0656;
 
+    /**
+     * A destination snapped into a large cut-off network (a fairground's lots behind a
+     * gate) is found only with BRouter's island check widened past its 500 links; the
+     * vendored engine is unmodified, so the widening is reflection on two private fields,
+     * pinned here so a re-sync that renames either fails this test rather than routing.
+     */
+    private static void theIslandCheckIsWidened(File work) throws Exception {
+        btools.router.RoutingContext context = new btools.router.RoutingContext();
+        // The engine parses its profile on construction, so it needs a real one.
+        context.localFunction = RoutingData.INSTANCE.installProfile(new File(work, "island-profiles")).getAbsolutePath();
+        btools.router.RoutingEngine engine = new btools.router.RoutingEngine(null, null, work, new ArrayList<>(), context);
+        java.lang.reflect.Field limit = btools.router.RoutingEngine.class.getDeclaredField(Router.ISLAND_LIMIT_FIELD);
+        java.lang.reflect.Field pairs = btools.router.RoutingEngine.class.getDeclaredField(Router.ISLAND_PAIRS_FIELD);
+        limit.setAccessible(true);
+        pairs.setAccessible(true);
+        check(limit.getInt(engine) == 500, "upstream's island check is 500 links: " + limit.getInt(engine));
+        Object before = pairs.get(engine);
+        check(Router.widenIslandCheck(engine), "the island check can be widened");
+        check(limit.getInt(engine) == Router.ISLAND_CHECK_LINKS, "to " + Router.ISLAND_CHECK_LINKS + " links");
+        check(pairs.get(engine) != before && pairs.get(engine) instanceof btools.mapaccess.OsmNodePairSet,
+            "with a pair set sized to match");
+    }
+
     public static void main(String[] args) throws Exception {
         File work = Files.createTempDirectory("routing-test").toFile();
         try {
@@ -46,6 +69,7 @@ public final class RoutingTest {
             anImportWithNoTileNameIsRefused(work);
             aDamagedTileNeverReplacesAnything(work);
             noDataIsAnErrorNotACrash(work);
+            theIslandCheckIsWidened(work);
             aNewerRequestSupersedesOneInProgress(work);
             String segments = args.length > 0 ? args[0] : "";
             if (!segments.isEmpty() && new File(segments, "W75_N40.rd5").isFile()) {

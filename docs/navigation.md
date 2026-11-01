@@ -371,6 +371,17 @@ destination. Meanwhile the dashboard's turn card says `Finding route…` (comput
 waiting for a position) or `No route yet, retrying…`, and the trip panel keeps End route;
 the cluster stays idle. The report counts `routing_failures` and `routing_retries`.
 
+**A destination behind a gate.** BRouter snaps the destination to the nearest way the car
+profile can use, and checks, with a short search from it, whether that way's network is cut
+off; if so it excludes it and snaps again. Upstream stops that check at 500 links, which
+catches a lone parking aisle but not a fairground's or a campus's lots and drives joined to
+the public road only through a gate or a private way: a pin on the Travis County Expo Center
+(2026-10-31) stayed snapped inside and failed with "no route". `Router.widenIslandCheck`
+raises the limit to 20,000 links (`ISLAND_CHECK_LINKS`), so such a network is found and
+the route ends at the nearest road the vehicle can reach. BRouter is held unmodified, so
+the limit and its pair set are set by reflection on two private fields; `RoutingTest` pins
+both names.
+
 **Why re-routes don't turn round.** BRouter honours `startDirection` only as a flat 40 s
 U-turn at the start, so a re-route after a missed turn began by going back the way the
 vehicle came, and a second re-route followed seconds later. `Router.behind` adds a
