@@ -1,0 +1,2 @@
+• The car dashboard shows elapsed time, a progress bar and track length for the song or podcast that is playing.
+• When no route is found, HeadLink says "Finding route…" and tries again instead of giving up. Destinations on large road networks that looked cut off now route correctly.
