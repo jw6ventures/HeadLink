@@ -649,6 +649,10 @@ class ProjectionService : Service() {
         // P11: OsmAnd's maps stay open for the drive (docs/navigation.md). Held before the
         // markers' first query, which opens nothing without a hold.
         ObfLibrary.hold(MAPS_HOLDER, true)
+        // Settings -> Map -> Draw map from OsmAnd files: the pane reads the same open files,
+        // and falls back to the Mapsforge files when none has map data.
+        val mapsContext = applicationContext
+        MapEngine.obfMaps = if (saved.osmAndMap) ({ ObfLibrary.routingMaps(mapsContext) }) else null
         // P11.5: the map's Gas, Food and Shop markers, read from OsmAnd's maps on a thread of
         // their own, one query at a time; the files stay open while this projects. Buttons
         // start off and are not saved; a debug build's lab may light some (lab-poi).
@@ -1064,6 +1068,7 @@ class ProjectionService : Service() {
         session.ahead = null
         session.poiExecutor?.shutdown()
         session.poiExecutor = null
+        MapEngine.obfMaps = null
         ObfLibrary.hold(MAPS_HOLDER, false)
     }
 
