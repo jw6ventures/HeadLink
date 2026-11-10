@@ -37,6 +37,11 @@ data class RouteOptions(
     val learnPace: Boolean = true,
     /** Look for other routes now and then while driving and draw them on the projected map ([LiveAlternatives]). */
     val showAlternatives: Boolean = true,
+    /**
+     * Route with OsmAnd's router over the `.obf` maps ([OsmAndRouter]) rather than BRouter
+     * over `.rd5` tiles. Off by default while it is tried against BRouter on real drives.
+     */
+    val osmAndRouting: Boolean = false,
 ) {
     /** This value with a speed or percentage no list offers any more put back to its default. */
     fun repaired(): RouteOptions = copy(
@@ -73,7 +78,8 @@ data class RouteOptions(
         "routing_avoid_highways=$avoidHighways routing_avoid_tolls=$avoidTolls " +
             "routing_avoid_unpaved=$avoidUnpaved routing_bypass_towns=$bypassTowns " +
             "routing_allow_tracks=$allowTracks routing_top_speed_kmh=$topSpeedKmh " +
-            "routing_eta_percent=$etaPercent routing_learn_pace=$learnPace routing_show_alternatives=$showAlternatives"
+            "routing_eta_percent=$etaPercent routing_learn_pace=$learnPace routing_show_alternatives=$showAlternatives " +
+            "routing_osmand=$osmAndRouting"
 
     companion object {
         /**

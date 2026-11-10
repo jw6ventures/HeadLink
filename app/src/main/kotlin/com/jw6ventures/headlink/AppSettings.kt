@@ -237,6 +237,7 @@ data class SavedSettings(
             ROUTE_ETA_PERCENT to s.routing.etaPercent,
             ROUTE_LEARN_PACE to s.routing.learnPace,
             ROUTE_SHOW_ALTERNATIVES to s.routing.showAlternatives,
+            ROUTE_OSMAND to s.routing.osmAndRouting,
             WEATHER_ENABLED to s.weather.enabled,
             WEATHER_SPEAK_ALERTS to s.weather.speakAlerts,
             WEATHER_ALERT_LEVEL to s.weather.alertLevel.key,
@@ -330,6 +331,7 @@ data class SavedSettings(
                     etaPercent = number(ROUTE_ETA_PERCENT, d.routing.etaPercent),
                     learnPace = flag(ROUTE_LEARN_PACE, d.routing.learnPace),
                     showAlternatives = flag(ROUTE_SHOW_ALTERNATIVES, d.routing.showAlternatives),
+                    osmAndRouting = flag(ROUTE_OSMAND, d.routing.osmAndRouting),
                 ),
                 weather = WeatherSettings(
                     enabled = flag(WEATHER_ENABLED, d.weather.enabled),
@@ -406,6 +408,7 @@ data class SavedSettings(
         private const val ROUTE_ETA_PERCENT = "route_eta_percent"
         private const val ROUTE_LEARN_PACE = "route_learn_pace"
         private const val ROUTE_SHOW_ALTERNATIVES = "route_show_alternatives"
+        private const val ROUTE_OSMAND = "route_osmand"
         private const val ADAPTIVE_ZOOM = "adaptive_zoom"
         private const val ADAPTIVE_ZOOM_LEVEL_0 = "adaptive_zoom_level_0"
         private const val ADAPTIVE_ZOOM_LEVEL_1 = "adaptive_zoom_level_1"

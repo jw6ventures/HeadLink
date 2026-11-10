@@ -180,11 +180,11 @@ object AlternativeSearch {
      * for a way round to be offered ([Traffic.worthLooking]). Returns the last failure, or null.
      */
     fun find(
-        router: Router,
+        router: RouteEngine,
         trip: PreviewRequest,
         aroundTraffic: Boolean,
         maxRunningMs: Long,
-        started: (btools.router.RoutingEngine) -> Unit,
+        started: (SearchHandle) -> Unit,
         cancelled: () -> Boolean,
         found: (Route) -> Unit,
     ): String? {
@@ -383,12 +383,16 @@ object LiveAlternatives {
             done = {
                 // Named, so a route taken from a bubble says its roads on the cluster.
                 val named = routes.map { route ->
-                    val withNames = try {
-                        if (maps != null) StreetNames.name(route, maps) else route
-                    } catch (e: RuntimeException) {
+                    if (trip.options.osmAndRouting) {
                         route
+                    } else {
+                        val withNames = try {
+                            if (maps != null) StreetNames.name(route, maps) else route
+                        } catch (e: RuntimeException) {
+                            route
+                        }
+                        Routing.signed(app, withNames)
                     }
-                    Routing.signed(app, withNames)
                 }
                 val took = (System.nanoTime() - begun) / 1_000_000L
                 val looked = ran

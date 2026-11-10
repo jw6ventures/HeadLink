@@ -71,7 +71,7 @@ public final class RoutePreviewTest {
     }
 
     private static void aRequestReadsBackWhole(File work) throws IOException {
-        RouteOptions options = new RouteOptions(true, false, true, false, true, 105, 10, false, false);
+        RouteOptions options = new RouteOptions(true, false, true, false, true, 105, 10, false, false, false);
         PreviewRequest request = new PreviewRequest(42L, 30.0, -97.0, 31.0, -97.5, 123.0, options, sample());
         File file = P.requestFile(work);
         P.writeRequest(file, request);

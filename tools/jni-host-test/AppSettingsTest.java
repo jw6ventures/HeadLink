@@ -323,7 +323,7 @@ public final class AppSettingsTest {
                 && !changed.getCongestionRestart() && !changed.getWirelessKeepAwake() && !changed.getWirelessAutoStart(),
                 "every key read: " + changed);
         Map<String, Object> form = changed.toStored();
-        check(form.size() == 66, "66 fields stored, one key each: " + form.size());
+        check(form.size() == 67, "67 fields stored, one key each: " + form.size());
         check(SavedSettings.Companion.fromStored(form).equals(changed), "the stored form reads back whole");
         check(SavedSettings.Companion.fromStored(d.toStored()).equals(d), "and so do the defaults");
         for (Object value : form.values()) {

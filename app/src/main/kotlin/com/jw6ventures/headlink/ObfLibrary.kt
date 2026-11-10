@@ -149,7 +149,15 @@ object ObfLibrary {
         Executors.newSingleThreadExecutor { runnable -> Thread(runnable, "obf-library").apply { isDaemon = true } }
     private val refreshQueued = AtomicBoolean()
 
-    private class Opened(val key: ObfRules.FileKey, val source: ObfSource, val handle: Closeable, val dateMs: Long, val region: String?)
+    private class Opened(
+        val key: ObfRules.FileKey,
+        val source: ObfSource,
+        val handle: Closeable,
+        val dateMs: Long,
+        val region: String?,
+        /** Where OsmAnd's own reader can open the same file: see [routingMaps]. */
+        val path: String,
+    )
 
     private enum class Rejection { NEWER, FAILED }
 
@@ -244,6 +252,22 @@ object ObfLibrary {
         return synchronized(lock) { opened.values.map { it.source } }
     }
 
+    /**
+     * The open maps as [OsmAndRouter] opens them, listed by the same rule as [sources]; off
+     * the main thread. OsmAnd's reader takes a `RandomAccessFile`, which needs a path, and a
+     * file from the maps folder has only a descriptor: its `/proc/self/fd` link is a path to
+     * the same file for as long as this library keeps the descriptor open. A lab file is its
+     * own path. The id is the file's key, so a reader opened for one file is never reused for
+     * another that was later given the same descriptor number.
+     */
+    fun routingMaps(context: Context): List<OsmAndRouter.MapFile> {
+        val app = context.applicationContext
+        if (wanted()) synchronized(scanLock) { if (wanted()) scan(app) }
+        return synchronized(lock) {
+            opened.values.map { OsmAndRouter.MapFile("${it.key.name}|${it.key.size}|${it.key.modifiedMs}", it.key.name, it.path) }
+        }
+    }
+
     /** Held, and the last listing is missing or old. */
     private fun wanted(): Boolean = synchronized(lock) {
         holders.isNotEmpty() &&
@@ -315,7 +339,7 @@ object ObfLibrary {
             listedAt = SystemClock.elapsedRealtime()
         }
         val tree = folder(context)
-        val found = ArrayList<Pair<ObfRules.FileKey, () -> Pair<FileChannel, Closeable>>>()
+        val found = ArrayList<Pair<ObfRules.FileKey, () -> Triple<FileChannel, Closeable, String>>>()
         var unreadable = false
         if (tree != null) {
             try {
@@ -338,10 +362,14 @@ object ObfLibrary {
                         found += key to {
                             val pfd = resolver.openFileDescriptor(document, "r") ?: throw IOException("no descriptor")
                             val stream = FileInputStream(pfd.fileDescriptor)
-                            stream.channel to Closeable {
-                                closeQuietly(stream)
-                                closeQuietly(pfd)
-                            }
+                            Triple(
+                                stream.channel,
+                                Closeable {
+                                    closeQuietly(stream)
+                                    closeQuietly(pfd)
+                                },
+                                "/proc/self/fd/${pfd.fd}",
+                            )
                         }
                     }
                 }
@@ -354,7 +382,7 @@ object ObfLibrary {
             val key = ObfRules.FileKey(file.name, file.length(), file.lastModified())
             found += key to {
                 val stream = FileInputStream(file)
-                stream.channel to Closeable { closeQuietly(stream) }
+                Triple(stream.channel, Closeable { closeQuietly(stream) }, file.absolutePath)
             }
         }
         val wanted = found.map { it.first }.toSet()
@@ -372,10 +400,10 @@ object ObfLibrary {
         for ((key, open) in fresh) {
             var handle: Closeable? = null
             try {
-                val (channel, closer) = open()
+                val (channel, closer, path) = open()
                 handle = closer
                 val source = ObfReaders.open(channel, key.name)
-                added += Opened(key, source, closer, ObfReaders.dateMs(source).takeIf { it > 0 } ?: key.modifiedMs, ObfRules.region(key.name))
+                added += Opened(key, source, closer, ObfReaders.dateMs(source).takeIf { it > 0 } ?: key.modifiedMs, ObfRules.region(key.name), path)
             } catch (e: ObfNewerFormatException) {
                 handle?.let(::closeQuietly)
                 refused += key to Rejection.NEWER

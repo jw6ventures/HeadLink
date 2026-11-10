@@ -54,7 +54,7 @@ class AheadSearcher(
 
     /** The short route running on the routing thread, so turning the button off can stop it. */
     @Volatile
-    private var engine: btools.router.RoutingEngine? = null
+    private var engine: SearchHandle? = null
 
     /**
      * A POI button was pressed and left [on]. On, while guidance follows a route with a

@@ -166,6 +166,7 @@ class ConnectionActivity : Activity() {
     private lateinit var avoidHighwaysCheck: CompoundButton
     private lateinit var avoidTollsCheck: CompoundButton
     private lateinit var avoidUnpavedCheck: CompoundButton
+    private lateinit var osmAndRoutingCheck: CompoundButton
     private lateinit var bypassTownsCheck: CompoundButton
     private lateinit var allowTracksCheck: CompoundButton
     private lateinit var topSpeedSpinner: Spinner
@@ -2722,6 +2723,7 @@ class ConnectionActivity : Activity() {
         avoidHighwaysCheck = switch(R.string.route_avoid_highways)
         avoidTollsCheck = switch(R.string.route_avoid_tolls)
         avoidUnpavedCheck = switch(R.string.route_avoid_unpaved)
+        osmAndRoutingCheck = switch(R.string.route_osmand_label)
         bypassTownsCheck = switch(R.string.route_bypass_towns)
         allowTracksCheck = switch(R.string.route_allow_tracks)
         topSpeedSpinner = spinner(RouteOptions.TOP_SPEEDS_KMH.map(RouteOptions::topSpeedLabel))
@@ -2983,6 +2985,7 @@ class ConnectionActivity : Activity() {
                 ui.labelled(R.string.route_eta_label, R.string.route_eta_help, etaSpinner),
                 ui.withHelp(learnPaceCheck, R.string.route_learn_pace_label, R.string.route_learn_pace_help),
                 ui.withHelp(showAlternativesCheck, R.string.route_show_alternatives_label, R.string.route_show_alternatives_help),
+                ui.withHelp(osmAndRoutingCheck, R.string.route_osmand_label, R.string.route_osmand_help),
             ),
             // P9.1: live traffic, beside the route preferences it adds to.
             ui.card(
@@ -3273,6 +3276,7 @@ class ConnectionActivity : Activity() {
         avoidHighwaysCheck.isChecked = saved.routing.avoidHighways
         avoidTollsCheck.isChecked = saved.routing.avoidTolls
         avoidUnpavedCheck.isChecked = saved.routing.avoidUnpaved
+        osmAndRoutingCheck.isChecked = saved.routing.osmAndRouting
         bypassTownsCheck.isChecked = saved.routing.bypassTowns
         allowTracksCheck.isChecked = saved.routing.allowTracks
         topSpeedSpinner.setSelection(RouteOptions.TOP_SPEEDS_KMH.indexOf(saved.routing.topSpeedKmh))
@@ -3412,6 +3416,7 @@ class ConnectionActivity : Activity() {
         etaSpinner.savesRouting { r, i -> r.copy(etaPercent = RouteOptions.ETA_PERCENTS[i]) }
         learnPaceCheck.savesRouting { r, on -> r.copy(learnPace = on) }
         showAlternativesCheck.savesRouting { r, on -> r.copy(showAlternatives = on) }
+        osmAndRoutingCheck.savesRouting { r, on -> r.copy(osmAndRouting = on) }
         loadTraffic()
         loadWeather()
     }
