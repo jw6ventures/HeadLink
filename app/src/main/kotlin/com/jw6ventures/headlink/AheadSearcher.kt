@@ -108,7 +108,7 @@ class AheadSearcher(
         val gen = generation.incrementAndGet()
         val token = Routing.token
         val values = PoiSettings.load(app)
-        val options = AppSettings.load(app).routing
+        val options = Routing.options(app)
         val nogos = Traffic.nogos(options)
         val corridor = AheadCorridor(route, alongM, values.aheadMiles * AheadSearch.METRES_PER_MILE)
         val widthM = values.corridorMiles * AheadSearch.METRES_PER_MILE

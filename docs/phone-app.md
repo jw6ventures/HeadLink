@@ -197,9 +197,10 @@ marked optional are listed last under their own heading and don't keep Setup fro
 | Item | Listed when | Button |
 | --- | --- | --- |
 | No head unit trusted yet | No head unit is pinned | Trust and connect |
-| No map installed | No Mapsforge map is installed | Import map |
-| No routing data installed | No `.rd5` tile is installed | Import routing data |
-| No routing data for where you are | Tiles are installed, but none covers the 5° square of the phone's last cached fix. The fix can be any age, since the square only changes over hundreds of km. The detail names the tile needed. Needs location. | Import routing data |
+| No OsmAnd maps folder chosen | The map or routing is set to OsmAnd's files (the default since 0.9), no maps folder is chosen, and the Mapsforge map or `.rd5` tiles it would fall back to are missing. Listed once, in place of the two below. | Choose folder |
+| No map installed | Draw map from OsmAnd files is off and no Mapsforge map is installed | Import map |
+| No routing data installed | Route with OsmAnd maps is off and no `.rd5` tile is installed | Import routing data |
+| No routing data for where you are | BRouter is routing (OsmAnd routing off, or no maps folder), tiles are installed, but none covers the 5° square of the phone's last cached fix. The fix can be any age, since the square only changes over hundreds of km. The detail names the tile needed. Needs location. | Import routing data |
 | Notification access is off | Something you turned on reads notifications (Media controls, Notifications on the dashboard, or Call controls without the adb grant) and access isn't granted | Grant access: the consent text, then Android's notification-access screen |
 | Weather permission not granted | Show weather is on and Breezy Weather's permission isn't held | Grant |
 | Location is off | Neither location grant is held. Optional. | Allow location: an explanation, then Android's prompt |

@@ -134,6 +134,12 @@ public final class DestinationTest {
         check(mirrored != null && mirrored == -97.7431, "97.7 E with only W100_N30 installed suggests 97.7 W");
         check(PARSER.mirroredLongitude(30.2672, -97.7431, tiles) == null, "a covered point needs no hint");
         check(PARSER.mirroredLongitude(51.5, 0.5, tiles) == null, "no hint when the mirror is not covered either");
+        // 0.9: the same hint over OsmAnd's maps, a Texas box standing in for their bounds.
+        com.jw6ventures.headlink.GeoBox texas = new com.jw6ventures.headlink.GeoBox(25.8, -106.7, 36.5, -93.5);
+        Double fromMaps = PARSER.mirroredLongitude(30.2672, 97.7431, (lat, lon) -> texas.contains(lat, lon));
+        check(fromMaps != null && fromMaps == -97.7431, "OsmAnd's map bounds catch a dropped minus sign too: " + fromMaps);
+        check(PARSER.mirroredLongitude(30.2672, -97.7431, (lat, lon) -> texas.contains(lat, lon)) == null,
+                "and say nothing for a point they cover");
         check(PARSER.mirroredLongitude(30.2672, 0.0, tiles) == null, "zero has no mirror");
     }
 

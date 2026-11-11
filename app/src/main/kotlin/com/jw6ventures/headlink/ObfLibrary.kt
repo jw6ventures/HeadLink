@@ -193,6 +193,9 @@ object ObfLibrary {
             .firstOrNull { ObfRules.isMapsGrant(it.isReadPermission, it.isWritePermission) }
             ?.uri
 
+    /** Whether OsmAnd's maps have somewhere to come from: a chosen folder, or (debug) lab files. */
+    fun chosen(context: Context): Boolean = folder(context) != null || labFiles(context).isNotEmpty()
+
     /**
      * Makes [tree] the maps folder: takes a persisted read-only grant on it, lets go of
      * any earlier read-only grant (never the drop folder's read+write one), and reads it.

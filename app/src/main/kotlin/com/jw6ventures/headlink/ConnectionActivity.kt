@@ -1888,10 +1888,12 @@ class ConnectionActivity : Activity() {
             mediaInfoCheck.isChecked, notificationsOnDashboardCheck.isChecked, callControlsCheck.isChecked,
             CallControl.fullControlsGranted(this),
         )
+        // Saved rather than the switches: the lab may have changed them before this render.
+        val saved = AppSettings.load(this)
         val items = SetupCheck.items(
             maps, tiles, here, wanted, access, location, pins, sessionNotifications,
-            // Saved rather than the switch: the lab may have changed it before this render.
-            weatherWanted = AppSettings.load(this).weather.enabled, weatherPermission = weatherPermitted(),
+            weatherWanted = saved.weather.enabled, weatherPermission = weatherPermitted(),
+            osmAndMap = saved.osmAndMap, osmAndRouting = saved.routing.osmAndRouting, osmAndFolder = ObfLibrary.chosen(this),
         )
         // Only what a drive needs counts; optional items wait under their own heading.
         val required = items.count { !it.optional }
@@ -1944,6 +1946,7 @@ class ConnectionActivity : Activity() {
 
     private fun fix(item: SetupItem) {
         when (item) {
+            SetupItem.NO_OSMAND_MAPS -> chooseMapsFolder()
             SetupItem.NO_MAP -> importMapButton.performClick()
             SetupItem.NO_ROUTING, SetupItem.NO_ROUTING_HERE -> importRoutingButton.performClick()
             SetupItem.NOTIFICATION_ACCESS -> grantNotificationAccess()

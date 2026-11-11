@@ -63,6 +63,9 @@ class PreviewActivity : Activity() {
 
     private lateinit var request: PreviewRequest
     private lateinit var mapView: MapView
+
+    /** Whether this preview holds OsmAnd's maps open for its map ([MAP_HOLDER]). */
+    private var mapHeld = false
     private lateinit var statusText: TextView
     private lateinit var optionsList: LinearLayout
     private lateinit var useButton: Button
@@ -174,16 +177,45 @@ class PreviewActivity : Activity() {
         }
     }
 
-    /** The installed maps under the app's own theme, day or night as the phone is. */
+    /**
+     * The map under the app's own theme, day or night as the phone is: from OsmAnd's files
+     * when Draw map from OsmAnd files is on and a folder is chosen, else the Mapsforge
+     * files. OsmAnd's are opened on [worker], since that reads the folder, and the map is
+     * shown when they are; a folder with no map data falls back to the Mapsforge files.
+     */
     private fun startMap() {
+        if (!AppSettings.load(this).osmAndMap || !ObfLibrary.chosen(this)) {
+            showMap(tileSource())
+            return
+        }
+        val app = applicationContext
+        ObfLibrary.hold(MAP_HOLDER, true)
+        mapHeld = true
+        worker.execute {
+            val source = ObfMapSource({ ObfLibrary.routingMaps(app) })
+            val opened = try {
+                source.open().isSuccess
+            } catch (e: RuntimeException) {
+                false
+            }
+            main.post {
+                if (closed) return@post
+                showMap(if (opened) source else tileSource())
+                // The routes were drawn before the map was there; put them back under its labels.
+                drawRoutes()
+            }
+        }
+    }
+
+    private fun showMap(source: TileSource?) {
         val map = mapView.map()
-        val source = tileSource()
         if (source == null) {
             mapNoteText.visibility = View.VISIBLE
             return
         }
         val base = map.setBaseMap(source)
-        map.layers().add(BuildingLayer(map, base))
+        // Just above the base map, under any route already drawn.
+        map.layers().add(map.layers().indexOf(base) + 1, BuildingLayer(map, base))
         val night = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
         val asset = if (night) THEME_NIGHT_ASSET else THEME_DAY_ASSET
         val theme = try {
@@ -393,6 +425,7 @@ class PreviewActivity : Activity() {
 
     override fun onDestroy() {
         closed = true
+        if (mapHeld) ObfLibrary.hold(MAP_HOLDER, false)
         running?.terminate()
         worker.shutdownNow()
         if (::mapView.isInitialized) {
@@ -407,6 +440,9 @@ class PreviewActivity : Activity() {
 
         /** This process's hold on OsmAnd's maps while it looks for alternatives ([ObfLibrary.hold]). */
         private const val MAPS_HOLDER = "preview"
+
+        /** This process's hold on OsmAnd's maps while the preview draws its map from them. */
+        private const val MAP_HOLDER = "preview-map"
 
         /** The [PreviewRequest.token] a choice was made against. */
         const val EXTRA_TOKEN = "preview_token"

@@ -182,8 +182,8 @@ Incomplete from a previous run: %3$s</string>
     <string name="day_night_help">Automatic follows the head unit\'s day and night signal. Day or Night keeps the dashboard in that palette. The ☀/☾ button on the dashboard changes the same choice.</string>
     <!-- Settings → Map zoom (docs/dashboard.md, "Adaptive zoom"). -->
     <string name="adaptive_zoom_title">Map zoom</string>
-    <string name="map_osmand_label">Draw map from OsmAnd files (test)</string>
-    <string name="map_osmand_help">Draws the map from the OsmAnd maps folder instead of the Mapsforge map file. If no OsmAnd map has map data, the Mapsforge file is used as before. Changes take effect at the next connection. Needs a folder chosen under OsmAnd maps.</string>
+    <string name="map_osmand_label">Draw map from OsmAnd files</string>
+    <string name="map_osmand_help">Draws the map from the OsmAnd maps folder. On by default. Turn it off to draw from an imported Mapsforge map file instead; with no maps folder chosen, or no map data in it, an imported map file is used anyway. Changes take effect at the next connection.</string>
     <string name="adaptive_zoom_label">Zoom with speed</string>
     <string name="adaptive_zoom_help">While the map follows the car, it zooms in for street detail at low speed and out to see farther ahead at highway speed, using the zoom level you pick for each speed below. Pinching the map or pressing + or − holds the zoom where you put it until you press recentre. Changes take effect at the next connection.</string>
     <string name="adaptive_zoom_band_0">Under 20 mph</string>
@@ -268,8 +268,8 @@ Incomplete from a previous run: %3$s</string>
     <string name="route_eta_label">Time adjustment</string>
     <string name="route_eta_help">Adds to or takes from every time the route estimates: the time to the destination, the arrival time, and the time to each turn. Use it if arrivals are always early or late by about the same share. It changes no route.</string>
     <string name="route_learn_pace_label">Learn my pace</string>
-    <string name="route_osmand_label">Route with OsmAnd maps (test)</string>
-    <string name="route_osmand_help">Plans routes from the OsmAnd maps in your maps folder instead of the routing files. Routes made this way get exit numbers and signs from the maps themselves. Avoid highways, tolls and unpaved roads, the top speed and live traffic all still apply; going round towns and allowing tracks do not yet. This is being tried against the current routing on real drives, so it is off unless you turn it on. Needs a folder chosen under OsmAnd maps.</string>
+    <string name="route_osmand_label">Route with OsmAnd maps</string>
+    <string name="route_osmand_help">Plans routes from the OsmAnd maps in your maps folder. Routes made this way get exit numbers and signs from the maps themselves. Avoid highways, tolls and unpaved roads, the top speed and live traffic all apply; going round towns and allowing tracks do not yet. On by default. Turn it off to route with BRouter routing files instead; with no maps folder chosen, installed routing files are used anyway.</string>
     <string name="route_show_alternatives_label">Show other routes on the map</string>
     <string name="route_show_alternatives_help">While a route is followed on the car\'s screen, the phone looks for up to two other ways to the destination about every five minutes and draws them in grey, each with how much longer it is (\"+6 min\"). Tap a bubble on the car\'s screen to take that route. One goes away once you pass the point where it leaves your route. Routes more than ten minutes longer (or a quarter of the time left) are not shown. Looking takes the phone some seconds of work each time, and never holds up a re-route.</string>
     <string name="route_learn_pace_help">As you drive, the time still to go is corrected by how your drive so far compared with its estimate: slow traffic makes the arrival later, a clear road earlier. It starts after about two minutes of driving, counts in full after ten, never takes off more than a third or adds more than half, and starts afresh for each new destination. It is not used for the time to the next turn.</string>

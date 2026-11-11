@@ -324,9 +324,11 @@ public final class AppSettingsTest {
                 "every key read: " + changed);
         Map<String, Object> form = changed.toStored();
         check(form.size() == 68, "68 fields stored, one key each: " + form.size());
-        SavedSettings osmAndMap = SavedSettings.Companion.fromStored(Map.of("map_osmand", true));
-        check(osmAndMap.getOsmAndMap() && Boolean.TRUE.equals(osmAndMap.toStored().get("map_osmand")) && !d.getOsmAndMap(),
-                "Draw map from OsmAnd files is stored, and off by default");
+        check(d.getOsmAndMap() && SavedSettings.Companion.fromStored(Map.of("map_osmand", false)).getOsmAndMap(),
+                "Draw map from OsmAnd files is on by default, whatever 0.8's test switch stored");
+        SavedSettings mapsforge = SavedSettings.Companion.fromStored(Map.of("map_source", "mapsforge"));
+        check(!mapsforge.getOsmAndMap() && "mapsforge".equals(mapsforge.toStored().get("map_source"))
+                && "osmand".equals(d.toStored().get("map_source")), "and switched off is stored as Mapsforge");
         check(SavedSettings.Companion.fromStored(form).equals(changed), "the stored form reads back whole");
         check(SavedSettings.Companion.fromStored(d.toStored()).equals(d), "and so do the defaults");
         for (Object value : form.values()) {

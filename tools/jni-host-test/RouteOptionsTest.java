@@ -56,7 +56,7 @@ public final class RouteOptionsTest {
 
     private static RouteOptions options(boolean highways, boolean tolls, boolean unpaved, boolean towns, boolean tracks,
             int kmh, int percent, boolean pace) {
-        return new RouteOptions(highways, tolls, unpaved, towns, tracks, kmh, percent, pace, true, false);
+        return new RouteOptions(highways, tolls, unpaved, towns, tracks, kmh, percent, pace, true, true);
     }
 
     private static void theDefaultsAreTheTexasOnes() {
@@ -98,7 +98,7 @@ public final class RouteOptionsTest {
         check(d.routeDiffers(options(false, false, false, false, false, 105, 0, true)), "a top speed recomputes");
         check(d.routeDiffers(options(false, false, false, false, false, 121, 10, true)), "a time adjustment recomputes");
         check(!d.routeDiffers(d), "the same options recompute nothing");
-        check(!d.routeDiffers(new RouteOptions(false, false, false, false, false, 121, 0, true, false, false)),
+        check(!d.routeDiffers(new RouteOptions(false, false, false, false, false, 121, 0, true, false, true)),
                 "nor does hiding the map's alternatives");
         check(d.getShowAlternatives(), "the map's alternatives are on by default");
     }
@@ -144,10 +144,15 @@ public final class RouteOptionsTest {
                 "route_top_speed_kmh", 300, "route_eta_percent", "ten", "route_avoid_tolls", "yes"));
         check(odd.getRouting().equals(new RouteOptions()), "unknown or mistyped routing values read as the defaults");
         check(back.withVoiceGuidance(false).getRouting().equals(changed), "a voice toggle press leaves the routing options alone");
-        SavedSettings osmAnd = SavedSettings.Companion.fromStored(java.util.Map.of("route_osmand", true));
-        check(osmAnd.getRouting().getOsmAndRouting() && Boolean.TRUE.equals(osmAnd.toStored().get("route_osmand"))
-                && !new RouteOptions().getOsmAndRouting(), "Route with OsmAnd maps is stored, and off by default");
-        check(osmAnd.getRouting().report().contains("routing_osmand=true"), "and the report says which router ran");
+        check(new RouteOptions().getOsmAndRouting(), "Route with OsmAnd maps is on by default");
+        SavedSettings old = SavedSettings.Companion.fromStored(java.util.Map.of("route_osmand", false));
+        check(old.getRouting().getOsmAndRouting(), "0.8's test switch, stored off on every phone, no longer turns it off");
+        SavedSettings brouter = SavedSettings.Companion.fromStored(java.util.Map.of("route_engine", "brouter"));
+        check(!brouter.getRouting().getOsmAndRouting() && "brouter".equals(brouter.toStored().get("route_engine")),
+                "switched off, it is stored as BRouter and read back");
+        check("osmand".equals(old.toStored().get("route_engine")) && !old.toStored().containsKey("route_osmand"),
+                "on, as OsmAnd, under the new key only");
+        check(old.getRouting().report().contains("routing_osmand=true"), "and the report says which router ran");
     }
 
     /** One fix a second along a route whose estimate falls [perSecond] a second. */

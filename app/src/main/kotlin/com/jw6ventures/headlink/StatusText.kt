@@ -214,6 +214,15 @@ enum class SetupItem(val title: String, val detail: String, val fix: String, val
         "Plug the phone into the head unit's USB port, then tap Trust and connect.",
         "Trust and connect",
     ),
+    /**
+     * 0.9: the map and routes read OsmAnd's maps by default, and no maps folder is chosen.
+     * Listed in place of [NO_MAP] and [NO_ROUTING] for whichever of the two is set to OsmAnd.
+     */
+    NO_OSMAND_MAPS(
+        "No OsmAnd maps folder chosen",
+        "The map and routes come from OsmAnd's map files.",
+        "Choose folder",
+    ),
     NO_MAP("No map installed", "The dashboard's map pane has nothing to draw.", "Import map"),
     NO_ROUTING("No routing data installed", "Routes and favorites need a BRouter tile.", "Import routing data"),
     /** Routing data is installed, but none for where the phone last was. */
@@ -272,6 +281,11 @@ object SetupCheck {
      * [weatherWanted] is Show weather (P10) and [weatherPermission] whether Breezy
      * Weather's permission is held; the item follows notification access. Both default
      * to asking nothing, so a caller that predates P10 lists what it always did.
+     *
+     * [osmAndMap] and [osmAndRouting] are the two OsmAnd settings (on by default since 0.9)
+     * and [osmAndFolder] whether a maps folder is chosen. A part set to OsmAnd with a folder
+     * needs no `.map` or `.rd5`; set to OsmAnd without one, it asks for the folder, unless the
+     * old files it falls back to are there. Defaults keep a caller that predates them as it was.
      */
     @JvmOverloads
     fun items(
@@ -285,11 +299,19 @@ object SetupCheck {
         sessionNotifications: Boolean,
         weatherWanted: Boolean = false,
         weatherPermission: Boolean = true,
+        osmAndMap: Boolean = false,
+        osmAndRouting: Boolean = false,
+        osmAndFolder: Boolean = false,
     ): List<SetupItem> = buildList {
         if (pins == 0) add(SetupItem.NO_PINS)
-        if (maps == 0) add(SetupItem.NO_MAP)
-        if (tiles.isEmpty()) add(SetupItem.NO_ROUTING)
-        else if (hereTile != null && hereTile !in tiles) add(SetupItem.NO_ROUTING_HERE)
+        val mapFromObf = osmAndMap && osmAndFolder
+        val routesFromObf = osmAndRouting && osmAndFolder
+        val mapMissing = !mapFromObf && maps == 0
+        val routesMissing = !routesFromObf && tiles.isEmpty()
+        if ((mapMissing && osmAndMap) || (routesMissing && osmAndRouting)) add(SetupItem.NO_OSMAND_MAPS)
+        if (mapMissing && !osmAndMap) add(SetupItem.NO_MAP)
+        if (routesMissing && !osmAndRouting) add(SetupItem.NO_ROUTING)
+        else if (!routesFromObf && !routesMissing && hereTile != null && hereTile !in tiles) add(SetupItem.NO_ROUTING_HERE)
         if (notificationAccessWanted && !notificationAccess) add(SetupItem.NOTIFICATION_ACCESS)
         if (weatherWanted && !weatherPermission) add(SetupItem.WEATHER_PERMISSION)
         if (!location) add(SetupItem.LOCATION)
