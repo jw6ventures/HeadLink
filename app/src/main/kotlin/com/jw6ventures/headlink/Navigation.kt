@@ -97,11 +97,24 @@ object Navigation {
      * phone should say; that text may name the place, the report never does.
      */
     fun set(context: Context, destination: Destination, source: DestinationSource): String {
+        if (Routing.options(context).osmAndRouting) {
+            // OsmAnd's router needs no tile: its maps cover what they cover. A destination
+            // outside every open map whose mirror is inside one is the dropped minus sign
+            // the tile check below catches for BRouter; anything else is routed, and one
+            // outside the maps comes back as a route that failed, with the reason reported.
+            val boxes = ObfLibrary.sources(context).mapNotNull { it.bounds }
+            val mirrored = DestinationParser.mirroredLongitude(destination.latitude, destination.longitude) { lat, lon ->
+                boxes.any { it.contains(lat, lon) }
+            }
+            if (mirrored != null) {
+                refuse(Refusal.NO_ROUTING_DATA, source)
+                return context.getString(R.string.destination_mirrored, describe(destination), coordinates(destination.latitude, mirrored))
+            }
+            return begin(destination, source, context)
+        }
         val tiles = Routing.installed(context).map { it.name }.toSet()
         val needed = RoutingData.tileFor(destination.latitude, destination.longitude)
-        // OsmAnd's router needs no tile: its maps cover what they cover, and a destination
-        // outside them comes back as a route that failed, with the reason in the report.
-        if (!AppSettings.load(context).routing.osmAndRouting && needed !in tiles) {
+        if (needed !in tiles) {
             refuse(Refusal.NO_ROUTING_DATA, source)
             val mirrored = DestinationParser.mirroredLongitude(destination.latitude, destination.longitude, tiles)
             return if (mirrored != null) {
@@ -110,6 +123,11 @@ object Navigation {
                 context.getString(R.string.destination_no_tile, describe(destination), needed)
             }
         }
+        return begin(destination, source, context)
+    }
+
+    /** Holds [destination] as the new trip and routes to it. */
+    private fun begin(destination: Destination, source: DestinationSource, context: Context): String {
         this.destination = destination
         this.source = source
         via = null
@@ -169,7 +187,7 @@ object Navigation {
         }
         // Read at every request, re-routes included, so a change on the Routing screen
         // applies to the next route without a restart.
-        val options = AppSettings.load(context).routing
+        val options = Routing.options(context)
         Guide.learnPace = options.learnPace
         Routing.request(
             context,

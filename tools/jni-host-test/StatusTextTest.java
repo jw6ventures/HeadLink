@@ -251,6 +251,20 @@ public final class StatusTextTest {
                 SetupItem.NO_PINS, SetupItem.NO_MAP, SetupItem.NO_ROUTING, SetupItem.NOTIFICATION_ACCESS,
                 SetupItem.WEATHER_PERMISSION, SetupItem.LOCATION, SetupItem.SESSION_NOTIFICATIONS)),
                 "everything missing with weather on, in order");
+        // 0.9: OsmAnd's maps by default. With a folder, no .map or .rd5 is asked for.
+        Set<String> none = Set.of();
+        check(SETUP.items(0, none, "W100_N30.rd5", true, true, true, 1, true, false, true, true, true, true).isEmpty(),
+                "both set to OsmAnd with a folder chosen is Ready with no .map or .rd5");
+        check(SETUP.items(0, none, null, true, true, true, 1, true, false, true, true, true, false)
+                .equals(List.of(SetupItem.NO_OSMAND_MAPS)), "without a folder, it is the one item, not three");
+        check(SETUP.items(1, tiles, null, true, true, true, 1, true, false, true, true, true, false).isEmpty(),
+                "without a folder but with the old files to fall back on, nothing is missing");
+        check(SETUP.items(1, tiles, "W75_N40.rd5", true, true, true, 1, true, false, true, true, true, true).isEmpty(),
+                "routing from OsmAnd's maps asks for no tile where the phone is");
+        check(SETUP.items(0, none, null, true, true, true, 1, true, false, true, true, false, true)
+                .equals(List.of(SetupItem.NO_ROUTING)), "routing switched to BRouter still wants its tiles");
+        check(SETUP.items(0, none, null, true, true, true, 1, true, false, true, false, true, true)
+                .equals(List.of(SetupItem.NO_MAP)), "and the map switched to Mapsforge its file");
         // Declining location or the session notification still leaves Setup Ready.
         for (SetupItem item : SetupItem.values()) {
             boolean optional = item == SetupItem.LOCATION || item == SetupItem.SESSION_NOTIFICATIONS;

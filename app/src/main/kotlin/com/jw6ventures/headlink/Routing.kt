@@ -106,6 +106,20 @@ object Routing {
 
     fun installed(context: Context): List<File> = RoutingData.installed(RoutingData.segments(root(context)))
 
+    /**
+     * The saved route preferences as a request should use them: OsmAnd's router (the
+     * default) unless no OsmAnd maps folder is chosen while BRouter tiles are installed,
+     * when BRouter routes as it did before 0.9 rather than every route failing.
+     */
+    fun options(context: Context): RouteOptions {
+        val saved = AppSettings.load(context).routing
+        return if (saved.osmAndRouting && !ObfLibrary.chosen(context) && installed(context).isNotEmpty()) {
+            saved.copy(osmAndRouting = false)
+        } else {
+            saved
+        }
+    }
+
     /** Starts [request] on the routing thread; the result arrives through [SessionController.note]. */
     fun request(context: Context, request: RouteRequest, from: String, startFrom: String) {
         val planner = planner(context)
@@ -296,7 +310,7 @@ object Routing {
      */
     fun restore(context: Context, route: Route) {
         val destination = Navigation.destination ?: return
-        val options = AppSettings.load(context).routing
+        val options = Routing.options(context)
         Guide.learnPace = options.learnPace
         lastRequest = RouteRequest(
             route.latitudes[0], route.longitudes[0], destination.latitude, destination.longitude, null, options,

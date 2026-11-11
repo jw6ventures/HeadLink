@@ -357,7 +357,7 @@ object LiveAlternatives {
         val fromVehicle = follower.route.remainder(follower.indexAt(onRoute.alongM) + 1)
         val ahead = fromVehicle.remainder(LiveAlternative.leadIndex(fromVehicle))
         val aheadAlongM = follower.alongNearest(ahead.latitudes[0], ahead.longitudes[0])
-        val options = AppSettings.load(context).routing
+        val options = Routing.options(context)
         val bearing = Guide.fix()?.second
         val trip = PreviewRequest(
             token, ahead.latitudes[0], ahead.longitudes[0], destination.latitude, destination.longitude,

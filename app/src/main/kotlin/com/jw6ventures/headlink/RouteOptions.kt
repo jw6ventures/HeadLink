@@ -39,9 +39,10 @@ data class RouteOptions(
     val showAlternatives: Boolean = true,
     /**
      * Route with OsmAnd's router over the `.obf` maps ([OsmAndRouter]) rather than BRouter
-     * over `.rd5` tiles. Off by default while it is tried against BRouter on real drives.
+     * over `.rd5` tiles. On by default since 0.9; [Routing.options] falls back to BRouter
+     * when no OsmAnd maps folder is chosen and BRouter tiles are installed.
      */
-    val osmAndRouting: Boolean = false,
+    val osmAndRouting: Boolean = true,
 ) {
     /** This value with a speed or percentage no list offers any more put back to its default. */
     fun repaired(): RouteOptions = copy(

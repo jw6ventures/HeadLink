@@ -652,7 +652,7 @@ class ProjectionService : Service() {
         // Settings -> Map -> Draw map from OsmAnd files: the pane reads the same open files,
         // and falls back to the Mapsforge files when none has map data.
         val mapsContext = applicationContext
-        MapEngine.obfMaps = if (saved.osmAndMap) ({ ObfLibrary.routingMaps(mapsContext) }) else null
+        MapEngine.obfMaps = if (saved.osmAndMap && ObfLibrary.chosen(mapsContext)) ({ ObfLibrary.routingMaps(mapsContext) }) else null
         // P11.5: the map's Gas, Food and Shop markers, read from OsmAnd's maps on a thread of
         // their own, one query at a time; the files stay open while this projects. Buttons
         // start off and are not saved; a debug build's lab may light some (lab-poi).

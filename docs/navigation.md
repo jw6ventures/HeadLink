@@ -536,8 +536,9 @@ naming, `remainder` and the route file (version 4; versions 2 and 3 still read).
 `RouteFollower` puts the sign's label in `NextStep.onto` and its instruction in
 `NextStep.instruction`, so the card and cluster need no change of their own.
 
-**Not done.** Routes adopted from the phone's route preview carry no signs until the next
-re-route: the preview runs in its own process, which holds no OsmAnd files. Lane guidance
+**Not done.** With BRouter routing, routes adopted from the phone's route preview carry
+no signs until the next re-route: the preview runs in its own process, which holds no
+OsmAnd files. OsmAnd's router signs them itself. Lane guidance
 is in the same OsmAnd data and still out of scope.
 
 **Verified:** host tests on a synthetic file built from the proto (`ExitSignsTest`). Not
@@ -545,14 +546,20 @@ yet checked against a real OsmAnd file or on the truck.
 
 ## Routing on OsmAnd maps
 
-**What.** Settings -> Route preferences -> **Route with OsmAnd maps (test)**, off by
-default. On, every route, re-route, traffic re-route, alternative and phone preview is
+**What.** Settings -> Route preferences -> **Route with OsmAnd maps**, on by default since
+0.9. On, every route, re-route, traffic re-route, alternative and phone preview is
 computed by OsmAnd's own router over the `.obf` files in the OsmAnd maps folder
 ([OsmAnd maps](#osmand-maps-search-and-places)), and no `.rd5` tile is needed. Off,
-BRouter routes as before. This is phase 1 of moving to one set of files that OsmAnd
-maintains: OsmAnd routing behind a setting, then made the default, then the map drawn from
-the same files, then BRouter and Mapsforge dropped. BRouter stays only until OsmAnd's
-routing has proven itself on the road.
+BRouter routes as before. With no maps folder chosen and BRouter tiles installed,
+`Routing.options` hands BRouter the request anyway, so a phone set up before 0.9 keeps
+routing. 0.8's test switch was stored as `route_osmand`, false on every phone that saved
+any setting; 0.9 stores `route_engine` (`osmand` or `brouter`) and leaves the old key
+unread, so those phones get the new default. BRouter stays only until OsmAnd's routing has
+proven itself on the road, and then goes with Mapsforge.
+
+**Wrong-sign destinations.** With OsmAnd routing, a destination outside every open map
+whose mirrored longitude is inside one is refused with the same "did you mean" hint the
+`.rd5` tile check gives (`DestinationParser.mirroredLongitude` over the maps' bounds).
 
 **The engine.** `vendor/osmand` is OsmAnd-java's router and file reader as source, pinned
 and described in its README. `OsmAndRouter` implements the same `RouteEngine` as BRouter's
@@ -599,12 +606,16 @@ the phone's ART, or in the car.
 
 ## Drawing the map from OsmAnd maps
 
-**What.** Settings -> Map -> **Draw map from OsmAnd files (test)**, off by default. On,
-the map pane draws from the `.obf` files in the OsmAnd maps folder
-([OsmAnd maps](#osmand-maps-search-and-places)) instead of the Mapsforge `.map` file.
-With no OsmAnd map that has a map section, it draws from the Mapsforge file as before.
-This is phase 3 of moving to one set of files OsmAnd maintains ([Routing on OsmAnd
-maps](#routing-on-osmand-maps)); once it has held up on the road, Mapsforge goes.
+**What.** Settings -> Map -> **Draw map from OsmAnd files**, on by default since 0.9
+(stored as `map_source`, `osmand` or `mapsforge`; 0.8's `map_osmand` is left unread). On,
+the map pane and the phone's route preview draw from the `.obf` files in the OsmAnd maps
+folder ([OsmAnd maps](#osmand-maps-search-and-places)) instead of the Mapsforge `.map`
+file. With no maps folder chosen, or no OsmAnd map that has a map section, they draw
+from the Mapsforge file as before. Once this has held up on the road, Mapsforge goes.
+
+**The preview.** The route preview runs in a process of its own: it holds OsmAnd's maps
+open for its map while it is shown, opens the source on its worker thread, and puts the
+routes back under the labels once the map is there.
 
 **The source.** `ObfMapSource` is a VTM `TileSource` over the vendored `.obf` reader, so
 the pane, its layers, labels, buildings and the day and night themes are unchanged. Each
