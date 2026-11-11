@@ -139,6 +139,7 @@ class ConnectionActivity : Activity() {
     private lateinit var markerColourSpinner: Spinner
     // Settings → Map zoom (docs/dashboard.md, "Adaptive zoom").
     private lateinit var adaptiveZoomCheck: CompoundButton
+    private lateinit var osmAndMapCheck: CompoundButton
     private lateinit var adaptiveZoomLevelSpinners: List<Spinner>
     private lateinit var adaptiveZoomOutSpinner: Spinner
     private lateinit var adaptiveZoomInSpinner: Spinner
@@ -2683,6 +2684,7 @@ class ConnectionActivity : Activity() {
         wirelessAutoCheck = switch(R.string.wireless_auto_label)
         diagnosticsCheck = switch(R.string.diagnostics)
         markerColourSpinner = spinner(MarkerColour.LABELS)
+        osmAndMapCheck = switch(R.string.map_osmand_label)
         // Adaptive zoom: the switch, a level per speed band, and the three times, each in
         // AdaptiveZoomSettings' list order, which is how the rows read them.
         adaptiveZoomCheck = switch(R.string.adaptive_zoom_label)
@@ -3045,6 +3047,7 @@ class ConnectionActivity : Activity() {
                 mapSideRow,
                 ui.labelled(R.string.marker_colour_label, null, markerColourSpinner),
                 ui.labelled(R.string.day_night_label, R.string.day_night_help, dayNightSpinner),
+                ui.withHelp(osmAndMapCheck, R.string.map_osmand_label, R.string.map_osmand_help),
             ),
             ui.card(
                 ui.title(R.string.adaptive_zoom_title),
@@ -3252,6 +3255,7 @@ class ConnectionActivity : Activity() {
         diagnosticsCheck.isChecked = saved.diagnostics
         markerColourSpinner.setSelection(saved.markerColour.ordinal)
         adaptiveZoomCheck.isChecked = saved.adaptiveZoom.enabled
+        osmAndMapCheck.isChecked = saved.osmAndMap
         adaptiveZoomLevelSpinners.forEachIndexed { band, spinner ->
             spinner.setSelection(AdaptiveZoomSettings.LEVELS.indexOf(saved.adaptiveZoom.levels[band]))
         }
@@ -3337,6 +3341,7 @@ class ConnectionActivity : Activity() {
         }
         markerColourSpinner.saves { s, i -> s.copy(markerColour = MarkerColour.entries[i]) }
         adaptiveZoomCheck.saves { s, on -> s.copy(adaptiveZoom = s.adaptiveZoom.copy(enabled = on)) }
+        osmAndMapCheck.saves { s, on -> s.copy(osmAndMap = on) }
         adaptiveZoomLevelSpinners.forEachIndexed { band, spinner ->
             spinner.saves { s, i ->
                 val levels = s.adaptiveZoom.levels.toMutableList().also { it[band] = AdaptiveZoomSettings.LEVELS[i] }

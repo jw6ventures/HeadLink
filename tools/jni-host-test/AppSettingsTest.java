@@ -323,7 +323,10 @@ public final class AppSettingsTest {
                 && !changed.getCongestionRestart() && !changed.getWirelessKeepAwake() && !changed.getWirelessAutoStart(),
                 "every key read: " + changed);
         Map<String, Object> form = changed.toStored();
-        check(form.size() == 67, "67 fields stored, one key each: " + form.size());
+        check(form.size() == 68, "68 fields stored, one key each: " + form.size());
+        SavedSettings osmAndMap = SavedSettings.Companion.fromStored(Map.of("map_osmand", true));
+        check(osmAndMap.getOsmAndMap() && Boolean.TRUE.equals(osmAndMap.toStored().get("map_osmand")) && !d.getOsmAndMap(),
+                "Draw map from OsmAnd files is stored, and off by default");
         check(SavedSettings.Companion.fromStored(form).equals(changed), "the stored form reads back whole");
         check(SavedSettings.Companion.fromStored(d.toStored()).equals(d), "and so do the defaults");
         for (Object value : form.values()) {

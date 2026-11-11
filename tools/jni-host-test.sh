@@ -45,6 +45,11 @@
 #   .obf built from the proto (rules, the box tree with a pruned child, points, point tags,
 #   the string table), an exit, a "keep left" past one, an on-ramp driven against its stored
 #   order, the card, cluster and spoken words, and the route file. No real file yet.
+# * ObfMapTilesTest: the map drawn from OsmAnd's map data - a tile's 31-bit box, a road's
+#   tags, names and pixels, an area's hole, a building kept whole, points in and out of the
+#   tile, the sea from coastlines (a coast across the tile, an island, open sea), and that
+#   with no OsmAnd map data the map falls back to the Mapsforge file. Objects built in
+#   memory; no real file, no drawing.
 # * OsmAndRoutingTest: OsmAnd's router (vendor/osmand) behind HeadLink's RouteEngine over
 #   ExitSignsTest's synthetic .obf - the exit maneuver with its number and signs, the times,
 #   a closure and a costly jam moving the route and a cheap one not, closures with no way
@@ -251,6 +256,7 @@ java -cp "$out:$classes:$stdlib" HomeAssistantTest
 java -cp "$out:$classes:$stdlib" ObfTest "${OBF_DIR:-}"
 java -cp "$out:$classes:$stdlib:$brouter" ExitSignsTest
 java -cp "$out:$classes:$stdlib:$brouter:$osmand" OsmAndRoutingTest
+java -cp "$out:$classes:$stdlib:$vtm:$osmand" ObfMapTilesTest
 java -cp "$out:$classes:$stdlib" AddressSearchTest "${OBF_DIR:-}"
 java -cp "$out:$classes:$stdlib:$brouter" SearchAheadTest "${ROUTING_SEGMENTS:-}" "${OBF_DIR:-}"
 java -cp "$out:$classes:$stdlib" WirelessProbeTest

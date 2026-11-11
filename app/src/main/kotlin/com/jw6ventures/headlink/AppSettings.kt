@@ -95,6 +95,12 @@ data class SavedSettings(
     val weather: WeatherSettings = WeatherSettings(),
     /** Settings → Map → Adaptive zoom (docs/dashboard.md, "Adaptive zoom"); on by default. */
     val adaptiveZoom: AdaptiveZoomSettings = AdaptiveZoomSettings(),
+    /**
+     * Settings → Map → Draw map from OsmAnd files (docs/navigation.md, "Drawing the map from
+     * OsmAnd maps"): the map pane reads OsmAnd's `.obf` maps instead of Mapsforge `.map`
+     * files. Off by default while it is tested.
+     */
+    val osmAndMap: Boolean = false,
 ) {
     /**
      * This value with every stored choice a list no longer offers put back to its
@@ -242,6 +248,7 @@ data class SavedSettings(
             WEATHER_SPEAK_ALERTS to s.weather.speakAlerts,
             WEATHER_ALERT_LEVEL to s.weather.alertLevel.key,
             ADAPTIVE_ZOOM to s.adaptiveZoom.enabled,
+            MAP_OSMAND to s.osmAndMap,
             ADAPTIVE_ZOOM_LEVEL_0 to s.adaptiveZoom.levels[0],
             ADAPTIVE_ZOOM_LEVEL_1 to s.adaptiveZoom.levels[1],
             ADAPTIVE_ZOOM_LEVEL_2 to s.adaptiveZoom.levels[2],
@@ -346,6 +353,7 @@ data class SavedSettings(
                     zoomInSeconds = number(ADAPTIVE_ZOOM_IN_SECONDS, d.adaptiveZoom.zoomInSeconds),
                     glideMillis = number(ADAPTIVE_ZOOM_GLIDE_MILLIS, d.adaptiveZoom.glideMillis),
                 ),
+                osmAndMap = flag(MAP_OSMAND, d.osmAndMap),
             ).repaired()
         }
 
@@ -410,6 +418,7 @@ data class SavedSettings(
         private const val ROUTE_SHOW_ALTERNATIVES = "route_show_alternatives"
         private const val ROUTE_OSMAND = "route_osmand"
         private const val ADAPTIVE_ZOOM = "adaptive_zoom"
+        private const val MAP_OSMAND = "map_osmand"
         private const val ADAPTIVE_ZOOM_LEVEL_0 = "adaptive_zoom_level_0"
         private const val ADAPTIVE_ZOOM_LEVEL_1 = "adaptive_zoom_level_1"
         private const val ADAPTIVE_ZOOM_LEVEL_2 = "adaptive_zoom_level_2"

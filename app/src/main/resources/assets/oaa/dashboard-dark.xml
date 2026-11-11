@@ -76,6 +76,14 @@
     <m e="way">
 
         <!--###### PASS 1: AREAS ######-->
+        <!-- Sea and the land on it, from OsmAnd's coastlines (ObfMapTiles.coast) or a
+             Mapsforge file's sea polygons: first, so everything else draws over them. -->
+        <m k="natural" v="sea">
+            <area fill="#16283c" />
+        </m>
+        <m k="natural" v="land">
+            <area fill="#151a2b" />
+        </m>
         <m k="natural" v="water">
             <area fill="#16283c" />
         </m>

@@ -61,7 +61,9 @@ application includes the components below; their license texts follow.
      Taken from OsmAnd commit 91d9bd647032397884a218be308270b565372ed5, with
      a few files replaced by HeadLink's own (vendor/osmand/README.md). Includes
      OsmAnd's routing.xml from OsmAnd-resources, unchanged, under the same
-     license. Source: https://github.com/osmandapp/OsmAnd and
+     license. HeadLink's coastline handling is adapted from OsmAnd's
+     MapRenderRepositories, under the same license.
+     Source: https://github.com/osmandapp/OsmAnd and
      https://github.com/osmandapp/OsmAnd-resources. The GPL-3.0 text follows below.
      OsmAnd-java carries a patched copy of Protocol Buffers' Java runtime
      (com.google.protobuf), Copyright 2008 Google Inc., under the BSD license

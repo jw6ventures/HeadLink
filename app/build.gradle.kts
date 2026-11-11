@@ -91,6 +91,9 @@ dependencies {
     // Route preferences -> Route with OsmAnd maps. Vendored source for the same reason:
     // OsmAnd publishes no checksummed artifact. Pure Java, no native library.
     implementation(project(":vendor:osmand"))
+    // Already in the APK through vendor/osmand; named here because ObfTiles' coastline
+    // joining uses OsmAnd's own long lists and MapAlgorithms takes them.
+    implementation(libs.trove4j)
 }
 
 val checkRustJniLibs = tasks.register("checkRustJniLibs") {

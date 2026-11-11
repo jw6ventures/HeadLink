@@ -588,13 +588,57 @@ them in, and the phone preview's routes carry signs too.
 console. Those switches are off, and its INFO lines are logged at FINE, which Android
 drops.
 
-**Not done.** Lane guidance (in the same data, not yet carried into `Route`). Search,
-drawing the map from `.obf`, and dropping Mapsforge and BRouter are later phases.
+**Not done.** Lane guidance (in the same data, not yet carried into `Route`). Drawing the
+map from `.obf` is behind its own setting ([Drawing the map from OsmAnd
+maps](#drawing-the-map-from-osmand-maps)); dropping Mapsforge and BRouter comes later.
 
 **Verified:** host tests on `ExitSignsTest`'s synthetic file (`OsmAndRoutingTest`): the
 exit with its number and signs, times, closures, jams, opened closures, the second
 alternative, a stopped search and no maps. Not yet checked against a real OsmAnd file, on
 the phone's ART, or in the car.
+
+## Drawing the map from OsmAnd maps
+
+**What.** Settings -> Map -> **Draw map from OsmAnd files (test)**, off by default. On,
+the map pane draws from the `.obf` files in the OsmAnd maps folder
+([OsmAnd maps](#osmand-maps-search-and-places)) instead of the Mapsforge `.map` file.
+With no OsmAnd map that has a map section, it draws from the Mapsforge file as before.
+This is phase 3 of moving to one set of files OsmAnd maintains ([Routing on OsmAnd
+maps](#routing-on-osmand-maps)); once it has held up on the road, Mapsforge goes.
+
+**The source.** `ObfMapSource` is a VTM `TileSource` over the vendored `.obf` reader, so
+the pane, its layers, labels, buildings and the day and night themes are unchanged. Each
+of VTM's loader threads opens its own reader per file, because OsmAnd's reader keeps a
+stream position and fills its index lazily. A tile asks every file for the objects in the
+tile's box at the tile's zoom; a way in two neighbouring regions' files is drawn once.
+Above zoom 17 tiles are cut from zoom 17's, as VTM does for Mapsforge.
+
+**Tags** (`ObfMapTiles`). OsmAnd's map types are OSM tag and value pairs, the keys the
+themes already match, so they pass through; additional types (`oneway`, `toll`) and names
+(`name`, `ref`) become tags too. Points are OsmAnd's 31-bit Mercator numbers, the
+projection VTM draws in, so a tile's pixels are a shift and a scale. Areas keep their
+holes; ways are clipped to the tile with VTM's margin; buildings at zoom 17 and above are
+kept whole in one tile, as VTM's own reader does, so extruded walls are not cut.
+
+**Sea.** OsmAnd keeps the coast as lines. Each tile's coastline pieces are clipped,
+joined and closed along the tile's edges into water and land rings, adapted from OsmAnd's
+own `MapRenderRepositories.processCoastlines`; a tile with no coastline that OsmAnd's
+index marks as ocean is water whole. They are tagged `natural=sea` and `natural=land`,
+which both themes now fill first, under everything else. A Mapsforge file's own sea
+polygons pick up the same colour.
+
+**Report.** The session report names the data `obf:N` (a count; file names say which
+region the phone is in) and counts `obf_tiles` and `obf_tile_failures`.
+
+**Not done.** The world basemap is not read, so far-out zoom levels show only what the
+regional files carry. Theme rules have not been tuned against OsmAnd's data, which
+generalises roads by zoom differently from the Mapsforge writer. Not yet timed on the phone.
+
+**Verified:** host tests over objects built in memory (`ObfMapTilesTest`): the tile box,
+a road's tags, names and pixels, an area's hole, a building kept whole, points in and out
+of the tile, a coast across the tile with the sea on its right, an island, open sea, and
+the fall-back with no map data. Not yet drawn from a real OsmAnd file, on the phone or in
+the car.
 
 ## Route preview and alternatives
 
