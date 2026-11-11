@@ -942,6 +942,31 @@ fn unhandled_messages_after_tls_are_recorded_and_skipped() {
         .contains("unhandled_0=stage=discovery channel=0 flags=0x08 id=0x0014 len=2"));
 }
 
+/// A VOICE_SESSION_REQUEST is counted on its own line, so it is still visible after the
+/// individual unhandled entries have run out.
+#[test]
+fn voice_session_requests_are_reported_past_the_unhandled_limit() {
+    let mut extra: Vec<(u8, Vec<u8>)> = (0..aap_session::UNHANDLED_LIMIT)
+        .map(|_| (0, vec![0x00, 0x14]))
+        .collect();
+    extra.push((0, vec![0x00, 0x11, 0x08, 0x01]));
+    extra.push((0, vec![0x00, 0x11, 0x08, 0x02]));
+    let (s, _, _) = ready(hu_sim::Config {
+        extra_after_auth: extra,
+        ..hu_sim::Config::default()
+    });
+    let r = s.report();
+    assert_eq!(r.unhandled.len(), aap_session::UNHANDLED_LIMIT);
+    assert_eq!(r.voice_session_requests, 2);
+    let text = r.to_string();
+    assert!(
+        text.contains(
+            "voice_session_requests=2 voice_session_first=0ms voice_session_last_body=0802"
+        ),
+        "{text}"
+    );
+}
+
 #[test]
 fn repeated_protocol_messages_never_repeat_initialization() {
     // A second AUTH_COMPLETE while discovery is pending is an error, not a new request.

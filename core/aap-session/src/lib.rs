@@ -56,6 +56,8 @@ pub const DISCOVERY_RECORD_LIMIT: usize = 8192;
 pub const UNHANDLED_LIMIT: usize = 16;
 /// Bytes kept per unhandled message body under [`Config::capture_unhandled`].
 pub const UNHANDLED_BODY_LIMIT: usize = 64;
+/// Bytes kept of a VOICE_SESSION_REQUEST body ([`Report::voice_session_last_body`]).
+pub const VOICE_SESSION_BODY_LIMIT: usize = 16;
 /// Control message IDs with a defined role in this session; out of place they are errors
 /// rather than unhandled traffic.
 const STATE_IDS: [u16; 10] = [
@@ -472,6 +474,14 @@ pub struct Report {
     pub projection: Option<ProjectionReport>,
     pub unhandled: Vec<Unhandled>,
     pub unhandled_count: u64,
+    /// Control-channel VOICE_SESSION_REQUEST messages from the head unit. They also count
+    /// as unhandled; this keeps them visible once [`UNHANDLED_LIMIT`] is used up.
+    pub voice_session_requests: u64,
+    /// Session offset of the first one.
+    pub voice_session_first_at: Option<Duration>,
+    /// Body of the latest one after the id, at most [`VOICE_SESSION_BODY_LIMIT`] bytes.
+    /// It is a start or stop flag, not user data.
+    pub voice_session_last_body: Vec<u8>,
     pub abandoned_output: usize,
     pub counters: Counters,
     pub outcome: Option<Outcome>,
@@ -617,6 +627,18 @@ impl fmt::Display for Report {
             write!(f, "{projection}")?;
         }
         writeln!(f, "unhandled_messages={}", self.unhandled_count)?;
+        writeln!(
+            f,
+            "voice_session_requests={} voice_session_first={} voice_session_last_body={}",
+            self.voice_session_requests,
+            self.voice_session_first_at
+                .map_or("-".into(), |t| format!("{}ms", t.as_millis())),
+            if self.voice_session_last_body.is_empty() {
+                "-".into()
+            } else {
+                aap_tls::identity::hex(&self.voice_session_last_body)
+            }
+        )?;
         for (i, u) in self.unhandled.iter().enumerate() {
             writeln!(
                 f,
@@ -775,6 +797,9 @@ impl Session {
             projection: None,
             unhandled: Vec::new(),
             unhandled_count: 0,
+            voice_session_requests: 0,
+            voice_session_first_at: None,
+            voice_session_last_body: Vec::new(),
             abandoned_output: 0,
             counters: Counters::default(),
             outcome: None,
@@ -1310,6 +1335,13 @@ impl Session {
     fn unhandled(&mut self, message: &Message, id: u16, stage: Stage, now: Instant) {
         self.report.unhandled_count += 1;
         let at = self.elapsed(now);
+        if message.channel == 0 && id == ids::VOICE_SESSION_REQUEST {
+            let r = &mut self.report;
+            r.voice_session_requests += 1;
+            r.voice_session_first_at.get_or_insert(at);
+            let body = message.bytes.get(2..).unwrap_or_default();
+            r.voice_session_last_body = body[..body.len().min(VOICE_SESSION_BODY_LIMIT)].to_vec();
+        }
         if self.report.unhandled.len() < UNHANDLED_LIMIT {
             let body = if self.config.capture_unhandled {
                 let body = message.bytes.get(2..).unwrap_or_default();
