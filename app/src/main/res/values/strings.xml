@@ -367,8 +367,6 @@ Incomplete from a previous run: %3$s</string>
     <string name="weather_level_label">Alerts shown from</string>
     <string name="weather_level_help">The lowest severity of alert that takes the dashboard\'s second tile and is spoken. Alerts below it still show in the weather view opened from the header.</string>
     <!-- P11.1 (docs/navigation.md, "OsmAnd maps: search and places"): Settings → OsmAnd maps. -->
-    <string name="speech_model_title">Voice input</string>
-    <string name="speech_model_caption">Voice input turns what you say into text on this phone, with a speech model file you supply. Listening through the car comes in a later version; for now you can choose the model and check it. Nothing is downloaded and nothing connects to the network.</string>
     <string name="speech_model_choose">Choose speech model</string>
     <string name="speech_model_choose_help">Choose a whisper.cpp model file (ggml format, usually ending in .bin). This app gets permission to read that one file, never to change it, and reads it where it is.</string>
     <string name="speech_model_none">No speech model chosen</string>

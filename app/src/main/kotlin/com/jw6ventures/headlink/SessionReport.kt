@@ -104,6 +104,14 @@ object SessionReport {
             appendLine("[traffic]")
             appendLine(Traffic.report().trimEnd())
             appendLine()
+            // Voice input's microphone: counts, outcomes and milliseconds; never audio or words.
+            appendLine("[voice_mic]")
+            appendLine("voice_input_enabled=${VoiceInputPrefs.enabled(context)}")
+            appendLine(
+                "record_audio_granted=${context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED}",
+            )
+            appendLine(BluetoothMic.tally.report().trimEnd())
+            appendLine()
             // Voice input's recognizer: model size, times and outcomes; never a word (spec §2.1 as amended).
             appendLine("[speech_input]")
             appendLine(SpeechModel.report(context).trimEnd())

@@ -238,8 +238,9 @@ class ConnectionActivity : Activity() {
     private lateinit var searchSuggestions: SearchSuggestions
     /** P11.1: Settings → OsmAnd maps. */
     private lateinit var osmAndMapsCard: OsmAndMapsCard
-    private lateinit var speechModelCard: SpeechModelCard
+    private lateinit var speechModelRows: SpeechModelRows
     private lateinit var homeAssistantCard: HomeAssistantCard
+    private lateinit var voiceInputCard: VoiceInputCard
     private lateinit var routeButton: Button
     private lateinit var clearRouteButton: Button
     private lateinit var previewButton: Button
@@ -535,6 +536,8 @@ class ConnectionActivity : Activity() {
     override fun onStop() {
         searchSuggestions.hide()
         ObfLibrary.hold(MAPS_HOLDER, false)
+        // A microphone test never outlives the screen that started it.
+        voiceInputCard.stop()
         super.onStop()
     }
 
@@ -734,6 +737,11 @@ class ConnectionActivity : Activity() {
             // Asked before and refused for good: Android shows no prompt, so the button
             // goes where the operator can still allow it.
             if (!granted && !shouldShowRequestPermissionRationale(Manifest.permission.ACCESS_COARSE_LOCATION)) openAppSettings()
+            renderState()
+            return
+        }
+        if (requestCode == REQUEST_MICROPHONE) {
+            voiceInputCard.onMicrophoneResult(grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED)
             renderState()
             return
         }
@@ -1080,7 +1088,7 @@ class ConnectionActivity : Activity() {
             } catch (e: SecurityException) {
                 Toast.makeText(this, getString(R.string.speech_model_failed, e.message ?: e.toString()), Toast.LENGTH_LONG).show()
             }
-            speechModelCard.chosen()
+            speechModelRows.chosen()
             return
         }
         if (requestCode == REQUEST_DROP_FOLDER) {
@@ -1685,8 +1693,8 @@ class ConnectionActivity : Activity() {
         renderTraffic()
         renderWeather()
         osmAndMapsCard.render(AppSettings.load(this).speedUnit)
-        speechModelCard.render()
         homeAssistantCard.render()
+        voiceInputCard.render()
         renderTabs()
     }
 
@@ -2869,8 +2877,13 @@ class ConnectionActivity : Activity() {
         }
         searchSuggestions = SearchSuggestions(this, ui, routeInput, ::searchPoint) { routeToSuggestion(it) }
         osmAndMapsCard = OsmAndMapsCard(this, ui) { chooseMapsFolder() }
-        speechModelCard = SpeechModelCard(this, ui) { chooseSpeechModel() }
+        speechModelRows = SpeechModelRows(this, ui) { chooseSpeechModel() }
         homeAssistantCard = HomeAssistantCard(this, ui)
+        voiceInputCard = VoiceInputCard(
+            this, ui,
+            requestMicrophone = { requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQUEST_MICROPHONE) },
+            model = speechModelRows,
+        )
         routeButton = button(R.string.compute_route) { computeRoute() }
         clearRouteButton = button(R.string.clear_route) {
             Navigation.clear()
@@ -3138,15 +3151,14 @@ class ConnectionActivity : Activity() {
             homeAssistantCard.view,
             // P11.1 (docs/navigation.md): the maps folder, its status, markers and search ahead.
             osmAndMapsCard.view,
+            // Voice input (spec §2.1 as amended 11 November 2026): the switch and the car microphone test.
+            voiceInputCard.view,
             // P8.1: applies to notification reading and, from P8.2, turn prompts.
             ui.card(
                 ui.title(R.string.settings_speech),
                 // Stacked: "Pause media" is cut to "Pause me…" beside its label at 360 dp.
                 ui.labelled(R.string.speech_media_label, R.string.speech_media_help, speechMediaSpinner, stacked = true),
             ),
-            // Voice input's speech model (spec §2.1 as amended 11 November 2026), after the
-            // spoken output it will answer through.
-            speechModelCard.view,
             ui.card(ui.withHelp(diagnosticsCheck, R.string.diagnostics, R.string.diagnostics_help)),
         )
 
@@ -3541,7 +3553,8 @@ class ConnectionActivity : Activity() {
         private const val REQUEST_MAPS_FOLDER = 12
         private const val REQUEST_WIRELESS = 13
         private const val REQUEST_WIRELESS_LINK = 14
-        private const val REQUEST_SPEECH_MODEL = 15
+        private const val REQUEST_MICROPHONE = 15
+        private const val REQUEST_SPEECH_MODEL = 16
         /** This screen's hold on OsmAnd's open maps ([ObfLibrary.hold]). */
         private const val MAPS_HOLDER = "screen"
 

@@ -10,12 +10,11 @@ import java.util.Locale
 import java.util.concurrent.Executors
 
 /**
- * Settings → Voice input (spec §2.1 as amended 11 November 2026): the speech model file
- * and a check of it. The listening itself arrives with the Bluetooth microphone and the
- * voice conversation; this card is where the operator supplies the model those use
- * ([SpeechModel]). It names the file format and nothing about where to get one.
+ * Settings → Voice input's speech model rows (spec §2.1 as amended 11 November 2026): the
+ * model file and a check of it ([SpeechModel]), shown inside [VoiceInputCard]. It names
+ * the file format and nothing about where to get one.
  */
-class SpeechModelCard(
+class SpeechModelRows(
     private val activity: Activity,
     private val ui: PhoneViews,
     chooseFile: () -> Unit,
@@ -40,21 +39,23 @@ class SpeechModelCard(
     private val main = Handler(Looper.getMainLooper())
     private var checking = false
 
-    val view: LinearLayout = ui.card(
-        ui.title(R.string.speech_model_title),
-        ui.caption().apply { setText(R.string.speech_model_caption) },
-        statusText,
-        ui.withHelp(
-            Button(activity).apply {
-                setText(R.string.speech_model_choose)
-                setOnClickListener { chooseFile() }
-            },
-            R.string.speech_model_choose, R.string.speech_model_choose_help,
-        ),
-        ui.withHelp(checkButton, R.string.speech_model_check, R.string.speech_model_check_help),
-        checkText,
-        removeButton,
-    )
+    /** The model rows, placed in [VoiceInputCard] between the switch and the microphone test. */
+    val view: LinearLayout = LinearLayout(activity).apply {
+        orientation = LinearLayout.VERTICAL
+        listOf(
+            statusText,
+            ui.withHelp(
+                Button(activity).apply {
+                    setText(R.string.speech_model_choose)
+                    setOnClickListener { chooseFile() }
+                },
+                R.string.speech_model_choose, R.string.speech_model_choose_help,
+            ),
+            ui.withHelp(checkButton, R.string.speech_model_check, R.string.speech_model_check_help),
+            checkText,
+            removeButton,
+        ).forEach(::addView)
+    }
 
     /** The chosen file's name, or that there is none. */
     fun render() {
