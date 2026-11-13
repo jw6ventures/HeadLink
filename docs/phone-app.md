@@ -568,7 +568,7 @@ spec.md §5.2 and `app/src/main/AndroidManifest.xml`.
 | Android's companion-device dialog | Turning on **Link the car for wireless** | No wake-up when the car connects |
 | Android's Wi-Fi network approval | The first wireless connection to a car's Wi-Fi ([connecting.md](connecting.md)) | No wireless |
 | Breezy Weather's `READ_PROVIDER` | Turning on **Show weather**, or Grant | The weather item shows a dash |
-| Microphone (`RECORD_AUDIO`), voice input, not built yet | Turning on **Voice input** | No voice input |
+| Microphone (`RECORD_AUDIO`), voice input (so far only its car microphone test) | Turning on **Voice input**, or **Test car microphone** while it is not granted | No voice input |
 | Contacts (`READ_CONTACTS`) and SMS (`SEND_SMS`), voice input, not built yet | Turning on **Text a contact by voice** | Replies and destinations by voice still work; texting a contact by name does not |
 | `MANAGE_ONGOING_CALLS` app-op | Never prompted. Run once from a computer: `adb shell appops set --user 0 com.jw6ventures.headlink MANAGE_ONGOING_CALLS allow` (`CallControl.GRANT_COMMAND`, shown under Call controls) | Calls fall back to the dialer's notification: answer, decline and hang up, but no mute or keypad |
 

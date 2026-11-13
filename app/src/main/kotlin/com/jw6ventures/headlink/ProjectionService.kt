@@ -151,27 +151,39 @@ class ProjectionService : Service() {
     /**
      * Promotes to a connectedDevice foreground service, adding the location type while a
      * location permission is granted: without it Android stops delivering the phone's
-     * position, the map's fallback, once no activity is visible. If the platform refuses
-     * the location type (a start from the background, or the grant gone in between), the
-     * session still runs, as it did before, on connectedDevice alone.
+     * position, the map's fallback, once no activity is visible. Likewise the microphone
+     * type while Voice input is on and Microphone is granted, so push-to-talk can listen
+     * with the screen off (spec §5.2 as amended 11 November 2026). Android refuses the
+     * microphone type for a start from the background (a wireless start), and may refuse
+     * location then too, so each refused combination drops the newest type and tries
+     * again; the session still runs on connectedDevice alone, as it did before.
      */
     private fun promote() {
         val connected = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
         val location = listOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
             .any { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
-        if (location) {
+        val microphone = VoiceInputPrefs.enabled(this) &&
+            checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        val locationType = if (location) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0
+        val candidates = listOfNotNull(
+            if (microphone) connected or locationType or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else null,
+            if (location) connected or locationType else null,
+        )
+        for (type in candidates) {
             try {
-                startForeground(
-                    NOTIFICATION_ID,
-                    buildNotification(),
-                    connected or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION,
-                )
+                startForeground(NOTIFICATION_ID, buildNotification(), type)
+                if (microphone) {
+                    val withMic = (type and ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE) != 0
+                    SessionController.note("foreground microphone type ${if (withMic) "held" else "not held"}")
+                }
                 return
             } catch (e: SecurityException) {
-                SessionController.note("foreground location type refused: $e")
+                val what = if ((type and ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE) != 0) "microphone" else "location"
+                SessionController.note("foreground $what type refused: $e")
             }
         }
         startForeground(NOTIFICATION_ID, buildNotification(), connected)
+        if (microphone) SessionController.note("foreground microphone type not held")
     }
 
     private fun start(generation: Long) {

@@ -298,8 +298,9 @@ code rule) and are enforced in the build where possible, mostly by
   - `WAKE_LOCK`, held for at most 90 s while the truck's own start request is set up,
     and 5 s per Bluetooth frame while standing by.
 
-  Voice input (spec §2.1 and §5.2 as amended 11 November 2026, not built yet) may add
-  five more, each with the feature stream that uses it: `RECORD_AUDIO`,
+  Voice input (spec §2.1 and §5.2 as amended 11 November 2026, being built) may add
+  five more, each with the feature stream that uses it. The car microphone capture
+  (`BluetoothMic`) has added the first three: `RECORD_AUDIO`,
   `MODIFY_AUDIO_SETTINGS` and `FOREGROUND_SERVICE_MICROPHONE` for push-to-talk capture
   from the car's hands-free link, and `READ_CONTACTS` and `SEND_SMS` for texting a
   contact by name. `verify-apk.sh` allows each of these to be present or absent, and

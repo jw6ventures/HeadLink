@@ -430,8 +430,57 @@ destination or speed. The event log says only "notification read aloud" or "voic
 - **Synthesis to PCM played through HeadLink's own `AudioTrack`** pinned to the A2DP
   device. This is the fallback if default routing ever misbehaves, and it would be the
   first half of speech-channel work. Not needed so far.
-- **Voice input.** No microphone and no `RECORD_AUDIO` permission yet. The head unit's
-  `av_input` microphone channel is not opened. Spec.md §2.1, §5.2 and §8.1 were amended
-  on 11 November 2026 to allow push-to-talk voice input through the car's Bluetooth
-  hands-free microphone, recognized on the phone, for texting a contact, replying to a
-  message notification and saying a destination; it is not built yet.
+- **Voice input** beyond its microphone (below): recognition, the spoken conversation,
+  texting, replies and destinations. The head unit's `av_input` microphone channel is not
+  opened. Spec.md §2.1, §5.2 and §8.1 were amended on 11 November 2026 to allow it.
+
+## Voice input: the car's microphone
+
+`BluetoothMic` captures one push-to-talk utterance from the car's hands-free microphone,
+over the phone's ordinary Bluetooth link to the car (HFP/SCO), the path a hands-free call
+uses (spec.md §2.1 and §5.2 as amended 11 November 2026). It is the first piece of voice
+input; recognition (whisper.cpp) and the conversation around it are separate.
+
+- **Never the phone's microphone.** The route is chosen only among SCO ports. If there is
+  none (Bluetooth off, the car not linked for calls), capture fails with
+  `no_bluetooth_mic` and says so. Once recording, the recorder's routed device is checked
+  on the first frame and every 250 ms: anything other than SCO is closed with
+  `not_bluetooth`, or `lost` if the link dropped mid-utterance, and nothing heard is kept.
+- **Routing.** `AudioManager.setCommunicationDevice` to the car's SCO port (API 31+, in
+  place of the deprecated `startBluetoothSco`), then a wait for it to open. If it has not
+  opened after 1.5 s, the audio mode is also set to `MODE_IN_COMMUNICATION`, which some
+  phones need before they open SCO, and the report counts it (`mic_call_mode_needed`).
+  After 4 s it gives up (`route_timeout`). Capture tries the `VOICE_RECOGNITION` source
+  first (least processing) and falls back to `VOICE_COMMUNICATION` only if the first is
+  not routed to the car. Transient exclusive focus (`USAGE_ASSISTANT`) pauses media while
+  listening. Afterwards the route is cleared, the mode put back and focus abandoned, so
+  music returns to A2DP and turn prompts play. While the mode is `MODE_IN_COMMUNICATION`,
+  `Speaker` treats it as a call and says nothing.
+- **Format.** 16 kHz mono 16-bit signed PCM in memory (`VoiceClip`), at most 30 s, the
+  speech engine's own cap. Android resamples from the link's own rate (8 kHz narrowband or
+  16 kHz wideband).
+- **End of speech.** `UtteranceDetector` works on 20 ms frame levels in dBFS: the noise
+  floor is the quietest of the first 100 ms, then follows the cabin (fast down, slowly up,
+  at most 1 dB/s while loud). Speech is 3 frames in a row 10 dB over the floor and above
+  -50 dBFS; 900 ms of quiet after speech ends the utterance, and no speech in 6 s ends
+  with `no_speech`. A caller can end it early (`finished`) or cancel it. These numbers are
+  a first guess, to be tuned in the car.
+- **Busy and calls.** One capture at a time (`busy`). None during a call or while another
+  app holds call audio (`in_call`).
+- **Report.** `[voice_mic]` holds whether Voice input is on and Microphone granted, the
+  capture count, each outcome's count, the last and slowest route open in ms, how often
+  call mode was needed, the last source that delivered, and the total time heard. The
+  event log has one line per capture with the same kind of numbers and its peak and
+  background levels. No audio, words, device name or address.
+- **Foreground.** `ProjectionService` adds the `microphone` type while Voice input is on
+  and Microphone is granted, so listening works with the screen off. Android refuses that
+  type for a session started from the background (a wireless start); the session then runs
+  without it and the event log says `foreground microphone type not held`.
+- **Settings → Voice input.** Off by default; turning it on asks for Microphone. Until the
+  rest of voice input lands, its only action is **Test car microphone**: one capture, then
+  how long it heard, how much was speech, how fast the link opened, and the levels. The
+  audio is dropped once those numbers are taken.
+
+Host-tested by `MicCaptureTest`: the route choice, the routed-device check, the clip format,
+levels, end of speech, no speech, road noise, and the report's contents. Not yet tried on
+a phone or in the car.
