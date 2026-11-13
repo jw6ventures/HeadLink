@@ -367,6 +367,24 @@ Incomplete from a previous run: %3$s</string>
     <string name="weather_level_label">Alerts shown from</string>
     <string name="weather_level_help">The lowest severity of alert that takes the dashboard\'s second tile and is spoken. Alerts below it still show in the weather view opened from the header.</string>
     <!-- P11.1 (docs/navigation.md, "OsmAnd maps: search and places"): Settings → OsmAnd maps. -->
+    <string name="speech_model_title">Voice input</string>
+    <string name="speech_model_caption">Voice input turns what you say into text on this phone, with a speech model file you supply. Listening through the car comes in a later version; for now you can choose the model and check it. Nothing is downloaded and nothing connects to the network.</string>
+    <string name="speech_model_choose">Choose speech model</string>
+    <string name="speech_model_choose_help">Choose a whisper.cpp model file (ggml format, usually ending in .bin). This app gets permission to read that one file, never to change it, and reads it where it is.</string>
+    <string name="speech_model_none">No speech model chosen</string>
+    <string name="speech_model_file">Speech model: %1$s</string>
+    <string name="speech_model_check">Check model</string>
+    <string name="speech_model_check_help">Loads the model and times it on 5 seconds of silence, so you can see how long a short message will take to recognise on this phone.</string>
+    <string name="speech_model_checking">Checking…</string>
+    <string name="speech_model_ready_en">%1$s model, English. Loaded in %2$s s; 5 seconds of speech takes about %3$s s.</string>
+    <string name="speech_model_ready_multi">%1$s model, multilingual; English is used. Loaded in %2$s s; 5 seconds of speech takes about %3$s s.</string>
+    <string name="speech_model_check_failed">The %1$s model loaded but could not recognise speech.</string>
+    <string name="speech_model_unreadable">That file cannot be read any more. Choose it again.</string>
+    <string name="speech_model_not_a_model">That file is not a whisper.cpp speech model this app can use. All-F32 models are not supported; use an F16 or quantized one.</string>
+    <string name="speech_model_cpu">This phone\'s processor is too old for voice input: it needs the Armv8.2 half-precision and dot-product instructions.</string>
+    <string name="speech_model_library">The speech recognizer is missing from this build.</string>
+    <string name="speech_model_remove">Remove model</string>
+    <string name="speech_model_failed">Could not keep access to that file: %1$s</string>
     <string name="osmand_maps_title">OsmAnd maps</string>
     <string name="osmand_maps_caption">Address search and map places, read from OsmAnd\'s own map files on this phone. Nothing is copied or written, and nothing connects to the network.</string>
     <string name="osmand_maps_choose">Choose folder</string>

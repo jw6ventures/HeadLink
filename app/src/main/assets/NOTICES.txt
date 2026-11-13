@@ -56,6 +56,14 @@ application includes the components below; their license texts follow.
      Copyright (c) 2019 BRouter contributors
      Includes BRouter's lookups.dat and car-vario.brf profile data, unchanged,
      under the same license. Source: https://github.com/abrensch/brouter
+   whisper.cpp 1.8.3 with ggml 0.9.5 (speech recognition, libwhisper_jni.so)  MIT
+     Copyright (c) 2023-2024 The ggml authors
+     Built unmodified from the whisper.cpp source published in the whisper-rs-sys
+     0.15.0 crate. Includes llamafile's sgemm, Copyright 2024 Mozilla Foundation,
+     and YaRN rotary embedding code, Copyright (c) 2023 Jeffrey Quesnelle and
+     Bowen Peng, both MIT. Source: https://github.com/ggml-org/whisper.cpp
+   LLVM libc++ and libc++abi (Android NDK r29), statically in libwhisper_jni.so
+                                                 Apache License 2.0 with LLVM Exceptions
    OsmAnd-java (router and .obf reader), vendored  GNU GPL v3 or later
      Copyright (C) 2010-2026 OsmAnd BV and OsmAnd contributors
      Taken from OsmAnd commit 91d9bd647032397884a218be308270b565372ed5, with

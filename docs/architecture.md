@@ -304,7 +304,8 @@ code rule) and are enforced in the build where possible, mostly by
   from the car's hands-free link, and `READ_CONTACTS` and `SEND_SMS` for texting a
   contact by name. `verify-apk.sh` allows each of these to be present or absent, and
   nothing else. Recognition is on-device only (whisper.cpp with a model file the
-  operator supplies), so no network use is added.
+  operator supplies; [audio and speech](audio-and-speech.md#speech-recognition)), so no
+  network use is added.
 
   All but `BLUETOOTH_CONNECT` are normal install-time permissions. Details are in
   [connecting.md](connecting.md).
@@ -316,10 +317,12 @@ code rule) and are enforced in the build where possible, mostly by
   tarball by `tools/openssl-build.sh` (with a fixed `SOURCE_DATE_EPOCH`) and linked into
   `libaap_jni.so`. The library may need only `libc`, `libdl`, `libm` and `liblog`, so the
   TLS behaviour does not depend on whatever the platform ships.
-- **One ABI, `arm64-v8a`.** The APK contains exactly `libaap_jni.so` and VTM's 45 KB
-  `libvtm-jni.so`, stored uncompressed and 16 KiB aligned. Gradle never runs Cargo;
-  `tools/android-build.sh` cross-builds the library and stages it in
-  `target/android-jniLibs`, and the Gradle build refuses to package without it.
+- **One ABI, `arm64-v8a`.** The APK contains exactly `libaap_jni.so`, VTM's 45 KB
+  `libvtm-jni.so`, and `libwhisper_jni.so` (voice input's whisper.cpp recognizer, about
+  2 MB, built from pinned source by `tools/whisper-build.sh`), stored uncompressed and
+  16 KiB aligned. Gradle never runs Cargo or the C++ build; `tools/android-build.sh`
+  cross-builds both libraries and stages them in `target/android-jniLibs`, and the Gradle
+  build refuses to package without them.
 - **Pinned, offline, reproducible builds.** Every toolchain is pinned (Rust, JDK, SDK,
   NDK, Gradle, AGP, Kotlin, protoc, OpenSSL) and builds run in Podman images with
   networking off; Cargo runs `--offline --locked`, and every Gradle artifact is checked

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Cross-builds the pinned OpenSSL and libaap_jni.so for arm64-v8a, packages debug and
+# Cross-builds the pinned OpenSSL, libaap_jni.so and libwhisper_jni.so for arm64-v8a, packages debug and
 # release APKs, runs lint, verifies packaging invariants, and runs the JVM-hosted JNI
 # contract test inside the pinned Android image.
 #
@@ -31,6 +31,11 @@ fi
 if [ -n "${OBF_DIR:-}" ]; then
     set -- "$@" -v "$OBF_DIR:/cache/obf:ro" -e OBF_DIR=/cache/obf
 fi
+# WHISPER_MODEL=<a whisper.cpp ggml model file> mounts it read-only so SpeechEngineTest
+# times a real model; without it that part is skipped and says so.
+if [ -n "${WHISPER_MODEL:-}" ]; then
+    set -- "$@" -v "$WHISPER_MODEL:/cache/whisper-model.bin:ro" -e WHISPER_MODEL=/cache/whisper-model.bin
+fi
 podman_run "$@" \
   -v "$CACHE_ROOT/gradle:/cache/gradle" -e GRADLE_USER_HOME=/cache/gradle \
   -v "$CACHE_ROOT/android-user:/cache/android-user" -e ANDROID_USER_HOME=/cache/android-user \
@@ -46,6 +51,9 @@ podman_run "$@" \
     rm -rf target/android-jniLibs
     mkdir -p target/android-jniLibs/arm64-v8a
     cp target/aarch64-linux-android/release/libaap_jni.so target/android-jniLibs/arm64-v8a/
+    tools/whisper-build.sh aarch64-linux-android
+    tools/whisper-build.sh x86_64-linux-gnu
+    cp target/whisper/aarch64-linux-android/libwhisper_jni.so target/android-jniLibs/arm64-v8a/
     ./gradlew --no-daemon $GRADLE_OFFLINE :app:assembleDebug :app:assembleRelease :app:lintDebug
     tools/verify-apk.sh app/build/outputs/apk/debug/app-debug.apk
     tools/verify-apk.sh app/build/outputs/apk/release/app-release-unsigned.apk

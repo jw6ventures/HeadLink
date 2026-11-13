@@ -104,6 +104,10 @@ object SessionReport {
             appendLine("[traffic]")
             appendLine(Traffic.report().trimEnd())
             appendLine()
+            // Voice input's recognizer: model size, times and outcomes; never a word (spec §2.1 as amended).
+            appendLine("[speech_input]")
+            appendLine(SpeechModel.report(context).trimEnd())
+            appendLine()
             appendLine("[native_session]")
             appendLine(SessionController.nativeReport.ifEmpty { "-" }.trimEnd())
             appendLine()

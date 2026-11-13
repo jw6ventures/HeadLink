@@ -415,6 +415,20 @@ The folder picker on the real phone has not been tried.
 | --- | --- | --- |
 | While speaking | Pause media | Lower volume is the other choice. Covers read-aloud, turn prompts and weather alerts. |
 
+**Voice input** (`SpeechModelCard`; spec §2.1 as amended 11 November 2026)
+
+Only the speech model so far: listening through the car arrives with the Bluetooth
+microphone and the voice conversation.
+
+| Control | Default | Effect |
+| --- | --- | --- |
+| Choose speech model | none | A read grant on one file, a whisper.cpp model in ggml format, picked with the system file picker and read in place. Kept apart from the maps and drop folder grants. The card names the format and nothing about where to get one. |
+| Check model | — | Loads the model and recognises 5 s of silence, then says the model's size, whether it is English-only, the load time and the 5 s time. A model loaded only for the check is let go after it. Says why when it can't: no file, unreadable, not a usable model (including all-F32 ones), a processor without Armv8.2 FP16 and dot product, or the library missing |
+| Remove model | — | Gives up the grant and frees a loaded model |
+
+See [audio and speech](audio-and-speech.md#speech-recognition). **Verified:** host tests
+(`SpeechEngineTest`) only; the picker and a real model on the phone have not been tried.
+
 **Diagnostics** (off). Shows the Diagnostics tab and adds the debug line to the
 dashboard header.
 

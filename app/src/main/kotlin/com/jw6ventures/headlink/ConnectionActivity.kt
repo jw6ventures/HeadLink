@@ -238,6 +238,7 @@ class ConnectionActivity : Activity() {
     private lateinit var searchSuggestions: SearchSuggestions
     /** P11.1: Settings → OsmAnd maps. */
     private lateinit var osmAndMapsCard: OsmAndMapsCard
+    private lateinit var speechModelCard: SpeechModelCard
     private lateinit var homeAssistantCard: HomeAssistantCard
     private lateinit var routeButton: Button
     private lateinit var clearRouteButton: Button
@@ -1073,6 +1074,15 @@ class ConnectionActivity : Activity() {
             render()
             return
         }
+        if (requestCode == REQUEST_SPEECH_MODEL) {
+            try {
+                SpeechModel.choose(this, uri)
+            } catch (e: SecurityException) {
+                Toast.makeText(this, getString(R.string.speech_model_failed, e.message ?: e.toString()), Toast.LENGTH_LONG).show()
+            }
+            speechModelCard.chosen()
+            return
+        }
         if (requestCode == REQUEST_DROP_FOLDER) {
             val message = try {
                 if (DropFolder.choose(this, uri)) null else getString(R.string.drop_folder_is_maps_folder)
@@ -1301,6 +1311,22 @@ class ConnectionActivity : Activity() {
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
+    }
+
+    /**
+     * Settings → Voice input → Choose speech model: one file, read-only ([SpeechModel.choose]).
+     * Any type, since model files carry no registered MIME type.
+     */
+    private fun chooseSpeechModel() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
+            .addCategory(Intent.CATEGORY_OPENABLE)
+            .setType("*/*")
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+        try {
+            startActivityForResult(intent, REQUEST_SPEECH_MODEL)
+        } catch (e: android.content.ActivityNotFoundException) {
+            SessionController.note("no file picker available: $e")
+        }
     }
 
     /**
@@ -1659,6 +1685,7 @@ class ConnectionActivity : Activity() {
         renderTraffic()
         renderWeather()
         osmAndMapsCard.render(AppSettings.load(this).speedUnit)
+        speechModelCard.render()
         homeAssistantCard.render()
         renderTabs()
     }
@@ -2842,6 +2869,7 @@ class ConnectionActivity : Activity() {
         }
         searchSuggestions = SearchSuggestions(this, ui, routeInput, ::searchPoint) { routeToSuggestion(it) }
         osmAndMapsCard = OsmAndMapsCard(this, ui) { chooseMapsFolder() }
+        speechModelCard = SpeechModelCard(this, ui) { chooseSpeechModel() }
         homeAssistantCard = HomeAssistantCard(this, ui)
         routeButton = button(R.string.compute_route) { computeRoute() }
         clearRouteButton = button(R.string.clear_route) {
@@ -3116,6 +3144,9 @@ class ConnectionActivity : Activity() {
                 // Stacked: "Pause media" is cut to "Pause me…" beside its label at 360 dp.
                 ui.labelled(R.string.speech_media_label, R.string.speech_media_help, speechMediaSpinner, stacked = true),
             ),
+            // Voice input's speech model (spec §2.1 as amended 11 November 2026), after the
+            // spoken output it will answer through.
+            speechModelCard.view,
             ui.card(ui.withHelp(diagnosticsCheck, R.string.diagnostics, R.string.diagnostics_help)),
         )
 
@@ -3510,6 +3541,7 @@ class ConnectionActivity : Activity() {
         private const val REQUEST_MAPS_FOLDER = 12
         private const val REQUEST_WIRELESS = 13
         private const val REQUEST_WIRELESS_LINK = 14
+        private const val REQUEST_SPEECH_MODEL = 15
         /** This screen's hold on OsmAnd's open maps ([ObfLibrary.hold]). */
         private const val MAPS_HOLDER = "screen"
 
