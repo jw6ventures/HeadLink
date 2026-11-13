@@ -322,6 +322,16 @@ RECEIVER_IMAGE=localhost/openauto-lab-receiver:p4
 # the adb-reversed local socket: WirelessLink opens TCP to the receiver on the pod loopback
 # (the emulator's 10.0.2.2) and the service runs the session over it. There is no Bluetooth
 # bootstrap and no Wi-Fi join in the emulator; this checks the transport and its cleanup.
+# The osmand script (LAB_REGION=austin) is OsmAnd routing with traffic held, the path that
+# ran out of memory on the Pixel (2026-11-13, docs/navigation.md, "Routing on OsmAnd maps").
+# The receiver runs no script of its own. The stand-in HERE server serves scenario austin, a
+# queue on I-35 north of downtown. While projecting, from the fixed fix downtown, a share to
+# the university (3 km) gives traffic a route to fetch around; traffic is turned on and the
+# jam held as no-go points; then Taylor is shared (57 km), so its search is priced and runs
+# without OsmAnd's highway hierarchy. The run passes when that route comes back, shaped by
+# traffic, and no coordinate of it or of OsmAnd's own error reached the report.
+# LAB_OSMAND_EXPECT=fail inverts the last check, for running it against a build from before
+# the fix.
 SCRIPT=${1:-$(if [ -n "${LAB_TRAFFIC:-}" ]; then echo traffic; elif [ -n "${LAB_WEATHER:-}" ]; then echo weather; else echo taps; fi)}
 # P9: which traffic run, and how the offer divides the turn card.
 TRAFFIC_MODE=${LAB_TRAFFIC:-offer}
@@ -349,6 +359,12 @@ if [ "$SCRIPT" = guidance ] || [ "$SCRIPT" = voice ]; then DEFAULT_MS=600000; fi
 if [ "$SCRIPT" = traffic ]; then
     case $TRAFFIC_MODE in offer) DEFAULT_MS=2400000 ;; render|closure) DEFAULT_MS=1200000 ;; off|drive) DEFAULT_MS=600000 ;; esac
 fi
+if [ "$SCRIPT" = osmand ]; then
+    DEFAULT_MS=600000
+    [ "${LAB_REGION:-}" = austin ] || { echo "emulator-lab: the osmand script needs LAB_REGION=austin" >&2; exit 1; }
+fi
+OSMAND_EXPECT=${LAB_OSMAND_EXPECT:-ok}
+case $OSMAND_EXPECT in ok|fail) ;; *) echo "emulator-lab: LAB_OSMAND_EXPECT is ok or fail" >&2; exit 1 ;; esac
 # P10: a few presses and holds; tap adds the 30 s timeout and a call.
 if [ "$SCRIPT" = weather ]; then
     if [ "$WEATHER_MODE" = tap ]; then DEFAULT_MS=360000; else DEFAULT_MS=240000; fi
@@ -615,7 +631,7 @@ podman run -d --pod "$pod" --name "$pod-receiver" --security-opt label=disable \
     openssl x509 -in receiver-cert.pem -noout -fingerprint -sha256 \
         | sed "s/.*=//; s/://g" | tr "A-F" "a-f" > receiver-fingerprint.txt
     /receiver/build/lab-receiver --listen 127.0.0.1:5288 --request-version 1.1 --projection \
-        --script '"$SCRIPT"' --timeout-ms '"$((PROJECTION_MS + 120000))"' --hold-ms 2000 --tolerance 24 \
+        --script '"$([ "$SCRIPT" = osmand ] && echo none || echo "$SCRIPT")"' --timeout-ms '"$((PROJECTION_MS + 120000))"' --hold-ms 2000 --tolerance 24 \
         --video-config '"${LAB_VIDEO_CONFIG:-800x480}"' \
         '"$([ "$AUDIO" = 1 ] && echo '--audio --audio-out /out/audio.pcm')"' \
         '"$([ "$NAVIGATION" = 1 ] && echo "--navigation --navigation-cluster $NAVIGATION_CLUSTER --navigation-expect $NAVIGATION_EXPECT")"' \
@@ -656,7 +672,7 @@ podman run --rm --pod "$pod" --name "$name" --security-opt label=disable \
   -e PROJECTION_MS="$PROJECTION_MS" -e SOFTWARE_ENCODER="${LAB_SOFTWARE_ENCODER:-false}" \
   -e AUDIO="$AUDIO" -e NAVIGATION="$NAVIGATION" -e NAVIGATION_FORCE="$NAVIGATION_FORCE" \
   -e NAVIGATION_CLUSTER="$NAVIGATION_CLUSTER" -e REROUTE_MODE="$REROUTE_MODE" \
-  -e LAB_SENSORS="${LAB_SENSORS:-all}" -e SCRIPT="$SCRIPT" -e ROUTE="$ROUTE" \
+  -e LAB_SENSORS="${LAB_SENSORS:-all}" -e SCRIPT="$SCRIPT" -e ROUTE="$ROUTE" -e OSMAND_EXPECT="$OSMAND_EXPECT" \
   -e DESTINATION="$DESTINATION" -e NAVIGATION_SCRIPT="$NAVIGATION_SCRIPT" \
   -e GUIDE_DEST="${LAB_GUIDE_DEST:-$(if [ "$REGION" = austin ]; then echo 30.28490,-97.73410; elif [ "$SCRIPT" = traffic ]; then echo 42.35510,-71.06560; else echo 42.44950,-71.23100; fi)}" \
   -e RD5_TILE="$RD5_TILE" -e POI_AHEAD="$POI_AHEAD" \
@@ -891,8 +907,8 @@ with zipfile.ZipFile(sys.argv[1], \"a\") as apk:
     log "adb reverse localabstract:openauto-lab -> tcp:5288"
     # P9: the stand-in HERE server, on the pod loopback the emulator reaches as 10.0.2.2. It
     # runs for the whole attempt, off included, since what it counts is every connection.
-    if [ "$SCRIPT" = traffic ]; then
-        case $TRAFFIC_MODE in closure) first=side ;; *) first=a ;; esac
+    if [ "$SCRIPT" = traffic ] || [ "$SCRIPT" = osmand ]; then
+        case $SCRIPT:$TRAFFIC_MODE in osmand:*) first=austin ;; *:closure) first=side ;; *) first=a ;; esac
         python3 tools/here-standin/here-standin.py --port 8765 --scenarios tools/here-standin/scenarios \
             --state /out/here --key "$TRAFFIC_KEY" --scenario $first > /out/here-standin.txt 2>&1 &
         standin=$!
@@ -928,7 +944,7 @@ with zipfile.ZipFile(sys.argv[1], \"a\") as apk:
             --ez lab_weather_speak true --es lab_weather_level severe") \
         ${LAB_FAVORITES:+--es lab_favorites "\"$LAB_FAVORITES\""} \
         ${LAB_RECENT:+--es lab_recent "\"$LAB_RECENT\""} \
-        $([ "$SCRIPT" = traffic ] && echo "--ez lab_traffic false \
+        $({ [ "$SCRIPT" = traffic ] || [ "$SCRIPT" = osmand ]; } && echo "--ez lab_traffic false \
             --es lab_traffic_url http://10.0.2.2:8765 --es lab_traffic_key $TRAFFIC_KEY --ei lab_traffic_refresh 5 \
             --ei lab_traffic_limit 4500 --ez lab_traffic_reset true --es lab_offer_layout $OFFER_LAYOUT") \
         --el lab_projection_ms "$PROJECTION_MS" > /out/lab-intent.txt 2>&1 || fail "lab intent"
@@ -1194,6 +1210,46 @@ https://osmand.net/map?pin=30.50860,-97.67880#16/30.50860/-97.67880"
         adb shell am start -n $package/.ConnectionActivity --ez lab_traffic "$1" > /dev/null 2>&1 || fail "lab intent: traffic $1"
     }
     standin() { sed -n "s/.*standin_$1=\([0-9]*\).*/\1/p" /out/here/stats.txt; }
+    if [ "$SCRIPT" = osmand ]; then
+        share() {
+            adb shell am start -W -a android.intent.action.VIEW -n $package/.DestinationActivity \
+                -d "\"geo:$1?z=16\"" > /out/lab-destination-$2.txt 2>&1 || fail "geo VIEW intent $2"
+        }
+        settled() { report | grep -cE "route (computed in|failed after)" || true; }
+        share 30.28490,-97.73410 university
+        wait_for "route (computed in|failed after)" 300 || fail "the trip to the university never finished"
+        computed=$(computed)
+        [ "$computed" -ge 1 ] || fail "no route to the university: $(report | grep "route failed" | tail -n 1)"
+        log "warm-up route: $(report | grep "route computed in" | tail -n 1 | sed "s/.*route computed/route computed/")"
+        traffic_switch true
+        log "traffic turned on"
+        wait_for "traffic fetched" 300 || fail "the app never fetched traffic from the stand-in: $(cat /out/here/stats.txt)"
+        wait_for "(^| )traffic_nogos=[1-9]" 120 || { snapshot held true; fail "no traffic no-go points held: $(grep -E "^traffic_" /out/app-report-held.txt | tr "\n" " ")"; }
+        snapshot held true
+        log "traffic held: $(grep -oE "traffic_(held|nogos)=[^ ]*" /out/app-report-held.txt | tr "\n" " ")"
+        before=$(settled)
+        share 30.56980,-97.40970 taylor
+        log "Taylor shared with traffic held"
+        done=
+        for _ in $(seq 420); do
+            if [ "$(settled)" -gt "$before" ]; then done=1; break; fi
+            sleep 1
+        done
+        [ -n "$done" ] || fail "the trip to Taylor neither came back nor failed in 7 minutes"
+        last=$(report | grep -E "route (computed in|failed after)" | tail -n 1 | sed "s/.*route \(computed\|failed\)/route \1/")
+        log "Taylor: $last"
+        snapshot taylor true
+        if [ "$OSMAND_EXPECT" = ok ]; then
+            echo "$last" | grep -q "^route computed" || fail "no route to Taylor: $last"
+            echo "$last" | grep -qE "traffic|nogo" || fail "the route to Taylor was not priced by traffic: $last"
+        else
+            echo "$last" | grep -q "^route failed" || fail "the build expected to fail found a route: $last"
+        fi
+        for marker in 30.5698 97.4097 30.2849 97.7341 "30\.2660" "97\.7360"; do
+            ! grep -q -- "$marker" /out/app-report-taylor.txt || fail "the report carries $marker"
+        done
+        grep -E "^routing_|^traffic_(held|nogos|requests)" /out/app-report-taylor.txt | while read -r line; do log "$line"; done
+    fi
     if [ "$SCRIPT" = focus ]; then
         # The regain taken straight back, from the app side: while the head unit keeps the
         # screen after it, the pipeline must say it is not drawing, and draw nothing. Read

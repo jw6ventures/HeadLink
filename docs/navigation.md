@@ -572,6 +572,25 @@ and Avoid motorways, Avoid toll roads and Avoid unpaved roads are its own parame
 Prefer bypassing towns and Allow tracks have no counterpart and do nothing here, which the
 switch's help text says. The starting bearing goes in as OsmAnd's initial direction.
 
+**Search mode and memory.** Every search runs in OsmAnd's COMPLEX mode: past 18 km it
+first routes over the maps' base roads, then searches the detail only within 3 km of that
+line. The plain NORMAL search explores every road out to the destination, and under the
+phone's 256 MB heap (OsmAnd's budget is a third of it, 85 MB) it ran out of memory on
+anything much past 50 km, Taylor to downtown Austin included: a traffic-priced route to
+work came back as no route while BRouter found one (2026-11-13). OsmAnd's memory error
+names the start and destination by coordinates; it becomes "out of routing memory", and
+OsmAnd's other errors lose their coordinates, because route errors reach the report.
+
+**Mixed map builds.** Each OsmAnd build of the maps (one HH edition) carries its own
+highway hierarchy, and maps downloaded at different times are different builds: the Pixel
+had three (Austin from September, Amarillo, Lubbock and San Angelo from October, the other
+seven from July). The hierarchy is used only when one build has road data at the start,
+every via and the destination (`OsmAndRouter.hierarchyCovers`). Otherwise OsmAnd picks the
+newest build near the route, fails to join it to the far end, retries every nearby start
+and only then falls back: Austin to San Antonio took 30 to 50 s on a desktop that way,
+against 1.5 s straight to the plain search. Updating every map in OsmAnd at once puts
+them back in one build.
+
 **Traffic and future knobs.** With nothing to steer round, OsmAnd's precomputed highway
 hierarchy answers in milliseconds. A request with traffic points or earlier alternatives
 uses the plain search with `PenaltyRouter`, a `GeneralRouter` whose per-step obstacle
@@ -601,8 +620,13 @@ maps](#drawing-the-map-from-osmand-maps)); dropping Mapsforge and BRouter comes 
 
 **Verified:** host tests on `ExitSignsTest`'s synthetic file (`OsmAndRoutingTest`): the
 exit with its number and signs, times, closures, jams, opened closures, the second
-alternative, a stopped search and no maps. Not yet checked against a real OsmAnd file, on
-the phone's ART, or in the car.
+alternative, a stopped search and no maps. With `OBF_DIR`, the same test under a 256 MB
+heap routes Taylor to downtown Austin with a jam, and Austin to San Antonio over two
+builds. Routes across Texas over the Pixel's own maps (2026-11-13) on the host: all
+found, COMPLEX matching the hierarchy's distance and time where both ran. Emulator lab
+(`osmand` script, 2026-11-13): with 23 traffic points held, downtown Austin to Taylor came
+back in 8 to 9 s on the debug build, 56.9 km and traffic-priced; the build from before the
+fix gave up after its 300 s limit with no route. Not yet on the Pixel or in the car.
 
 ## Drawing the map from OsmAnd maps
 

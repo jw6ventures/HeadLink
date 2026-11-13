@@ -12,8 +12,16 @@
 // route comes back as HeadLink's Route, with its exit maneuver, number and sign words from
 // the same data; a closure and a costly jam move it, a cheap jam does not, and closures with
 // no way round are opened rather than failing; alternative 1 avoids alternative 0's roads;
-// a handle stops a search; no maps is an error, not a crash. It proves nothing about real
-// maps, ART or the phone's speed.
+// a handle stops a search; no maps is an error, not a crash; OsmAnd's own errors lose their
+// coordinates before they reach a report.
+//
+// With a directory of real OsmAnd maps as the argument (OBF_DIR), run under the phone's
+// 256 MB heap (jni-host-test.sh passes -Xmx256m), it also routes over them: Taylor to
+// downtown Austin with a jam on the way, which the plain search used to give up on with
+// OsmAnd's "not enough memory" (2026-11-13, the phone's maps; docs/navigation.md, "Routing
+// on OsmAnd maps"); and, when the Austin and San Antonio maps are different OsmAnd builds,
+// that the highway hierarchy is skipped and the route still comes back. It proves nothing
+// about ART or the phone's speed.
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -62,7 +70,18 @@ public final class OsmAndRoutingTest {
         }
         noMapsIsAnError();
         theSettingsAreTheProfilesParameters();
-        System.out.println("jni-host-test: ok " + passed + " OsmAnd routing checks");
+        osmAndErrorsLoseTheirCoordinates();
+        String dir = args.length > 0 ? args[0] : "";
+        Path austin = dir.isEmpty() ? null : Path.of(dir, "Us_texas_austin_northamerica.obf");
+        if (austin == null || !Files.isRegularFile(austin)) {
+            System.out.println("jni-host-test: ok " + passed
+                + " OsmAnd routing checks (real-file checks skipped: need OBF_DIR with Us_texas_austin_northamerica.obf)");
+            return;
+        }
+        aLongPricedRouteFitsThePhonesMemory(austin);
+        Path sanAntonio = Path.of(dir, "Us_texas_san-antonio_northamerica.obf");
+        if (Files.isRegularFile(sanAntonio)) mixedBuildsSkipTheHierarchy(austin, sanAntonio);
+        System.out.println("jni-host-test: ok " + passed + " OsmAnd routing checks (with real files)");
     }
 
     private static Route route(OsmAndRouter router, RouteRequest request) throws RoutingException {
@@ -180,6 +199,61 @@ public final class OsmAndRoutingTest {
         check("true".equals(all.get("avoid_motorway")) && "true".equals(all.get("avoid_toll"))
             && "true".equals(all.get("avoid_unpaved")), "the three switches OsmAnd's car profile has: " + all);
         check(all.size() == 4, "and nothing for going round towns or allowing tracks, which it has not");
+    }
+
+    private static void osmAndErrorsLoseTheirCoordinates() {
+        String said = OsmAndRouter.placeless("There is not enough memory 30.56981, -97.40961 -> 30.26721, -97.74313 - limit  85  MB");
+        check(!said.matches(".*\\d+\\.\\d{3,}.*"), "no coordinate survives: " + said);
+        check(said.contains("not enough memory") && said.contains("85"), "the rest of the message does: " + said);
+    }
+
+    /** Taylor to downtown Austin, 58 km, with a jam in Round Rock: the plain search's route. */
+    private static void aLongPricedRouteFitsThePhonesMemory(Path austin) throws Exception {
+        check(Runtime.getRuntime().maxMemory() <= 300L * 1024 * 1024, "run under the phone's heap, not the desktop's");
+        OsmAndRouter router = new OsmAndRouter(() -> List.of(OsmAndRouter.MapFile.of(austin.toFile())));
+        try {
+            RouteRequest request = new RouteRequest(30.5698, -97.4097, 30.2672, -97.7431, null, new RouteOptions(), 0, null, null,
+                List.of(new Nogo(30.5083, -97.6789, 200, 2.0)));
+            Route route = route(router, request);
+            check(route.getDistanceM() > 50_000 && route.getDistanceM() < 70_000, "the whole way: " + route.getDistanceM() + " m");
+            check(near(route.getLatitudes()[route.getPoints() - 1], route.getLongitudes()[route.getPoints() - 1], 30.2672, -97.7431, 250),
+                "ending downtown");
+        } finally {
+            router.close();
+        }
+    }
+
+    /** Downtown Austin to downtown San Antonio over the two maps. */
+    private static void mixedBuildsSkipTheHierarchy(Path austin, Path sanAntonio) throws Exception {
+        List<OsmAndRouter.MapFile> maps = List.of(OsmAndRouter.MapFile.of(austin.toFile()), OsmAndRouter.MapFile.of(sanAntonio.toFile()));
+        java.util.Set<Long> editions = new java.util.HashSet<>();
+        List<net.osmand.binary.BinaryMapIndexReader> readers = new java.util.ArrayList<>();
+        try {
+            for (OsmAndRouter.MapFile map : maps) {
+                java.io.File file = new java.io.File(map.getPath());
+                net.osmand.binary.BinaryMapIndexReader reader =
+                    new net.osmand.binary.BinaryMapIndexReader(new java.io.RandomAccessFile(file, "r"), file);
+                readers.add(reader);
+                for (var region : reader.getHHRoutingIndexes()) if (region.profile.equals("car")) editions.add(region.edition);
+            }
+            List<net.osmand.data.LatLon> ends = List.of(new net.osmand.data.LatLon(30.2672, -97.7431), new net.osmand.data.LatLon(29.4241, -98.4936));
+            check(OsmAndRouter.hierarchyCovers(readers, ends) == (editions.size() == 1),
+                "the hierarchy only when one build covers both ends (" + editions.size() + " builds)");
+            check(OsmAndRouter.hierarchyCovers(readers, List.of(ends.get(0), new net.osmand.data.LatLon(30.5083, -97.6789))),
+                "and a trip inside one map has it");
+        } finally {
+            for (var reader : readers) reader.close();
+        }
+        OsmAndRouter router = new OsmAndRouter(() -> maps);
+        try {
+            long started = System.nanoTime();
+            Route route = route(router, new RouteRequest(30.2672, -97.7431, 29.4241, -98.4936, null, new RouteOptions(), 0, null, null, List.of()));
+            long ms = (System.nanoTime() - started) / 1_000_000;
+            check(route.getDistanceM() > 110_000 && route.getDistanceM() < 150_000, "Austin to San Antonio: " + route.getDistanceM() + " m");
+            check(editions.size() == 1 || ms < 15_000, "without the hierarchy's dead end first: " + ms + " ms");
+        } finally {
+            router.close();
+        }
     }
 
     /** Whether any point of [route] is within [metres] of the place, or any piece passes that near. */
