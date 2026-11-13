@@ -588,6 +588,37 @@ fn split_record_left_incomplete_expires() {
     );
 }
 
+#[test]
+fn output_a_head_unit_never_reads_is_capped() {
+    let (mut s, mut hu, t0) = ready_with(hu_sim::Config::default(), |c| {
+        c.hold = Duration::from_secs(60);
+        c.output_cap = 4096;
+    });
+    assert!(s.pending_output().is_empty());
+    // Pings keep coming while nothing the session queues is written.
+    for timestamp in 0..2000 {
+        let ping = encode_message(
+            ids::PING_REQUEST,
+            &aap_proto::messages::PingRequest {
+                timestamp,
+                bugreport_request: None,
+                payload: None,
+            },
+        );
+        hu.send_raw(0, false, true, ping);
+        s.receive(&hu.take_output(), t0);
+        if category(&s).is_some() {
+            break;
+        }
+    }
+    assert_eq!(category(&s), Some(Category::IoError), "{}", detail(&s));
+    assert!(
+        detail(&s).contains("the head unit stopped reading"),
+        "{}",
+        detail(&s)
+    );
+}
+
 /// Wraps a complete plaintext control message in one channel-0 frame.
 fn plain_frame(message: Vec<u8>) -> Vec<u8> {
     let mut frame = vec![0, 3];
