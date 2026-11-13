@@ -53,8 +53,11 @@
 # * OsmAndRoutingTest: OsmAnd's router (vendor/osmand) behind HeadLink's RouteEngine over
 #   ExitSignsTest's synthetic .obf - the exit maneuver with its number and signs, the times,
 #   a closure and a costly jam moving the route and a cheap one not, closures with no way
-#   round opened, the second alternative, a stopped search, no maps, and the profile's
-#   parameters. No real file, no phone.
+#   round opened, the second alternative, a stopped search, no maps, the profile's
+#   parameters, and OsmAnd's errors stripped of coordinates. OBF_DIR with
+#   Us_texas_austin_northamerica.obf adds a 58 km route with a jam under the phone's 256 MB
+#   heap (the plain search's memory failure), and with the San Antonio map from another
+#   OsmAnd build, that the hierarchy is skipped. No phone.
 # * DestinationTest: P6.4's reading of what OsmAnd and other apps share — geo: URIs,
 #   OsmAnd's message text and links, bare pairs — its refusals, and the swapped-sign hint.
 #   Written against OsmAnd's source; only a real share on the phone confirms the strings.
@@ -268,7 +271,7 @@ java -cp "$out:$classes:$stdlib" WeatherTest tools/breezy-standin/scenarios
 java -cp "$out:$classes:$stdlib" HomeAssistantTest
 java -cp "$out:$classes:$stdlib" ObfTest "${OBF_DIR:-}"
 java -cp "$out:$classes:$stdlib:$brouter" ExitSignsTest
-java -cp "$out:$classes:$stdlib:$brouter:$osmand" OsmAndRoutingTest
+java -Xmx256m -cp "$out:$classes:$stdlib:$brouter:$osmand" OsmAndRoutingTest "${OBF_DIR:-}"
 java -cp "$out:$classes:$stdlib:$vtm:$osmand" ObfMapTilesTest
 java -cp "$out:$classes:$stdlib" AddressSearchTest "${OBF_DIR:-}"
 java -cp "$out:$classes:$stdlib:$brouter" SearchAheadTest "${ROUTING_SEGMENTS:-}" "${OBF_DIR:-}"

@@ -196,27 +196,37 @@ class OsmAndRouter(
         val penalties = StepPenalty.of(nogos, options.topSpeedKmh)
         val priced = penalties != null || used != null
         if (priced) config.router = PenaltyRouter(config.router, penalties, used)
+        val from = LatLon(request.fromLat, request.fromLon)
+        val to = LatLon(request.toLat, request.toLon)
+        val via = request.viaLat?.let { listOf(LatLon(it, request.viaLon!!)) }
         val frontEnd = RoutePlannerFrontEnd()
-        if (!priced) frontEnd.setDefaultHHRoutingConfig()
-        val context = frontEnd.buildRoutingContext(config, null, readers.toTypedArray(), RoutePlannerFrontEnd.RouteCalculationMode.NORMAL)
+        if (!priced && hierarchyCovers(readers, listOf(from) + via.orEmpty() + to)) frontEnd.setDefaultHHRoutingConfig()
+        // COMPLEX: past 18 km OsmAnd first routes over the maps' base roads and then searches
+        // the detail only within 3 km of that line. NORMAL searches every road out to the
+        // destination, and on the phone's 85 MB budget a 100 km plain search (traffic, an
+        // alternative, or a hierarchy that cannot help) ran out of memory: no route at all.
+        val context = frontEnd.buildRoutingContext(config, null, readers.toTypedArray(), RoutePlannerFrontEnd.RouteCalculationMode.COMPLEX)
         context.leftSideNavigation = false
         val progress = RouteCalculationProgress()
         context.calculationProgress = progress
         started(SearchHandle { progress.isCancelled = true })
         val timer = TIMER.schedule({ progress.isCancelled = true }, maxRunningMs, TimeUnit.MILLISECONDS)
-        val via = request.viaLat?.let { listOf(LatLon(it, request.viaLon!!)) }
         val result = try {
-            frontEnd.searchRoute(context, LatLon(request.fromLat, request.fromLon), LatLon(request.toLat, request.toLon), via)
+            frontEnd.searchRoute(context, from, to, via)
         } catch (e: InterruptedException) {
             Thread.currentThread().interrupt()
             throw RoutingException("routing interrupted", true)
         } catch (e: IOException) {
             throw RoutingException("map read failed: ${e.message}")
+        } catch (e: RuntimeException) {
+            // OsmAnd's memory guard throws IllegalStateException, and its message carries the
+            // start and destination. Only the kind goes on: route errors reach the report.
+            throw RoutingException(if (e is IllegalStateException) "out of routing memory" else "routing failed: ${e.javaClass.simpleName}")
         } finally {
             timer.cancel(false)
         }
         if (progress.isCancelled) throw RoutingException(if (progress.memoryLimitExceeded) "out of routing memory" else "routing stopped", true)
-        if (result == null || !result.isCorrect) throw RoutingException(result?.error ?: "no route found")
+        if (result == null || !result.isCorrect) throw RoutingException(result?.error?.let(::placeless) ?: "no route found")
         lastSegments = result.list
         return toRoute(result.list, options, request)
     }
@@ -229,6 +239,45 @@ class OsmAndRouter(
          * reaching it, metres: about how far BRouter will look for a road from a waypoint.
          */
         const val END_SNAP_M = 250.0
+
+        /**
+         * Whether OsmAnd's highway hierarchy can carry a route through [points]: some one
+         * build of the maps (one HH edition) has road data at every point. Each build's
+         * hierarchy is its own network, and maps downloaded at different times are
+         * different builds. With none covering every point, OsmAnd still picks the newest
+         * build near the route, fails to join it to the far end, retries every nearby
+         * start, and only then falls back to the plain search: 30 to 50 s wasted on a
+         * desktop for Austin to San Antonio over July and September maps, several times
+         * that on the phone. Asked here, the answer costs a few index reads.
+         */
+        @JvmStatic
+        fun hierarchyCovers(readers: List<BinaryMapIndexReader>, points: List<LatLon>): Boolean {
+            val builds = HashMap<Long, MutableList<BinaryMapIndexReader>>()
+            for (reader in readers) {
+                for (region in reader.hhRoutingIndexes) {
+                    if (region.profile == PROFILE) builds.getOrPut(region.edition) { ArrayList() } += reader
+                }
+            }
+            return try {
+                builds.values.any { build ->
+                    points.all { point ->
+                        val x = MapUtils.get31TileNumberX(point.longitude)
+                        val y = MapUtils.get31TileNumberY(point.latitude)
+                        build.any { it.containsActualRouteData(x, y, HashSet()) }
+                    }
+                }
+            } catch (e: IOException) {
+                // Unreadable here, so the plain search, which needs no hierarchy.
+                false
+            }
+        }
+
+        /**
+         * [error] without coordinates. OsmAnd's own messages name the start and the
+         * destination by latitude and longitude, and route errors reach the saved report.
+         */
+        @JvmStatic
+        fun placeless(error: String): String = error.replace(Regex("-?\\d{1,3}\\.\\d{3,}"), "#")
 
         private fun endsNear(route: Route, request: RouteRequest): Boolean {
             val last = route.points - 1
