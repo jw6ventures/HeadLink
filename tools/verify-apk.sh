@@ -14,9 +14,9 @@ line "minSdkVersion:'33'"
 line "targetSdkVersion:'36'"
 line "native-code: 'arm64-v8a'"
 # The spec §5.2 baseline plus P5.5's four optional dashboard grants. Still notably no
-# microphone, and Bluetooth only for W0 below. Each addition here is a deliberate,
-# separately optional integration that degrades without its grant (APP09); this list is
-# the guard that makes adding another a visible act.
+# microphone unless voice input below adds it, and Bluetooth only for W0 below. Each
+# addition here is a deliberate, separately optional integration that degrades without
+# its grant (APP09); this list is the guard that makes adding another a visible act.
 # P7.9 adds MANAGE_ONGOING_CALLS (signature|appop; docs/dashboard.md,
 # "Calls and the keypad"). Declaring it grants nothing: it takes effect only after
 # `adb shell appops set com.jw6ventures.headlink MANAGE_ONGOING_CALLS allow`, and even
@@ -50,9 +50,36 @@ line "native-code: 'arm64-v8a'"
 # Standby adds WAKE_LOCK (normal; spec §5.2, the standby amendment): held only while the
 # linked truck's own start request sets up (at most 90 s), and 5 s per Bluetooth frame from
 # the truck while waiting for one.
+# Voice input (spec §2.1, §5.2 as amended 11 November 2026) permits five more, which its
+# feature streams add to the manifest one by one with their code, so each may be present
+# or absent here; nothing else may:
+#   RECORD_AUDIO (dangerous): push-to-talk capture from the car's hands-free link only.
+#   MODIFY_AUDIO_SETTINGS (normal): routing capture to that link while listening.
+#   FOREGROUND_SERVICE_MICROPHONE (normal): the microphone type on ProjectionService.
+#   READ_CONTACTS (dangerous): names and numbers for "Text John", memory only.
+#   SEND_SMS (dangerous): one confirmed text. No READ_SMS, RECEIVE_SMS or MMS permission.
+voice_permissions="android.permission.FOREGROUND_SERVICE_MICROPHONE android.permission.MODIFY_AUDIO_SETTINGS android.permission.READ_CONTACTS android.permission.RECORD_AUDIO android.permission.SEND_SMS"
+has_permission() { printf '%s\n' "$badging" | grep -q "^uses-permission: name='$1'"; }
 permissions=$(printf '%s\n' "$badging" | sed -n "s/^uses-permission: name='\([^']*\)'.*/\1/p" | LC_ALL=C sort | tr '\n' ' ')
+for voice in $voice_permissions; do
+    permissions=$(printf '%s' "$permissions" | sed "s/$voice //")
+done
 [ "$permissions" = "android.permission.ACCESS_COARSE_LOCATION android.permission.ACCESS_FINE_LOCATION android.permission.ACCESS_NETWORK_STATE android.permission.BLUETOOTH_CONNECT android.permission.CHANGE_NETWORK_STATE android.permission.FOREGROUND_SERVICE android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE android.permission.FOREGROUND_SERVICE_LOCATION android.permission.INTERNET android.permission.MANAGE_ONGOING_CALLS android.permission.POST_NOTIFICATIONS android.permission.READ_PHONE_STATE android.permission.REQUEST_COMPANION_START_FOREGROUND_SERVICES_FROM_BACKGROUND android.permission.REQUEST_OBSERVE_COMPANION_DEVICE_PRESENCE android.permission.WAKE_LOCK org.breezyweather.READ_PROVIDER " ] \
     || fail "unexpected permission set: $permissions"
+# The microphone's foreground type needs the microphone itself.
+if has_permission android.permission.FOREGROUND_SERVICE_MICROPHONE && ! has_permission android.permission.RECORD_AUDIO; then
+    fail "FOREGROUND_SERVICE_MICROPHONE without RECORD_AUDIO"
+fi
+# RECORD_AUDIO and SEND_SMS imply required microphone and telephony features, which would
+# stop the app installing on a phone without them; the manifest must mark both optional.
+if has_permission android.permission.RECORD_AUDIO \
+    && printf '%s\n' "$badging" | grep -q "^ *uses-feature: name='android.hardware.microphone'"; then
+    fail "android.hardware.microphone must be declared required=false"
+fi
+if has_permission android.permission.SEND_SMS \
+    && printf '%s\n' "$badging" | grep -q "^ *uses-feature: name='android.hardware.telephony'"; then
+    fail "android.hardware.telephony must be declared required=false"
+fi
 # One launcher entry, the main screen. The probe is reached from Diagnostics alone.
 [ "$(printf '%s\n' "$badging" | grep -c '^launchable-activity:')" = 1 ] || fail "launcher entry count"
 printf '%s\n' "$badging" | grep -q "^launchable-activity: name='com.jw6ventures.headlink.ConnectionActivity'" \
@@ -102,8 +129,14 @@ projection=$(printf '%s\n' "$services" | grep '"com.jw6ventures.headlink.Project
 printf '%s\n' "$projection" | grep -q ':exported([^)]*)=false\( \|$\)' || fail "ProjectionService must not be exported"
 # connectedDevice (0x10) plus location (0x08), so the phone-location fallback keeps
 # working with the screen off; the service adds location only while it is granted.
-printf '%s\n' "$projection" | grep -q ':foregroundServiceType([^)]*)=0x00000018' \
-    || fail "ProjectionService foregroundServiceType must be connectedDevice|location"
+# With voice input's FOREGROUND_SERVICE_MICROPHONE, microphone (0x80) too, and only then.
+if has_permission android.permission.FOREGROUND_SERVICE_MICROPHONE; then
+    printf '%s\n' "$projection" | grep -q ':foregroundServiceType([^)]*)=0x00000098' \
+        || fail "ProjectionService foregroundServiceType must be connectedDevice|location|microphone"
+else
+    printf '%s\n' "$projection" | grep -q ':foregroundServiceType([^)]*)=0x00000018' \
+        || fail "ProjectionService foregroundServiceType must be connectedDevice|location"
+fi
 
 # W2/W3: the foreground while a wireless link sets up. Unexported, connectedDevice only.
 linking=$(printf '%s\n' "$services" | grep '"com.jw6ventures.headlink.WirelessLinkService"') \

@@ -430,6 +430,8 @@ destination or speed. The event log says only "notification read aloud" or "voic
 - **Synthesis to PCM played through HeadLink's own `AudioTrack`** pinned to the A2DP
   device. This is the fallback if default routing ever misbehaves, and it would be the
   first half of speech-channel work. Not needed so far.
-- **Voice input.** No microphone and no `RECORD_AUDIO` permission. The head unit's
-  `av_input` microphone channel is not opened. A voice assistant is deferred
-  (spec.md §2.1).
+- **Voice input.** No microphone and no `RECORD_AUDIO` permission yet. The head unit's
+  `av_input` microphone channel is not opened. Spec.md §2.1, §5.2 and §8.1 were amended
+  on 11 November 2026 to allow push-to-talk voice input through the car's Bluetooth
+  hands-free microphone, recognized on the phone, for texting a contact, replying to a
+  message notification and saying a destination; it is not built yet.
