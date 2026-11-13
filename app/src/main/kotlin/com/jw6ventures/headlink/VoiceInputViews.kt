@@ -64,8 +64,8 @@ object MicTestText {
 }
 
 /**
- * Settings → Voice input: the switch, which asks for Microphone when turned on, and
- * **Test car microphone**, which listens once through the car's hands-free link, as a
+ * Settings → Voice input: the switch, which asks for Microphone when turned on, the speech
+ * model rows ([SpeechModelRows]), and **Test car microphone**, which listens once through the car's hands-free link, as a
  * push-to-talk press will, and says what it heard in numbers. The audio is dropped as
  * soon as the numbers are taken; nothing is played back, saved or reported.
  */
@@ -73,6 +73,7 @@ class VoiceInputCard(
     private val activity: Activity,
     private val ui: PhoneViews,
     private val requestMicrophone: () -> Unit,
+    private val model: SpeechModelRows,
 ) {
     private val enabledSwitch = Switch(activity).apply {
         setText(R.string.voice_input_switch)
@@ -96,6 +97,7 @@ class VoiceInputCard(
         ui.caption().apply { setText(R.string.voice_input_caption) },
         ui.withHelp(enabledSwitch, R.string.voice_input_switch, R.string.voice_input_switch_help),
         statusText,
+        model.view,
         testRow,
         testText,
     )
@@ -129,7 +131,9 @@ class VoiceInputCard(
         statusText.visibility = if (on) View.VISIBLE else View.GONE
         testRow.visibility = if (on) View.VISIBLE else View.GONE
         testText.visibility = if (on) View.VISIBLE else View.GONE
+        model.view.visibility = if (on) View.VISIBLE else View.GONE
         if (!on) return
+        model.render()
         statusText.text = when {
             !permitted() -> activity.getString(R.string.mic_fail_permission)
             BluetoothMic.available(activity) -> activity.getString(R.string.voice_input_car_mic_ready)

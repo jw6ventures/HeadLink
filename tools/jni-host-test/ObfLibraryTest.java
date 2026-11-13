@@ -71,6 +71,9 @@ public final class ObfLibraryTest {
         check(r.isDropGrant(true, true) && !r.isMapsGrant(true, true), "read+write is the drop folder");
         check(r.isMapsGrant(true, false) && !r.isDropGrant(true, false), "read-only is the maps folder");
         check(!r.isMapsGrant(false, true) && !r.isDropGrant(false, true), "write-only is neither");
+        check(!r.isMapsGrant(true, false, false) && !r.isDropGrant(true, true, false), "a single file is never a folder");
+        check(r.isSpeechModelGrant(true, false), "a read grant on one file is the speech model");
+        check(!r.isSpeechModelGrant(true, true), "a folder is never the speech model");
     }
 
     private static void theStatusLineSaysWhatThePlanSays() {

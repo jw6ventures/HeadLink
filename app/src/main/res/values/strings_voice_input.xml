@@ -3,7 +3,7 @@
      and the car microphone test. -->
 <resources>
     <string name="voice_input_title">Voice input</string>
-    <string name="voice_input_caption">Speak through your car\'s hands-free microphone after pressing a button. Not finished yet: for now this only tests the microphone.</string>
+    <string name="voice_input_caption">Speak through your car\'s hands-free microphone after pressing a button, turned into text on this phone with a speech model file you supply. Not finished yet: for now you can choose and check the model and test the microphone. Nothing is downloaded.</string>
     <string name="voice_input_switch">Voice input</string>
     <string name="voice_input_switch_help">Listens through your car\'s hands-free microphone, the one calls use, only after you press a voice button, and stops when you finish speaking. Needs the Microphone permission, which is asked for when you turn this on. The phone\'s own microphone is never used: if the car\'s microphone is not connected, voice input says so and does not listen. Speech will be turned into text on the phone, with a speech model file you supply; nothing uses the network. Audio is held in memory only until it is turned into text, and is never saved or reported. Off, the app holds no microphone.</string>
     <string name="voice_input_car_mic_ready">Car microphone connected.</string>

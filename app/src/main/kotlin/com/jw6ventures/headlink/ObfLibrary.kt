@@ -114,11 +114,18 @@ object ObfRules {
     /**
      * Which persisted grant is which: the drop folder's reads and writes, the
      * maps folder's only reads. Each folder's choice gives up only earlier grants of its
-     * own kind, so choosing one never drops the other.
+     * own kind, so choosing one never drops the other. Both are folder (tree) grants; the
+     * speech model's read grant is on a single file ([isSpeechModelGrant]), so neither
+     * folder's choice touches it.
      */
-    fun isDropGrant(read: Boolean, write: Boolean): Boolean = read && write
+    @JvmOverloads
+    fun isDropGrant(read: Boolean, write: Boolean, tree: Boolean = true): Boolean = tree && read && write
 
-    fun isMapsGrant(read: Boolean, write: Boolean): Boolean = read && !write
+    @JvmOverloads
+    fun isMapsGrant(read: Boolean, write: Boolean, tree: Boolean = true): Boolean = tree && read && !write
+
+    /** The speech model file (Settings → Voice input): a read grant on one document, not a folder. */
+    fun isSpeechModelGrant(read: Boolean, tree: Boolean): Boolean = !tree && read
 
     /** How long a listing is trusted before [ObfLibrary.sources] looks at the folder again. */
     const val RELIST_MS = 15_000L
@@ -190,7 +197,7 @@ object ObfLibrary {
     /** The granted maps folder: a persisted grant to read that does not also write. */
     fun folder(context: Context): Uri? =
         context.contentResolver.persistedUriPermissions
-            .firstOrNull { ObfRules.isMapsGrant(it.isReadPermission, it.isWritePermission) }
+            .firstOrNull { ObfRules.isMapsGrant(it.isReadPermission, it.isWritePermission, DocumentsContract.isTreeUri(it.uri)) }
             ?.uri
 
     /** Whether OsmAnd's maps have somewhere to come from: a chosen folder, or (debug) lab files. */
@@ -207,9 +214,9 @@ object ObfLibrary {
         val app = context.applicationContext
         val resolver = app.contentResolver
         val grants = resolver.persistedUriPermissions
-        if (grants.any { it.uri == tree && ObfRules.isDropGrant(it.isReadPermission, it.isWritePermission) }) return false
+        if (grants.any { it.uri == tree && ObfRules.isDropGrant(it.isReadPermission, it.isWritePermission, DocumentsContract.isTreeUri(it.uri)) }) return false
         grants
-            .filter { it.uri != tree && ObfRules.isMapsGrant(it.isReadPermission, it.isWritePermission) }
+            .filter { it.uri != tree && ObfRules.isMapsGrant(it.isReadPermission, it.isWritePermission, DocumentsContract.isTreeUri(it.uri)) }
             .forEach { resolver.releasePersistableUriPermission(it.uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
         resolver.takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION)
         SessionController.note("maps folder chosen")

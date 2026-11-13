@@ -76,8 +76,10 @@ adding `metadata/com.jw6ventures.headlink.yml`. Not done yet:
   the recipe has to install Rust 1.85.1 with the `aarch64-linux-android` target (via the
   rustup srclib), fetch and checksum the OpenSSL 3.5.8 tarball, run
   `tools/openssl-build.sh` (which currently expects the tarball at `/cache/sources`),
-  `cargo build -p aap-jni`, stage `target/android-jniLibs`, then let Gradle build
-  `:app:assembleRelease`. Needs NDK 29.0.14206865.
+  `cargo build -p aap-jni`, fetch the `whisper-rs-sys` 0.15.0 crate and run
+  `tools/whisper-build.sh aarch64-linux-android` (same `/cache/sources` expectation),
+  stage `target/android-jniLibs`, then let Gradle build `:app:assembleRelease`. Needs NDK
+  29.0.14206865.
 - **Reproducible builds, if the APK should carry our signature.** With
   `Binaries:` and `AllowedAPKSigningKeys:` in the recipe, F-Droid builds the unsigned APK,
   compares it with our signed release, and ships ours if they match; otherwise it signs

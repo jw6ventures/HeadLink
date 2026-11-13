@@ -79,14 +79,17 @@ Then, with networking disabled:
 ```sh
 ./tools/check.sh          # host OpenSSL build, rustfmt, Clippy -D warnings, tests,
                           # release build, generated protobuf code check
-./tools/android-build.sh  # host and arm64 OpenSSL, Android Clippy, .so, debug/release
-                          # APKs, lint, APK checks, and the JVM host tests (-Xcheck:jni)
+./tools/android-build.sh  # host and arm64 OpenSSL, Android Clippy, .so, whisper.cpp
+                          # (host and arm64), debug/release APKs, lint, APK checks,
+                          # and the JVM host tests (-Xcheck:jni)
 ./tools/proto-gen.sh      # only after changing the vendored schemas or generator
 ```
 
 OpenSSL is built from the pinned tarball into `target/openssl/<target>` and linked
 statically (`tools/openssl-build.sh`, `tools/openssl-env.sh`); no system OpenSSL is
-used. Building the Android image accepts the Android SDK License. Pinned versions and
+used. whisper.cpp, voice input's recognizer, is built the same way from a checksummed
+archive into `target/whisper/<target>` (`tools/whisper-build.sh`). Building the Android
+image accepts the Android SDK License. Pinned versions and
 checksums are listed in [licenses](licenses.md). APKs are written to
 `app/build/outputs/apk/`. Signed releases are built by CI from a version tag; see
 [releases](release.md). The debug APK is signed with a local debug key kept in the

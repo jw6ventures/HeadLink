@@ -206,21 +206,22 @@ filter=$(aapt2 dump xmltree --file "$filter_path" "$apk")
 printf '%s\n' "$filter" | grep -q 'manufacturer="Android"' || fail "accessory filter manufacturer"
 printf '%s\n' "$filter" | grep -q 'model="Android Auto"' || fail "accessory filter model"
 
-# Two native libraries now: this project's own, and VTM's 45 KB tessellator (P5.5).
-# Listed exactly, so a renderer that starts dragging further ABIs or .so files in is a
-# build failure rather than a silent APK growth.
-[ "$(unzip -Z1 "$apk" | grep '^lib/' | LC_ALL=C sort | tr '\n' ' ')" = "lib/arm64-v8a/libaap_jni.so lib/arm64-v8a/libvtm-jni.so " ] \
+# Three native libraries now: this project's own, VTM's 45 KB tessellator (P5.5), and
+# voice input's whisper.cpp recognizer (spec §2.1 as amended 11 November 2026). Listed
+# exactly, so a renderer that starts dragging further ABIs or .so files in is a build
+# failure rather than a silent APK growth.
+[ "$(unzip -Z1 "$apk" | grep '^lib/' | LC_ALL=C sort | tr '\n' ' ')" = "lib/arm64-v8a/libaap_jni.so lib/arm64-v8a/libvtm-jni.so lib/arm64-v8a/libwhisper_jni.so " ] \
     || fail "native library set: $(unzip -Z1 "$apk" | grep '^lib/' | tr '\n' ' ')"
 notices=$(unzip -p "$apk" assets/NOTICES.txt)
 printf '%s\n' "$notices" | grep -q '^   OpenSSL 3.5.8' || fail "third-party notices asset"
 # Every component's license text must travel with the APK, not only its name.
 for heading in '^   BRouter ' '^MIT License' '^Apache License 2.0' '^SGI Free Software License B 2.0' \
     '^GNU Lesser General Public License 3.0' '^GNU General Public License 3.0' \
-    '^   OsmAnd-java ' '^GNU Lesser General Public License 2.1' 'Version 2.1, February 1999' \
+    '^   OsmAnd-java ' '^   whisper.cpp 1.8.3 ' '^GNU Lesser General Public License 2.1' 'Version 2.1, February 1999' \
     'GNU LESSER GENERAL PUBLIC LICENSE' 'END OF TERMS AND CONDITIONS'; do
     printf '%s\n' "$notices" | grep -q -- "$heading" || fail "third-party notices: $heading"
 done
-for library in libaap_jni.so libvtm-jni.so; do
+for library in libaap_jni.so libvtm-jni.so libwhisper_jni.so; do
     unzip -v "$apk" "lib/arm64-v8a/$library" | grep -q ' Stored ' || fail "library is compressed: $library"
 done
 zipalign -c -P 16 4 "$apk" || fail "zip alignment"
@@ -245,6 +246,28 @@ if llvm-readelf --program-headers "$so" | awk '$1 == "LOAD" { print $NF }' | gre
     fail "LOAD segments not 16 KiB aligned"
 fi
 grep -a -q 'OpenSSL 3\.5\.8 ' "$so" || fail "pinned OpenSSL 3.5.8 version text not in the library"
+# whisper.cpp: libc++ linked in (no libc++_shared.so), nothing but the platform's C
+# libraries needed, only WhisperNative's JNI functions exported, 16 KiB pages, and the
+# pinned version (tools/whisper-build.sh).
+whisper=$work/lib/arm64-v8a/libwhisper_jni.so
+llvm-readelf --file-header "$whisper" | grep -q 'Machine:.*AArch64' || fail "whisper ELF machine"
+whisper_needed=$(llvm-readelf --dynamic-table "$whisper" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p' | tr '\n' ' ')
+for lib in $whisper_needed; do
+    case $lib in
+        libc.so | libdl.so | libm.so) ;;
+        *) fail "unexpected NEEDED $lib in libwhisper_jni.so" ;;
+    esac
+done
+whisper_exports=$(llvm-nm -D --defined-only "$whisper" | awk '$2 == "T" { print $3 }' | LC_ALL=C sort | tr '\n' ' ')
+[ "$whisper_exports" = "Java_com_jw6ventures_headlink_WhisperNative_nativeCancel \
+Java_com_jw6ventures_headlink_WhisperNative_nativeDescribe Java_com_jw6ventures_headlink_WhisperNative_nativeFree \
+Java_com_jw6ventures_headlink_WhisperNative_nativeLoad Java_com_jw6ventures_headlink_WhisperNative_nativeQuiet \
+Java_com_jw6ventures_headlink_WhisperNative_nativeTranscribe Java_com_jw6ventures_headlink_WhisperNative_nativeVersion " ] \
+    || fail "unexpected whisper exports: $whisper_exports"
+if llvm-readelf --program-headers "$whisper" | awk '$1 == "LOAD" { print $NF }' | grep -qvx 0x4000; then
+    fail "libwhisper_jni.so LOAD segments not 16 KiB aligned"
+fi
+grep -a -q '1\.8\.3' "$whisper" || fail "pinned whisper.cpp 1.8.3 version text not in the library"
 if cat "$work"/classes*.dex | grep -a -q -e 'com/google/android/gms' -e 'gearhead'; then
     fail "Google Play services or gearhead reference in dex"
 fi
@@ -253,4 +276,4 @@ case $apk in
     *) signer=$(apksigner verify --print-certs "$apk" | sed -n 's/^Signer #1 certificate DN: //p')
        [ -n "$signer" ] || fail "signature" ;;
 esac
-echo "verify-apk: ok $(basename "$apk") needed=[${needed% }] signer=[$signer]"
+echo "verify-apk: ok $(basename "$apk") needed=[${needed% }] whisper_needed=[${whisper_needed% }] signer=[$signer]"

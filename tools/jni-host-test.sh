@@ -197,6 +197,13 @@
 # * WirelessStandbyTest: wireless standby's rules - the start reasons, which start requests
 #   start projection, the automatic-start loop guard and the reconnect pacing. The held
 #   RFCOMM link, the truck's button and the wake lock need a phone and the truck.
+# * RecognizerTest (-Xcheck:jni): voice input's recognizer, the release Kotlin WhisperEngine
+#   over a host x86_64 build of libwhisper_jni (tools/whisper-build.sh) - a small model in
+#   whisper.cpp's real format, written by the test, that says one word; refusals of files that
+#   are not models, cut short, all-F32 or hollow; audio too short or long; prompt, cancel,
+#   close and reload; text cleaning, the CPU feature check and the report's counts.
+#   WHISPER_MODEL=<a ggml model file> adds its load time and 5 s of silence; without it the
+#   summary line says so. The model file grant and the arm64 build need a phone.
 # LabDrive.java and LabTraffic.java are compiled here but not run: they are generators run
 # by hand, the second writing the P9 lab's stand-in HERE scenarios and traffic drive
 # (tools/here-standin/, docs/verification.md).
@@ -270,6 +277,17 @@ java -cp "$out:$classes:$stdlib" WirelessBootstrapTest
 java -cp "$out:$classes:$stdlib" WirelessAutoStartTest
 java -cp "$out:$classes:$stdlib" WirelessKeepAwakeTest
 java -cp "$out:$classes:$stdlib" WirelessStandbyTest
+# The x86_64 libwhisper_jni.so from tools/whisper-build.sh; --add-opens reads a descriptor's
+# number as Android's ParcelFileDescriptor.getFd() gives it.
+status=0
+java -Xcheck:jni --add-opens java.base/java.io=ALL-UNNAMED -Djava.library.path=target/whisper/x86_64-linux-gnu \
+    -cp "$out:$classes:$stdlib" RecognizerTest "${WHISPER_MODEL:-}" > "$out/speech.txt" 2>&1 || status=$?
+if [ "$status" != 0 ] || grep -E 'WARNING in native method|FATAL ERROR' "$out/speech.txt"; then
+    cat "$out/speech.txt"
+    echo "jni-host-test: speech recognizer failed (exit $status)" >&2
+    exit 1
+fi
+grep '^jni-host-test:' "$out/speech.txt"
 status=0
 java -Xcheck:jni --add-opens java.base/sun.nio.ch=ALL-UNNAMED -Djava.library.path=target/release \
     -cp "$out:$classes:$stdlib" JniContractTest > "$out/output.txt" 2>&1 || status=$?

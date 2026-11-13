@@ -2,10 +2,14 @@ plugins {
     alias(libs.plugins.android.application)
 }
 
-// Staged by tools/android-build.sh from the Rust aarch64-linux-android build.
+// Staged by tools/android-build.sh from the Rust and whisper.cpp aarch64-linux-android builds.
 // Gradle never invokes Cargo, and refuses to package an APK without the library.
 val rustJniLibs: File = rootProject.file("target/android-jniLibs")
-val requiredNativeLibrary: File = rustJniLibs.resolve("arm64-v8a/libaap_jni.so")
+val requiredNativeLibraries: List<File> = listOf(
+    rustJniLibs.resolve("arm64-v8a/libaap_jni.so"),
+    // Voice input's recognizer, whisper.cpp, staged by the same script (tools/whisper-build.sh).
+    rustJniLibs.resolve("arm64-v8a/libwhisper_jni.so"),
+)
 
 android {
     namespace = "com.jw6ventures.headlink"
@@ -97,9 +101,9 @@ dependencies {
 }
 
 val checkRustJniLibs = tasks.register("checkRustJniLibs") {
-    val library = requiredNativeLibrary
+    val libraries = requiredNativeLibraries
     doLast {
-        check(library.isFile) { "Missing $library; build with tools/android-build.sh" }
+        libraries.forEach { check(it.isFile) { "Missing $it; build with tools/android-build.sh" } }
     }
 }
 tasks.named("preBuild") {
