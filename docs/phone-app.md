@@ -428,7 +428,7 @@ switch is on. The microphone is described in [audio and speech](audio-and-speech
 | Remove model | — | Gives up the grant and frees a loaded model |
 
 See [audio and speech](audio-and-speech.md#speech-recognition). **Verified:** host tests
-(`SpeechEngineTest`) only; the picker and a real model on the phone have not been tried.
+(`RecognizerTest`) only; the picker and a real model on the phone have not been tried.
 
 **Diagnostics** (off). Shows the Diagnostics tab and adds the debug line to the
 dashboard header.

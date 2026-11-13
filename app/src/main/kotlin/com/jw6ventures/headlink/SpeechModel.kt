@@ -22,12 +22,12 @@ import kotlin.concurrent.thread
  */
 object SpeechModel {
     sealed class Loaded {
-        data class Ready(val engine: SpeechEngine, val loadMs: Long) : Loaded()
+        data class Ready(val engine: Recognizer, val loadMs: Long) : Loaded()
         data class Unavailable(val problem: SpeechProblem) : Loaded()
     }
 
     private val lock = Object()
-    private var engine: SpeechEngine? = null
+    private var engine: Recognizer? = null
     private var engineUri: Uri? = null
 
     /** Report counters: no words, no names, no audio (spec §10). */
@@ -136,7 +136,7 @@ object SpeechModel {
         val loaded = engine(context)
         if (loaded !is Loaded.Ready) return SpeechCheck.Unavailable((loaded as Loaded.Unavailable).problem)
         try {
-            val silence = ShortArray(CHECK_SECONDS * SpeechEngine.SAMPLE_RATE)
+            val silence = ShortArray(CHECK_SECONDS * Recognizer.SAMPLE_RATE)
             val elapsed = when (val outcome = loaded.engine.transcribe(silence)) {
                 is Transcript.Text -> outcome.elapsedMs
                 is Transcript.Silence -> outcome.elapsedMs
@@ -175,7 +175,7 @@ sealed class SpeechCheck {
 }
 
 /** Counts every transcription for the report, and nothing else. */
-private class CountingEngine(private val inner: SpeechEngine, private val stats: SpeechStats) : SpeechEngine by inner {
+private class CountingEngine(private val inner: Recognizer, private val stats: SpeechStats) : Recognizer by inner {
     override fun transcribe(samples: ShortArray, count: Int, prompt: String?): Transcript =
         inner.transcribe(samples, count, prompt).also(stats::record)
 }

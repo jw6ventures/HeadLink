@@ -493,8 +493,8 @@ an option: not Android's `SpeechRecognizer`, not Google's.
 
 | Piece | Code |
 | --- | --- |
-| The engine interface the microphone side feeds, and its results | `SpeechEngine.kt` (`SpeechEngine`, `Transcript`, `SpeechText`, `SpeechStats`) |
-| whisper.cpp behind it | `WhisperEngine` in `SpeechEngine.kt`, `WhisperNative.kt`, `app/src/main/cpp/whisper_jni.cpp` |
+| The engine interface the microphone side feeds, and its results | `Recognizer.kt` (`Recognizer`, `Transcript`, `SpeechText`, `SpeechStats`) |
+| whisper.cpp behind it | `WhisperEngine` in `Recognizer.kt`, `WhisperNative.kt`, `app/src/main/cpp/whisper_jni.cpp` |
 | The model file, loading, Check model, the report line | `SpeechModel.kt` |
 | Settings → Voice input's model rows, inside `VoiceInputCard` | `SpeechModelViews.kt` (`SpeechModelRows`) |
 | The native build | `tools/whisper-build.sh`, run by `tools/android-build.sh` |
@@ -502,7 +502,7 @@ an option: not Android's `SpeechRecognizer`, not Google's.
 ### What goes in, what comes out
 
 The microphone side hands over **one whole utterance** at a time: 16 kHz, mono, 16-bit
-signed PCM in a `ShortArray`, held in memory. `SpeechEngine.transcribe(samples, count,
+signed PCM in a `ShortArray`, held in memory. `Recognizer.transcribe(samples, count,
 prompt)` blocks (call it off the main thread) and returns:
 
 - `Text`: the words, cleaned of Whisper's sound tags (`[BLANK_AUDIO]`, `(music)`,
@@ -584,7 +584,7 @@ total and slowest recognition times. Never a word, a name or a sample.
 
 ### Testing and verified state
 
-- **Host test** (`SpeechEngineTest`, `tools/jni-host-test.sh`, `-Xcheck:jni`): the release
+- **Host test** (`RecognizerTest`, `tools/jni-host-test.sh`, `-Xcheck:jni`): the release
   Kotlin classes over the x86_64 library. No real model is in the repository, so the test
   writes one: whisper.cpp's real file format and tensor set at tiny widths, with weights
   that make the decoder say one word whatever it hears and then stop. That runs the whole

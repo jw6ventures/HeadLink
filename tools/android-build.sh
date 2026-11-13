@@ -31,7 +31,7 @@ fi
 if [ -n "${OBF_DIR:-}" ]; then
     set -- "$@" -v "$OBF_DIR:/cache/obf:ro" -e OBF_DIR=/cache/obf
 fi
-# WHISPER_MODEL=<a whisper.cpp ggml model file> mounts it read-only so SpeechEngineTest
+# WHISPER_MODEL=<a whisper.cpp ggml model file> mounts it read-only so RecognizerTest
 # times a real model; without it that part is skipped and says so.
 if [ -n "${WHISPER_MODEL:-}" ]; then
     set -- "$@" -v "$WHISPER_MODEL:/cache/whisper-model.bin:ro" -e WHISPER_MODEL=/cache/whisper-model.bin

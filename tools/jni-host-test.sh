@@ -197,7 +197,7 @@
 # * WirelessStandbyTest: wireless standby's rules - the start reasons, which start requests
 #   start projection, the automatic-start loop guard and the reconnect pacing. The held
 #   RFCOMM link, the truck's button and the wake lock need a phone and the truck.
-# * SpeechEngineTest (-Xcheck:jni): voice input's recognizer, the release Kotlin WhisperEngine
+# * RecognizerTest (-Xcheck:jni): voice input's recognizer, the release Kotlin WhisperEngine
 #   over a host x86_64 build of libwhisper_jni (tools/whisper-build.sh) - a small model in
 #   whisper.cpp's real format, written by the test, that says one word; refusals of files that
 #   are not models, cut short, all-F32 or hollow; audio too short or long; prompt, cancel,
@@ -281,7 +281,7 @@ java -cp "$out:$classes:$stdlib" WirelessStandbyTest
 # number as Android's ParcelFileDescriptor.getFd() gives it.
 status=0
 java -Xcheck:jni --add-opens java.base/java.io=ALL-UNNAMED -Djava.library.path=target/whisper/x86_64-linux-gnu \
-    -cp "$out:$classes:$stdlib" SpeechEngineTest "${WHISPER_MODEL:-}" > "$out/speech.txt" 2>&1 || status=$?
+    -cp "$out:$classes:$stdlib" RecognizerTest "${WHISPER_MODEL:-}" > "$out/speech.txt" 2>&1 || status=$?
 if [ "$status" != 0 ] || grep -E 'WARNING in native method|FATAL ERROR' "$out/speech.txt"; then
     cat "$out/speech.txt"
     echo "jni-host-test: speech recognizer failed (exit $status)" >&2

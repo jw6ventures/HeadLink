@@ -15,7 +15,7 @@
 // SpeechModel, the Android half (the Storage Access Framework grant, /proc/cpuinfo), needs
 // a phone.
 import com.jw6ventures.headlink.SpeechCpu;
-import com.jw6ventures.headlink.SpeechEngine;
+import com.jw6ventures.headlink.Recognizer;
 import com.jw6ventures.headlink.SpeechModelInfo;
 import com.jw6ventures.headlink.SpeechProblem;
 import com.jw6ventures.headlink.SpeechStats;
@@ -38,7 +38,7 @@ import java.nio.file.Files;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
-public final class SpeechEngineTest {
+public final class RecognizerTest {
     private static int passed;
 
     // The token the test model says: in the English vocabulary's text range, below EOT.
@@ -169,14 +169,14 @@ public final class SpeechEngineTest {
         WhisperEngine engine = WhisperEngine.Companion.load(descriptor(model), 2, () -> now.addAndGet(250));
         check(engine != null, "the test model loads");
         check(engine.getModel().getKey().equals("tiny.en"), "four layers and the English vocabulary is tiny.en: " + engine.getModel());
-        short[] samples = tone(3 * SpeechEngine.SAMPLE_RATE);
+        short[] samples = tone(3 * Recognizer.SAMPLE_RATE);
         Transcript heard = engine.transcribe(samples, samples.length, null);
         check(heard instanceof Transcript.Text, "words come back: " + heard);
         Transcript.Text text = (Transcript.Text) heard;
         check(text.getText().equals(SAID.trim()), "the model's word, cleaned: '" + text.getText() + "'");
         check(text.getAudioMs() == 3000, "audio length from the sample count");
         check(text.getElapsedMs() == 250, "elapsed from the clock");
-        Transcript primed = engine.transcribe(samples, 2 * SpeechEngine.SAMPLE_RATE, "Alice, Bob, Carol. Yes. No, change it.");
+        Transcript primed = engine.transcribe(samples, 2 * Recognizer.SAMPLE_RATE, "Alice, Bob, Carol. Yes. No, change it.");
         check(primed instanceof Transcript.Text && ((Transcript.Text) primed).getAudioMs() == 2000, "a prompt and a partial count work: " + primed);
         engine.cancel();
         Transcript after = engine.transcribe(samples, samples.length, null);
@@ -194,11 +194,11 @@ public final class SpeechEngineTest {
 
     private static void theRefusals(File dir) throws IOException {
         WhisperEngine engine = WhisperEngine.Companion.load(descriptor(new File(dir, "hello.bin")), 1, System::currentTimeMillis);
-        short[] tap = new short[SpeechEngine.MIN_SAMPLES - 1];
+        short[] tap = new short[Recognizer.MIN_SAMPLES - 1];
         check(failed(engine.transcribe(tap, tap.length, null), Transcript.TOO_SHORT), "a tap is too short");
-        short[] tooLong = new short[SpeechEngine.MAX_SAMPLES + 1];
+        short[] tooLong = new short[Recognizer.MAX_SAMPLES + 1];
         check(failed(engine.transcribe(tooLong, tooLong.length, null), Transcript.TOO_LONG), "over 30 s is refused, not cut");
-        check(engine.transcribe(tooLong, SpeechEngine.MAX_SAMPLES, null) instanceof Transcript.Text, "exactly 30 s is taken");
+        check(engine.transcribe(tooLong, Recognizer.MAX_SAMPLES, null) instanceof Transcript.Text, "exactly 30 s is taken");
         boolean threw = false;
         try {
             engine.transcribe(tap, tap.length + 1, null);
@@ -213,7 +213,7 @@ public final class SpeechEngineTest {
         WhisperEngine engine = WhisperEngine.Companion.load(descriptor(new File(dir, "hello.bin")), 1, System::currentTimeMillis);
         engine.close();
         engine.close();
-        short[] samples = tone(SpeechEngine.SAMPLE_RATE);
+        short[] samples = tone(Recognizer.SAMPLE_RATE);
         check(failed(engine.transcribe(samples, samples.length, null), Transcript.CLOSED), "closed engines refuse");
         engine.cancel();
         // Loading many times frees each: a leak of a few MB each would show in a long drive.
@@ -229,7 +229,7 @@ public final class SpeechEngineTest {
         WhisperEngine engine = WhisperEngine.Companion.load(descriptor(file), WhisperEngine.Companion.defaultThreads(Runtime.getRuntime().availableProcessors()), System::currentTimeMillis);
         long loadMs = System.currentTimeMillis() - started;
         check(engine != null, "WHISPER_MODEL loads");
-        Transcript silence = engine.transcribe(new short[5 * SpeechEngine.SAMPLE_RATE], 5 * SpeechEngine.SAMPLE_RATE, null);
+        Transcript silence = engine.transcribe(new short[5 * Recognizer.SAMPLE_RATE], 5 * Recognizer.SAMPLE_RATE, null);
         check(silence instanceof Transcript.Silence, "5 s of silence is heard-nothing: " + silence);
         engine.close();
         return engine.getModel().getKey() + " loaded in " + loadMs + " ms, 5 s silence in " + ((Transcript.Silence) silence).getElapsedMs() + " ms";
@@ -261,7 +261,7 @@ public final class SpeechEngineTest {
 
     private static short[] tone(int n) {
         short[] samples = new short[n];
-        for (int i = 0; i < n; i++) samples[i] = (short) (8000 * Math.sin(2 * Math.PI * 440 * i / SpeechEngine.SAMPLE_RATE));
+        for (int i = 0; i < n; i++) samples[i] = (short) (8000 * Math.sin(2 * Math.PI * 440 * i / Recognizer.SAMPLE_RATE));
         return samples;
     }
 

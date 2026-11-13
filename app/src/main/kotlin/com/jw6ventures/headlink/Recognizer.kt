@@ -11,7 +11,7 @@ import java.io.Closeable
  * [transcribe] blocks for about a second per few seconds of speech: call it off the main
  * thread. One utterance at a time; a second caller waits for the first.
  */
-interface SpeechEngine : Closeable {
+interface Recognizer : Closeable {
     /** What was loaded, for the Settings card and the report. */
     val model: SpeechModelInfo
 
@@ -55,7 +55,7 @@ data class SpeechModelInfo(val size: String, val englishOnly: Boolean) {
     }
 }
 
-/** The outcome of one [SpeechEngine.transcribe]. Only [Text] carries words. */
+/** The outcome of one [Recognizer.transcribe]. Only [Text] carries words. */
 sealed class Transcript {
     /** Words were heard. [audioMs] is the utterance's length, [elapsedMs] how long recognising it took. */
     data class Text(val text: String, val audioMs: Long, val elapsedMs: Long) : Transcript() {
@@ -65,7 +65,7 @@ sealed class Transcript {
     /** The recognizer ran and heard no words (silence, noise, a cough). */
     data class Silence(val audioMs: Long, val elapsedMs: Long) : Transcript()
 
-    /** [SpeechEngine.cancel] stopped it. */
+    /** [Recognizer.cancel] stopped it. */
     object Cancelled : Transcript()
 
     /** The audio was refused before recognising it, or whisper.cpp failed. [reason] is a report key. */
@@ -103,7 +103,7 @@ object SpeechText {
 }
 
 /**
- * [SpeechEngine] over whisper.cpp. Build one with [load]; [SpeechModel] does so from the
+ * [Recognizer] over whisper.cpp. Build one with [load]; [SpeechModel] does so from the
  * operator's model file. Plain JVM, so the host test drives it with the x86_64 library.
  */
 class WhisperEngine private constructor(
@@ -111,7 +111,7 @@ class WhisperEngine private constructor(
     override val model: SpeechModelInfo,
     private val threads: Int,
     private val clock: () -> Long,
-) : SpeechEngine {
+) : Recognizer {
     private val lock = Object()
 
     /** Held to free the handle, and by [cancel], which never waits for [lock]. */
@@ -125,8 +125,8 @@ class WhisperEngine private constructor(
 
     override fun transcribe(samples: ShortArray, count: Int, prompt: String?): Transcript {
         require(count in 0..samples.size) { "count $count outside 0..${samples.size}" }
-        if (count < SpeechEngine.MIN_SAMPLES) return Transcript.Failed(Transcript.TOO_SHORT)
-        if (count > SpeechEngine.MAX_SAMPLES) return Transcript.Failed(Transcript.TOO_LONG)
+        if (count < Recognizer.MIN_SAMPLES) return Transcript.Failed(Transcript.TOO_SHORT)
+        if (count > Recognizer.MAX_SAMPLES) return Transcript.Failed(Transcript.TOO_LONG)
         synchronized(lock) {
             if (handle == 0L) return Transcript.Failed(Transcript.CLOSED)
             cancelled = false
@@ -140,7 +140,7 @@ class WhisperEngine private constructor(
             val elapsed = clock() - started
             if (cancelled) return Transcript.Cancelled
             raw ?: return Transcript.Failed(Transcript.ENGINE)
-            val audioMs = count * 1000L / SpeechEngine.SAMPLE_RATE
+            val audioMs = count * 1000L / Recognizer.SAMPLE_RATE
             val text = SpeechText.clean(raw)
             return if (text.isEmpty()) Transcript.Silence(audioMs, elapsed) else Transcript.Text(text, audioMs, elapsed)
         }
