@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Voice input (spec.md 2.1 and 5.2 as amended 11 November 2026): Settings, Voice input,
+     and the car microphone test. -->
+<resources>
+    <string name="voice_input_title">Voice input</string>
+    <string name="voice_input_caption">Speak through your car\'s hands-free microphone after pressing a button. Not finished yet: for now this only tests the microphone.</string>
+    <string name="voice_input_switch">Voice input</string>
+    <string name="voice_input_switch_help">Listens through your car\'s hands-free microphone, the one calls use, only after you press a voice button, and stops when you finish speaking. Needs the Microphone permission, which is asked for when you turn this on. The phone\'s own microphone is never used: if the car\'s microphone is not connected, voice input says so and does not listen. Speech will be turned into text on the phone, with a speech model file you supply; nothing uses the network. Audio is held in memory only until it is turned into text, and is never saved or reported. Off, the app holds no microphone.</string>
+    <string name="voice_input_car_mic_ready">Car microphone connected.</string>
+    <string name="mic_test">Test car microphone</string>
+    <string name="mic_test_stop">Stop listening</string>
+    <string name="mic_test_help">Listens once through the car\'s hands-free microphone, as a voice button press will. Say a sentence after tapping; it stops when you pause, or tap Stop listening. It then shows how long it heard you and how loud, and how long the car took to open its microphone. Music pauses while it listens and should come back afterwards. Nothing is played back, saved or reported apart from those numbers.</string>
+    <string name="mic_test_listening">Listening… say a sentence.</string>
+    <string name="mic_test_heard">Heard %1$.1f s, %2$.1f s of it speech. The car\'s microphone opened in %3$d ms. Loudest %4$d dBFS, background %5$d dBFS.</string>
+    <string name="mic_test_no_speech">Heard no speech. The car\'s microphone opened in %1$d ms. Loudest %2$d dBFS, background %3$d dBFS.</string>
+    <string name="mic_fail_permission">Voice input needs the Microphone permission. Tap Test car microphone to be asked, or allow it in the app\'s system settings.</string>
+    <string name="mic_fail_in_call">Can\'t listen during a call.</string>
+    <string name="mic_fail_no_bluetooth">No car microphone. Connect the phone to the car over Bluetooth for calls; the phone\'s own microphone is not used.</string>
+    <string name="mic_fail_route_refused">Android would not switch to the car\'s microphone.</string>
+    <string name="mic_fail_route_timeout">The car\'s microphone did not open in time.</string>
+    <string name="mic_fail_not_bluetooth">Android offered a microphone other than the car\'s, so nothing was heard.</string>
+    <string name="mic_fail_lost">The car\'s microphone disconnected while listening, so nothing was kept.</string>
+    <string name="mic_fail_recorder">The microphone would not start.</string>
+    <string name="mic_fail_busy">Already listening.</string>
+    <string name="mic_fail_cancelled">Stopped.</string>
+</resources>

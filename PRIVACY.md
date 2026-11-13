@@ -60,9 +60,11 @@ permission at that point, and you can withdraw it at any time in Android's setti
 
 ## Voice input
 
-Voice input is being built and is not in a released version yet. When it ships, it works
-as described here. It is off by default, and each part asks for its permission only when
-you turn that part on.
+Voice input is being built and is not finished. So far, Settings > Voice input can be
+turned on to test the car's microphone: it asks for the Microphone permission, listens
+once through the car when you tap Test car microphone, shows how long and how loudly it
+heard you, and then drops the audio. When the rest ships, it works as described here. It
+is off by default, and each part asks for its permission only when you turn that part on.
 
 - **Microphone.** HeadLink listens only after you press the voice button, through your
   car's hands-free microphone over Bluetooth. Speech is turned into text on the phone,

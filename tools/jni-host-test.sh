@@ -86,6 +86,11 @@
 #   notification against a turn prompt, the second tap, the lead-in, one focus grant for
 #   utterances close together and always given back, no prompt in a call — its report's
 #   counts, and what a tapped notification is read as. TextToSpeech needs a phone.
+# * MicCaptureTest: voice input's microphone rules - only the car's hands-free link (SCO)
+#   is chosen and a recorder on any other microphone is refused, the 16 kHz mono clip and
+#   its 30 s cap, dBFS levels, the end of an utterance after speech and quiet, the
+#   no-speech timeout, road noise that never reads as speech, and a report of counts only.
+#   Whether a phone and car open the link, and how fast, needs both (BluetoothMic).
 # * TrafficClientTest: P9.1's live traffic client and P9.2's response parsing - no request
 #   at all while the integration is off or keyless (the injected HTTP layer is never
 #   called), exactly the two GETs with gzip, every request counted before it is sent,
@@ -243,6 +248,7 @@ java -cp "$out:$classes:$stdlib" NotificationFeedTest
 java -cp "$out:$classes:$stdlib" CallStateTest
 java -cp "$out:$classes:$stdlib" StatusTextTest
 java -cp "$out:$classes:$stdlib" SpeechQueueTest
+java -cp "$out:$classes:$stdlib" MicCaptureTest
 java -cp "$out:$classes:$stdlib:$brouter" VoicePromptsTest
 java -cp "$out" MapThemeTest
 java -cp "$out:$classes:$stdlib" TrafficClientTest
