@@ -1591,6 +1591,46 @@ https://osmand.net/map?pin=30.50860,-97.67880#16/30.50860/-97.67880"
     adb exec-out run-as $package cat "files/reports/$name" > /out/app-report.txt
     [ -n "$idle" ] || fail "the attempt did not finish"
 
+    if [ "$SCRIPT" = osmand ]; then
+        # A share with nothing holding the maps open: the projection has ended and Home
+        # stops the connection screen, as when OsmAnd shares a place with HeadLink in the
+        # background. On the Pixel 0.10.0 failed "no OsmAnd maps open" here: the search
+        # raced the listing the share starts. One local file never loses that race, so
+        # this shows the route coming back, not the old failure.
+        # With no head unit there is no vehicle fix: the phone position, downtown, is the start.
+        adb shell pm grant $package android.permission.ACCESS_FINE_LOCATION > /dev/null 2>&1 || fail "location grant"
+        adb shell cmd location set-location-enabled true > /dev/null 2>&1 || fail "location on"
+        # The emulator GPS ignores geo fix here; a test provider sets it directly.
+        fix() { adb shell cmd location providers set-test-provider-location gps --location 30.26720,-97.74310 > /dev/null 2>&1; }
+        adb shell cmd location providers add-test-provider gps > /out/location-provider.txt 2>&1 || fail "test location provider"
+        adb shell cmd location providers set-test-provider-enabled gps true >> /out/location-provider.txt 2>&1 || fail "test provider on"
+        fix || fail "test location"
+        # Another app over the connection screen stops it; Home does nothing on this image.
+        adb shell am start -W -a android.settings.SETTINGS > /dev/null 2>&1 || fail "settings over the screen"
+        sleep 8
+        log "in front before the share: $(adb shell dumpsys activity activities | grep -m 1 -E "topResumedActivity|mResumedActivity" | tr -d "\r" | sed "s/^ *//")"
+        fix || true
+        before=$(report | grep -cE "route (computed in|failed after)" || true)
+        # A task of its own, as a share from OsmAnd lands in OsmAnd task: am start would
+        # otherwise bring the connection screen forward, and that screen holds the maps.
+        adb shell am start -W --activity-multiple-task -a android.intent.action.VIEW -n $package/.DestinationActivity \
+            -d "\"geo:30.28490,-97.73410?z=16\"" > /out/lab-destination-unheld.txt 2>&1 || fail "geo VIEW intent unheld"
+        for _ in $(seq 20); do
+            fix || true
+            sleep 2
+        done
+        sleep 50
+        adb shell dumpsys location > /out/location-unheld.txt 2>&1 || true
+        snapshot unheld false
+        unheld=$(grep -E "route (computed in|failed after)" /out/app-report-unheld.txt | tail -n +"$((before + 1))" \
+            | tail -n 1 | sed "s/.*route \(computed\|failed\)/route \1/")
+        [ -n "$unheld" ] || unheld="no route result$(grep -q "waiting for a position" /out/app-report-unheld.txt && echo ", waiting for a position")"
+        log "shared with no projection and no screen: $unheld"
+        if [ "$OSMAND_EXPECT" = ok ]; then
+            echo "$unheld" | grep -q "^route computed" || fail "a share with nothing projecting found no route: $unheld"
+        fi
+    fi
+
     transport=lab-socket:openauto-lab
     [ -n "$LAB_WIRELESS_TCP" ] && transport=wireless
     for line in attempt_complete=true stop_after=projection transport=$transport \

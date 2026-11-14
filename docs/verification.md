@@ -191,7 +191,7 @@ position), `guidance`, `daynight`, `controls`, `endroute`, `calls`, `speech`, `v
 | `LAB_REROUTE=fail` | removes the routing tile after the first route so re-routes really fail; the cluster must go REROUTING, then ACTIVE on the old route |
 | `LAB_TRACK=1` | adds the synthetic drive to any script, without checks |
 | `LAB_REGION=austin`, `LAB_POI`, `LAB_POI_AHEAD` | Texas data, OsmAnd places on the map, search ahead on a route |
-| `osmand` script (`LAB_REGION=austin`) | OsmAnd routing with traffic held: a HERE stand-in jam on I-35, then downtown to Taylor (57 km) shared; passes when the route comes back traffic-priced with no coordinate in the report. `LAB_OSMAND_EXPECT=fail` for a build from before the 2026-11-13 fix |
+| `osmand` script (`LAB_REGION=austin`) | OsmAnd routing with traffic held: a HERE stand-in jam on I-35, then downtown to Taylor (57 km) shared; passes when the route comes back traffic-priced with no coordinate in the report. After the projection ends it presses Home and shares the university again, so nothing holds the maps open; that route must come back too (0.10.0 failed "no OsmAnd maps open" there on the Pixel; the lab does not reproduce that race). `LAB_OSMAND_EXPECT=fail` for a build from before the 2026-11-13 fix |
 | `LAB_FAVORITES`, `LAB_RECENT`, `LAB_REORDER=1` | seed the favorites tile and the recent slot; drag a row on the phone |
 | `LAB_NIGHT`, `LAB_MARKER`, `LAB_DIAGNOSTICS` | day/night signal and seeded display settings |
 | `LAB_NAVIGATION`, `LAB_NAVIGATION_CLUSTER`, `LAB_NAVIGATION_FORCE` | the cluster channel and Ford's no-announcement behaviour |
