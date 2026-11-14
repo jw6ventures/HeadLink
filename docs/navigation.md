@@ -567,6 +567,12 @@ and described in its README. `OsmAndRouter` implements the same `RouteEngine` as
 `RoutePlanner`, `AheadSearcher`, `LiveAlternatives` and the preview need no other change.
 Files are opened through `/proc/self/fd` paths of the folder's document descriptors and
 kept open, keyed by name, size and modification time, so a replaced file is reopened.
+A route search holds the folder's files itself while it runs. In 0.10.0 a destination
+shared from OsmAnd with nothing projecting and the HeadLink screen closed raced the
+listing the share starts: on the Pixel (11 files through the document provider) the
+search ran first, found nothing open and failed "no OsmAnd maps open" (report:
+`obf_files_open=0`, `obf_closes=2`). The lab's one local file opens too fast to lose
+that race, so the lab step shows the fixed build routing, not the old one failing.
 The car profile is OsmAnd's `routing.xml`, unmodified; the top speed is its `max_speed`
 and Avoid motorways, Avoid toll roads and Avoid unpaved roads are its own parameters.
 Prefer bypassing towns and Allow tracks have no counterpart and do nothing here, which the
@@ -858,8 +864,8 @@ separate setting; `DropFolder.choose()` releases only earlier read+write grants.
 `*.obf` files directly in the folder are read (not `.srtm`, `.wiki`, `World_basemap`, or
 `.obf.download` partials). Files are opened through `ParcelFileDescriptor` and read with
 positional `FileChannel` reads, never memory-mapped (a mapping caps at 2 GB). They stay
-open while a projection or the phone screen holds them, keyed by name, size and
-modified time.
+open while a projection, the phone screen or a route search holds them, keyed by name,
+size and modified time.
 
 **The reader** (`ObfWire`, `ObfFile`, `ObfAddressReader`, `ObfPoiReader`; pure JVM). Our
 own walker against OsmAnd's `OBF.proto`, vendored unmodified in

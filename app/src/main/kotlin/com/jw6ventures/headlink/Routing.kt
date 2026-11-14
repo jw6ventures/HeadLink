@@ -20,6 +20,9 @@ import java.util.Locale
  */
 object Routing {
     /** Nice 4: behind the default-priority render threads, short of the background group. */
+    /** A route search's own hold on OsmAnd's maps ([ObfLibrary.hold]). */
+    private const val MAPS_HOLDER = "routing"
+
     private const val THREAD_PRIORITY = Process.THREAD_PRIORITY_DEFAULT + 4 * Process.THREAD_PRIORITY_LESS_FAVORABLE
 
     private val main = Handler(Looper.getMainLooper())
@@ -148,7 +151,22 @@ object Routing {
         // The planner outlives this call, so it keeps the application, never an activity.
         val app = context.applicationContext
         // One for the planner's life, so OsmAnd's readers stay open between routes.
-        val osmand = OsmAndRouter { ObfLibrary.routingMaps(app) }
+        val router = OsmAndRouter { ObfLibrary.routingMaps(app) }
+        // [ObfLibrary] opens its files only while something holds them: a projection, the
+        // connection screen, the preview. A destination shared from OsmAnd with neither up
+        // (DestinationActivity has no window) found nothing open, and OsmAnd's router said
+        // "no OsmAnd maps open" for every request. A search holds the files itself; its
+        // readers keep their own handles once opened, so letting go afterwards is safe.
+        val osmand = object : RouteEngine {
+            override fun compute(request: RouteRequest, maxRunningMs: Long, started: (SearchHandle) -> Unit): Route {
+                ObfLibrary.hold(MAPS_HOLDER, true)
+                try {
+                    return router.compute(request, maxRunningMs, started)
+                } finally {
+                    ObfLibrary.hold(MAPS_HOLDER, false)
+                }
+            }
+        }
         val engines = EngineChoice(
             brouter = {
                 // On the routing thread: the profile copy is file I/O too.
