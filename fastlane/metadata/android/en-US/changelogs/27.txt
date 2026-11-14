@@ -1,0 +1,1 @@
+• Fixed "no OsmAnd maps open" when a destination is shared from OsmAnd while HeadLink is not on screen or connected to the car.
