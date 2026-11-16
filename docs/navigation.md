@@ -565,8 +565,17 @@ whose mirrored longitude is inside one is refused with the same "did you mean" h
 and described in its README. `OsmAndRouter` implements the same `RouteEngine` as BRouter's
 `Router`, and `EngineChoice` picks one per request from `RouteOptions.osmAndRouting`, so
 `RoutePlanner`, `AheadSearcher`, `LiveAlternatives` and the preview need no other change.
-Files are opened through `/proc/self/fd` paths of the folder's document descriptors and
-kept open, keyed by name, size and modification time, so a replaced file is reopened.
+OsmAnd's reader takes a `RandomAccessFile`; each reader gets a `PositionalFile` reading its own
+duplicate of the folder's document descriptor with `pread` (a `FileChannel` would be closed
+for good by VTM's loader interrupts), kept open and keyed by name, size and
+modification time, so a replaced file is reopened. Up to 0.10.1 the readers reopened the
+descriptor's `/proc/self/fd` link instead. On the Pixel that open was refused (the link
+reopens the file by its place in shared storage, which the app may not read), so with all
+11 files listed and open (`obf_files_open=11`) every route failed "no OsmAnd maps open",
+the map said "no OsmAnd map with map data" and drew from Mapsforge (`obf_tiles=0`). The
+lab's files are app-private paths, which reopen fine, so the lab never showed it. The
+report's `obf_reader_failures` and `obf_reader_failure_last` (exception class only) count
+readers that could not open a listed file.
 A route search holds the folder's files itself while it runs. In 0.10.0 a destination
 shared from OsmAnd with nothing projecting and the HeadLink screen closed raced the
 listing the share starts: on the Pixel (11 files through the document provider) the

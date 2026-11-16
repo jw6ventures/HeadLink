@@ -22,6 +22,9 @@
 // on OsmAnd maps"); and, when the Austin and San Antonio maps are different OsmAnd builds,
 // that the highway hierarchy is skipped and the route still comes back. It proves nothing
 // about ART or the phone's speed.
+import java.io.IOException;
+import java.io.RandomAccessFile;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -29,7 +32,9 @@ import java.util.Map;
 import btools.router.VoiceHintReader;
 import com.jw6ventures.headlink.ExitSign;
 import com.jw6ventures.headlink.Nogo;
+import com.jw6ventures.headlink.ObfReaderFailures;
 import com.jw6ventures.headlink.OsmAndRouter;
+import com.jw6ventures.headlink.PositionalFile;
 import com.jw6ventures.headlink.Route;
 import com.jw6ventures.headlink.RouteOptions;
 import com.jw6ventures.headlink.RouteRequest;
@@ -68,6 +73,7 @@ public final class OsmAndRoutingTest {
         } finally {
             Files.deleteIfExists(file);
         }
+        aFileWithOnlyADescriptorRoutes();
         noMapsIsAnError();
         theSettingsAreTheProfilesParameters();
         osmAndErrorsLoseTheirCoordinates();
@@ -177,6 +183,105 @@ public final class OsmAndRoutingTest {
             check(e.getStopped(), "a stopped search says it was stopped: " + e.getMessage());
         }
         check(handles[0] == 1, "one handle for one search");
+    }
+
+    /**
+     * The maps folder's files: a descriptor and no path this app may open (PositionalFile).
+     * The path given is one that cannot be opened, so the route can only come through the
+     * opener. The phone's source reads with pread; this one with a RandomAccessFile.
+     */
+    private static void aFileWithOnlyADescriptorRoutes() throws Exception {
+        Path file = Files.createTempFile("osmand-descriptor", ".obf");
+        FileSource[] source = new FileSource[1];
+        try {
+            Files.write(file, ExitSignsTest.syntheticObf());
+            String nowhere = file + ".not-here";
+            OsmAndRouter router = new OsmAndRouter(() -> List.of(new OsmAndRouter.MapFile("descriptor", "synthetic.obf", nowhere, () -> {
+                try {
+                    source[0] = new FileSource(file);
+                    return new PositionalFile(source[0]);
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            })));
+            try {
+                Route route = route(router, trip(List.of(), 0));
+                check(route.getPoints() >= 2, "a file opened only through its descriptor routes: " + route.getPoints() + " points");
+            } finally {
+                router.close();
+            }
+            check(source[0] != null && source[0].closed, "closing the router closes the descriptor");
+            String before = ObfReaderFailures.INSTANCE.report();
+            OsmAndRouter refused = new OsmAndRouter(() -> List.of(new OsmAndRouter.MapFile("refused", "synthetic.obf", nowhere)));
+            try {
+                route(refused, trip(List.of(), 0));
+                check(false, "a file that cannot be opened gives no route");
+            } catch (RoutingException e) {
+                check(e.getMessage().contains("no OsmAnd maps"), "a file that cannot be opened is no map: " + e.getMessage());
+            }
+            String after = ObfReaderFailures.INSTANCE.report();
+            check(!after.equals(before) && after.contains("obf_reader_failure_last=FileNotFoundException")
+                && !after.contains(nowhere), "the failure is counted, by class only: " + after);
+        } finally {
+            Files.deleteIfExists(file);
+        }
+        aPositionalFileReadsLikeAFile();
+    }
+
+    /** What OsmAnd's reader asks of its RandomAccessFile, through a source. */
+    private static void aPositionalFileReadsLikeAFile() throws Exception {
+        Path file = Files.createTempFile("positional-file", ".bin");
+        try {
+            byte[] bytes = new byte[300];
+            for (int i = 0; i < bytes.length; i++) bytes[i] = (byte) i;
+            Files.write(file, bytes);
+            try (PositionalFile f = new PositionalFile(new FileSource(file))) {
+                check(f.length() == 300 && f.getFilePointer() == 0, "length and start");
+                byte[] got = new byte[10];
+                f.seek(250);
+                f.readFully(got, 0, 10);
+                check(got[0] == (byte) 250 && got[9] == (byte) 3 && f.getFilePointer() == 260, "seek then readFully");
+                check(f.read() == 4 && f.getFilePointer() == 261, "a single byte, unsigned");
+                f.seek(295);
+                try {
+                    f.readFully(got, 0, 10);
+                    check(false, "reading past the end fails");
+                } catch (java.io.EOFException e) {
+                    check(true, "reading past the end is EOF");
+                }
+                f.seek(300);
+                check(f.read() == -1, "-1 at the end");
+            }
+        } finally {
+            Files.deleteIfExists(file);
+        }
+    }
+
+    /** A positional source over a path, standing in for the phone's descriptor. */
+    private static final class FileSource implements PositionalFile.Source {
+        private final RandomAccessFile file;
+        boolean closed;
+
+        FileSource(Path path) throws IOException {
+            file = new RandomAccessFile(path.toFile(), "r");
+        }
+
+        @Override
+        public long size() throws IOException {
+            return file.length();
+        }
+
+        @Override
+        public synchronized int read(byte[] b, int off, int len, long position) throws IOException {
+            file.seek(position);
+            return file.read(b, off, len);
+        }
+
+        @Override
+        public void close() throws IOException {
+            closed = true;
+            file.close();
+        }
     }
 
     private static void noMapsIsAnError() {
