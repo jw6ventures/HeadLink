@@ -71,7 +71,20 @@ class OsmAndRouter(
      * called (OsmAnd reads region names from it), and [id], which changes whenever the
      * file does, so an open reader is reused only for the same file.
      */
-    class MapFile(val id: String, val name: String, val path: String) {
+    class MapFile @JvmOverloads constructor(
+        val id: String,
+        val name: String,
+        val path: String,
+        private val opener: (() -> RandomAccessFile)? = null,
+    ) {
+        /**
+         * A new handle on the file, the caller's to close: [opener]'s when given (a file
+         * from the maps folder, which has a descriptor and no path this app may open; see
+         * [PositionalFile]), else [path] opened.
+         */
+        @Throws(IOException::class)
+        fun open(): RandomAccessFile = opener?.invoke() ?: RandomAccessFile(path, "r")
+
         companion object {
             @JvmStatic
             fun of(file: File): MapFile = MapFile("${file.absolutePath}|${file.length()}|${file.lastModified()}", file.name, file.absolutePath)
@@ -105,9 +118,9 @@ class OsmAndRouter(
             if (map.id in open) continue
             var file: RandomAccessFile? = null
             try {
-                file = RandomAccessFile(map.path, "r")
+                file = map.open()
                 // A File only for its name: OsmAnd reads the region from it, and the path
-                // may be a /proc/self/fd link whose own name says nothing.
+                // may say nothing of the file's own name.
                 val named = object : File(map.path) {
                     override fun getName(): String = map.name
                 }
@@ -119,9 +132,11 @@ class OsmAndRouter(
                 }
                 open[map.id] = Open(file, reader)
             } catch (e: IOException) {
+                ObfReaderFailures.note(e)
                 file?.let { closeQuietly(it) }
             } catch (e: RuntimeException) {
                 // A malformed file is skipped, never a crash on the routing thread.
+                ObfReaderFailures.note(e)
                 file?.let { closeQuietly(it) }
             }
         }

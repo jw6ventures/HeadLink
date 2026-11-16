@@ -9,10 +9,15 @@ import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.provider.DocumentsContract
+import android.system.ErrnoException
+import android.system.Os
+import android.system.OsConstants
 import java.io.Closeable
 import java.io.File
 import java.io.FileInputStream
 import java.io.IOException
+import java.io.InterruptedIOException
+import java.io.RandomAccessFile
 import java.nio.channels.FileChannel
 import java.time.Instant
 import java.time.ZoneId
@@ -162,11 +167,39 @@ object ObfLibrary {
         val handle: Closeable,
         val dateMs: Long,
         val region: String?,
-        /** Where OsmAnd's own reader can open the same file: see [routingMaps]. */
-        val path: String,
+        /** A new handle on the same file for OsmAnd's own reader: see [routingMaps]. */
+        val reopen: () -> RandomAccessFile,
     )
 
     private enum class Rejection { NEWER, FAILED }
+
+    /**
+     * A [PositionalFile]'s bytes from [pfd] with `pread`, which a thread interrupt does not
+     * stop for good as it does a `FileChannel` (VTM interrupts its tile loaders). Closing
+     * it closes [pfd].
+     */
+    private class DescriptorSource(private val pfd: ParcelFileDescriptor) : PositionalFile.Source {
+        override fun size(): Long = try {
+            Os.fstat(pfd.fileDescriptor).st_size
+        } catch (e: ErrnoException) {
+            throw IOException(e)
+        }
+
+        override fun read(b: ByteArray, off: Int, len: Int, position: Long): Int {
+            while (true) {
+                try {
+                    val n = Os.pread(pfd.fileDescriptor, b, off, len, position)
+                    return if (n == 0) -1 else n
+                } catch (e: ErrnoException) {
+                    if (e.errno != OsConstants.EINTR) throw IOException(e)
+                } catch (e: InterruptedIOException) {
+                    // The thread was interrupted mid-read; the descriptor is fine, so read again.
+                }
+            }
+        }
+
+        override fun close() = pfd.close()
+    }
 
     /**
      * Held for the whole of a listing, so only one runs at a time and nothing is closed
@@ -264,17 +297,18 @@ object ObfLibrary {
 
     /**
      * The open maps as [OsmAndRouter] opens them, listed by the same rule as [sources]; off
-     * the main thread. OsmAnd's reader takes a `RandomAccessFile`, which needs a path, and a
-     * file from the maps folder has only a descriptor: its `/proc/self/fd` link is a path to
-     * the same file for as long as this library keeps the descriptor open. A lab file is its
-     * own path. The id is the file's key, so a reader opened for one file is never reused for
-     * another that was later given the same descriptor number.
+     * the main thread. OsmAnd's reader takes a `RandomAccessFile`, and a file from the maps
+     * folder has only a descriptor, so [OsmAndRouter.MapFile.open] reads a duplicate of it
+     * through a [PositionalFile] (its notes say why not the `/proc/self/fd` link). The duplicate
+     * is the reader's own, so a reader keeps working after this library lets go. A lab file
+     * is opened by its path. The id is the file's key, so a reader opened for one file is
+     * never reused for another.
      */
     fun routingMaps(context: Context): List<OsmAndRouter.MapFile> {
         val app = context.applicationContext
         if (wanted()) synchronized(scanLock) { if (wanted()) scan(app) }
         return synchronized(lock) {
-            opened.values.map { OsmAndRouter.MapFile("${it.key.name}|${it.key.size}|${it.key.modifiedMs}", it.key.name, it.path) }
+            opened.values.map { OsmAndRouter.MapFile("${it.key.name}|${it.key.size}|${it.key.modifiedMs}", it.key.name, it.key.name, it.reopen) }
         }
     }
 
@@ -338,7 +372,7 @@ object ObfLibrary {
     fun report(): String = synchronized(lock) {
         "obf_files_open=${opened.size} obf_newer_format=${state?.newer ?: 0} obf_unreadable=${state?.failed ?: 0} " +
             "obf_open_failures=$openFailures obf_listings=$listings obf_opens=$opens obf_newer_seen=$newerFiles " +
-            "obf_closes=$closes\n"
+            "obf_closes=$closes ${ObfReaderFailures.report()}\n"
     } + PhoneSearch.report()
 
     // Under [scanLock], not [lock]: the provider query and the opening run unlocked, and
@@ -349,7 +383,7 @@ object ObfLibrary {
             listedAt = SystemClock.elapsedRealtime()
         }
         val tree = folder(context)
-        val found = ArrayList<Pair<ObfRules.FileKey, () -> Triple<FileChannel, Closeable, String>>>()
+        val found = ArrayList<Pair<ObfRules.FileKey, () -> Triple<FileChannel, Closeable, () -> RandomAccessFile>>>()
         var unreadable = false
         if (tree != null) {
             try {
@@ -378,7 +412,11 @@ object ObfLibrary {
                                     closeQuietly(stream)
                                     closeQuietly(pfd)
                                 },
-                                "/proc/self/fd/${pfd.fd}",
+                                {
+                                    // A duplicate of the provider's descriptor, owned by the
+                                    // reader: it stays open after this library closes [pfd].
+                                    PositionalFile(DescriptorSource(pfd.dup()))
+                                },
                             )
                         }
                     }
@@ -392,7 +430,7 @@ object ObfLibrary {
             val key = ObfRules.FileKey(file.name, file.length(), file.lastModified())
             found += key to {
                 val stream = FileInputStream(file)
-                Triple(stream.channel, Closeable { closeQuietly(stream) }, file.absolutePath)
+                Triple(stream.channel, Closeable { closeQuietly(stream) }, { RandomAccessFile(file, "r") })
             }
         }
         val wanted = found.map { it.first }.toSet()
@@ -410,10 +448,10 @@ object ObfLibrary {
         for ((key, open) in fresh) {
             var handle: Closeable? = null
             try {
-                val (channel, closer, path) = open()
+                val (channel, closer, reopen) = open()
                 handle = closer
                 val source = ObfReaders.open(channel, key.name)
-                added += Opened(key, source, closer, ObfReaders.dateMs(source).takeIf { it > 0 } ?: key.modifiedMs, ObfRules.region(key.name), path)
+                added += Opened(key, source, closer, ObfReaders.dateMs(source).takeIf { it > 0 } ?: key.modifiedMs, ObfRules.region(key.name), reopen)
             } catch (e: ObfNewerFormatException) {
                 handle?.let(::closeQuietly)
                 refused += key to Rejection.NEWER

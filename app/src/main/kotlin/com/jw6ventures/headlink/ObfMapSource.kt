@@ -156,7 +156,7 @@ class ObfMapSource(
         private fun openReader(map: OsmAndRouter.MapFile): Pair<RandomAccessFile, BinaryMapIndexReader>? {
             var file: RandomAccessFile? = null
             return try {
-                file = RandomAccessFile(map.path, "r")
+                file = map.open()
                 val named = object : File(map.path) {
                     override fun getName(): String = map.name
                 }
@@ -168,9 +168,11 @@ class ObfMapSource(
                     file to reader
                 }
             } catch (e: IOException) {
+                ObfReaderFailures.note(e)
                 file?.let(::closeQuietly)
                 null
             } catch (e: RuntimeException) {
+                ObfReaderFailures.note(e)
                 file?.let(::closeQuietly)
                 null
             }
