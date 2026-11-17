@@ -40,6 +40,7 @@ public final class ObfMapTilesTest {
 
         theBoxIsTheTileIn31BitNumbers();
         aRoadKeepsItsTagsAndPoints();
+        reusedElementsForgetPreviousFeatures();
         anAreaKeepsItsHoleAndDropsItsClosingPoint();
         aBuildingIsKeptWholeAtBuildingZoom();
         pointsOutsideTheTileAreLeftToTheirOwnTile();
@@ -103,6 +104,31 @@ public final class ObfMapTilesTest {
         check(Math.abs(e.points[last] - Tile.SIZE / 2f) < 0.01f && Math.abs(e.points[last + 1] - 3 * Tile.SIZE / 4f) < 0.01f,
             "and ending where it ends, in tile pixels");
         check(e.layer == ObfMapTiles.LAYER_GROUND, "on the ground layer: " + e.layer);
+    }
+
+    private static void reusedElementsForgetPreviousFeatures() {
+        MapElement e = new MapElement();
+        ObfMapTiles.Box box = ObfMapTiles.INSTANCE.box(TX, TY, Z);
+        TileClipper clipper = new TileClipper(-16, -16, Tile.SIZE + 16, Tile.SIZE + 16);
+        TileSeparator separator = new TileSeparator(0, 0, Tile.SIZE, Tile.SIZE);
+        BinaryMapDataObject river = object(20, new int[] {x(0.1), y(0.5), x(0.9), y(0.5)},
+            false, new int[] {WATER}, null);
+        river.putObjectName(NAME, "River");
+        check(ObfMapTiles.INSTANCE.element(river, box, e, clipper, separator), "first named feature");
+        e.setLabelPosition(10, 20);
+        e.setCentroidPosition(30, 40);
+        BinaryMapDataObject road = object(21, new int[] {x(0.1), y(0.4), x(0.9), y(0.4)},
+            false, new int[] {HIGHWAY}, null);
+        road.putObjectName(NAME, "Main Street");
+        check(ObfMapTiles.INSTANCE.element(road, box, e, clipper, separator), "reused road");
+        check("Main Street".equals(e.tags.getValue("name")) && !e.tags.containsKey("natural"),
+            "road replaces the river's name and type");
+        check(e.labelPosition == null && e.centroidPosition == null, "no stale label anchors");
+        check(ObfMapTiles.INSTANCE.seaElement(
+            new ObfMapTiles.SeaRing(true, ObfMapTiles.INSTANCE.wholeTile(box)), box, e, clipper),
+            "reuse for generated sea");
+        check(e.tags.getValue("name") == null && !e.tags.containsKey("highway"),
+            "generated sea forgets the road");
     }
 
     private static void anAreaKeepsItsHoleAndDropsItsClosingPoint() {

@@ -61,7 +61,7 @@ object ObfMapTiles {
      * in the tile or it has no tag a theme could match.
      */
     fun element(o: BinaryMapDataObject, box: Box, out: MapElement, clipper: TileClipper, separator: TileSeparator): Boolean {
-        out.clear()
+        reset(out)
         val index = o.mapIndex ?: return false
         if (!addTags(o, index, out)) return false
         val n = o.pointsLength
@@ -109,6 +109,14 @@ object ObfMapTiles {
         }
         out.setLayer(LAYER_GROUND + o.simpleLayer)
         return true
+    }
+
+    /** VTM clear() resets geometry and layers, but leaves feature metadata intact. */
+    private fun reset(out: MapElement) {
+        out.clear()
+        out.tags.clear()
+        out.labelPosition = null
+        out.centroidPosition = null
     }
 
     /** A ring of 31-bit pairs, without its closing point, which VTM does not want. */
@@ -216,7 +224,7 @@ object ObfMapTiles {
 
     /** Fills [out] with a [coast] ring for [box]; false when it falls outside. */
     fun seaElement(ring: SeaRing, box: Box, out: MapElement, clipper: TileClipper): Boolean {
-        out.clear()
+        reset(out)
         out.tags.add(if (ring.water) SEA else LAND)
         out.startPolygon()
         ring(out, box, ring.coordinates)
