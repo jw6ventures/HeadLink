@@ -204,6 +204,22 @@ route up does not count), skips fixes off the route or over a 30 s gap, phases i
 2 and 10 minutes of driving, and is held to 0.67–1.5. It applies to the time to the
 destination, not to the next turn; a re-route keeps it and a new destination resets it.
 
+**Learned across drives (0.11).** `PaceBook` keeps the same comparison across drives in
+`learned_pace.txt` (app private files, no backup), credited per counted fix to four
+buckets: all driving, the road class (highway = motorway/trunk, major = primary, minor =
+secondary/tertiary, local, ramp), the class in urban/suburban/rural surroundings, and the
+class in a quarter-degree grid square (about 17 by 15 miles at Austin). Surroundings come
+from junctions per km over 1 km of route (OsmAnd's attached roads, not service roads or
+tracks): 7 and up urban, 2.5 and up suburban, else rural. Each credit fades what a bucket
+held by `exp(-s / 5 h)`. A stretch's factor starts at the time adjustment and is pulled
+towards each bucket's ratio in turn, all, class, surroundings, square, each weighted 0
+under 10 min of estimated driving and 1 from an hour. The route's times at that pace are
+worked out once per followed route (`PaceBook.times`), and the drive's own `PaceTracker`
+is measured against them, so it only carries how today differs. Learning is off with
+Learn my pace off. BRouter routes carry no classes and use the overall bucket only.
+Routing → Forget learned pace deletes the file. The report has counts and the overall
+factor (`guidance_pace_learned_*`), never squares.
+
 A change that can alter the route recomputes the route on show from where the vehicle is
 (`Navigation.optionsChanged`).
 

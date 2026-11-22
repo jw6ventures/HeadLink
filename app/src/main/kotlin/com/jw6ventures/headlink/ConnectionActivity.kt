@@ -922,6 +922,18 @@ class ConnectionActivity : Activity() {
             .show()
     }
 
+    /** Routing → Forget learned pace: the pace learned across drives goes, after a yes. */
+    private fun confirmForgetPace() {
+        AlertDialog.Builder(this)
+            .setMessage(R.string.route_forget_pace_confirm)
+            .setPositiveButton(R.string.route_forget_pace) { _, _ ->
+                LearnedPace.forget(this)
+                Toast.makeText(this, R.string.route_forget_pace_done, Toast.LENGTH_LONG).show()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
     private fun startWireless(device: BluetoothDevice) {
         // A link standing by for the truck gives way: this one asks the truck now.
         if (SessionController.stage == Stage.IDLE) WirelessLink.stopWaiting("replaced by Home's Connect wirelessly")
@@ -3030,6 +3042,7 @@ class ConnectionActivity : Activity() {
                 ui.labelled(R.string.route_top_speed_label, R.string.route_top_speed_help, topSpeedSpinner),
                 ui.labelled(R.string.route_eta_label, R.string.route_eta_help, etaSpinner),
                 ui.withHelp(learnPaceCheck, R.string.route_learn_pace_label, R.string.route_learn_pace_help),
+                quietButton(R.string.route_forget_pace) { confirmForgetPace() },
                 ui.withHelp(showAlternativesCheck, R.string.route_show_alternatives_label, R.string.route_show_alternatives_help),
                 ui.withHelp(osmAndRoutingCheck, R.string.route_osmand_label, R.string.route_osmand_help),
             ),

@@ -21,8 +21,8 @@ android {
         applicationId = "com.jw6ventures.headlink"
         minSdk = 33
         targetSdk = 36
-        versionCode = 30
-        versionName = "0.10.4"
+        versionCode = 31
+        versionName = "0.11.0"
         ndk {
             abiFilters += "arm64-v8a"
         }
