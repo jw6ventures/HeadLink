@@ -128,9 +128,14 @@ data class RouteOptions(
  * - **Stretches.** Only consecutive fixes on the route count. Off the route, a re-route
  *   (a new [generation]), or a gap over [GAP_MS] with no fix at all ends a stretch without
  *   counting the gap: a lost signal says nothing about the pace.
- * - **Not before moving.** A stretch's time starts once the estimate first falls, so
- *   sitting in a car park with a route up is not read as a slow drive. Traffic lights and
- *   jams after that count in full, which is the point.
+ * - **Not before moving.** A stretch's time starts once the estimate has fallen by
+ *   [START_FALL_S] within [START_WINDOW_MS], so sitting in a car park with a route up is
+ *   not read as a slow drive. Traffic lights and jams after that count in full, which is
+ *   the point. Up to 0.10.3 the first fall of any size started it: on 2026-11-19 the
+ *   position wandering 4 s along the route in a parked car started the clock, and the
+ *   next 417 parked seconds were counted as driving (`guidance_pace_estimated_s=4
+ *   guidance_pace_actual_s=421`), which carried into the drive and pushed the trip
+ *   panel's time towards [MAX_FACTOR] times the estimate.
  * - **Earned slowly.** Under [MIN_ESTIMATE_S] of estimated driving the factor is 1; it
  *   then carries more of the measured ratio until [FULL_WEIGHT_S], and is held to
  *   [MIN_FACTOR]..[MAX_FACTOR] so one long jam cannot make a nonsense of the arrival.
@@ -152,6 +157,10 @@ class PaceTracker {
     private var lastMs = 0L
     private var moving = false
 
+    /** Before [moving]: how far the estimate has fallen since [pendingMs], in seconds. */
+    private var pendingFall = 0
+    private var pendingMs = 0L
+
     /**
      * A fix on route [generation] at [nowMs] (any monotonic clock). [remainingS] is the
      * route's estimate of the seconds still to go from it, or null when the fix is not on
@@ -165,11 +174,20 @@ class PaceTracker {
             lastRemainingS = remainingS
             lastMs = nowMs
             moving = false
+            pendingFall = 0
+            pendingMs = nowMs
             return
         }
         val fell = last - remainingS
-        if (!moving && fell > 0) moving = true
-        if (moving) {
+        if (!moving) {
+            if (nowMs - pendingMs > START_WINDOW_MS) {
+                pendingFall = 0
+                pendingMs = lastMs
+            }
+            pendingFall = (pendingFall + fell).coerceAtLeast(0)
+            // This fix's own interval is not counted: the stretch starts from here.
+            if (pendingFall >= START_FALL_S) moving = true
+        } else {
             estimatedS += fell
             actualS += (nowMs - lastMs) / 1000.0
         }
@@ -196,11 +214,17 @@ class PaceTracker {
         lastRemainingS = null
         lastMs = 0L
         moving = false
+        pendingFall = 0
+        pendingMs = 0L
     }
 
     companion object {
         /** Longer than any fix gap a moving vehicle has; the head unit sends about one a second. */
         const val GAP_MS = 30_000L
+
+        /** The fall in the estimate that says the vehicle is under way, and the time it must happen in. */
+        const val START_FALL_S = 20
+        const val START_WINDOW_MS = 60_000L
         const val MIN_ESTIMATE_S = 120.0
         const val FULL_WEIGHT_S = 600.0
         const val MIN_FACTOR = 0.67
