@@ -850,5 +850,13 @@ class TrafficFeed(private val host: TrafficHost) {
  */
 object ArrivalTime {
     fun shown(brouterSeconds: Int, pace: PaceTracker, learnPace: Boolean, delaySeconds: Int): Int =
-        (if (learnPace) pace.apply(brouterSeconds) else brouterSeconds) + delaySeconds.coerceAtLeast(0)
+        shown(brouterSeconds, brouterSeconds, pace, learnPace, delaySeconds)
+
+    /**
+     * With Learn my pace on, [learnedSeconds] (the same time to go at the pace learned
+     * across drives, [PaceBook]) scaled by this drive's own [pace]; off, the router's
+     * [brouterSeconds] as they are.
+     */
+    fun shown(brouterSeconds: Int, learnedSeconds: Int, pace: PaceTracker, learnPace: Boolean, delaySeconds: Int): Int =
+        (if (learnPace) pace.apply(learnedSeconds) else brouterSeconds) + delaySeconds.coerceAtLeast(0)
 }

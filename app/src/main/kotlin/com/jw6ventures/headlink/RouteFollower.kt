@@ -206,10 +206,20 @@ class RouteFollower(val route: Route, private val generation: Long) {
     }
 
     /** BRouter's own time at [metres] along, interpolated between the two points around it. */
-    private fun secondsAt(metres: Double): Double {
+    private fun secondsAt(metres: Double): Double = secondsAt(metres, route.pointSeconds, route.seconds.toDouble())
+
+    /**
+     * Seconds from [metres] along to the destination by [times], one per point from the
+     * start ([PaceBook.times]), interpolated as the route's own are.
+     */
+    fun remainingBy(metres: Double, times: FloatArray): Double {
+        val total = times.lastOrNull()?.toDouble() ?: 0.0
+        return secondsAt(totalM, times, total) - secondsAt(metres, times, total)
+    }
+
+    private fun secondsAt(metres: Double, times: FloatArray, total: Double): Double {
         if (totalM <= 0.0) return 0.0
-        val times = route.pointSeconds
-        if (times.size != count) return route.seconds * (metres / totalM).coerceIn(0.0, 1.0)
+        if (times.size != count) return total * (metres / totalM).coerceIn(0.0, 1.0)
         val i = segmentAt(metres)
         val length = along[i + 1] - along[i]
         val t = if (length > 0.0) ((metres - along[i]) / length).coerceIn(0.0, 1.0) else 0.0

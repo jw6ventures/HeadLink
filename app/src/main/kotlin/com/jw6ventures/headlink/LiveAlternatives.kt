@@ -115,6 +115,7 @@ class LiveAlternative(
                 alternative.roadStarts, alternative.roadNames, alternative.topSpeedKmh,
                 doubleArrayOf(alternative.latitudes[middle], alternative.longitudes[middle]),
                 alternative.nogoCount, alternative.closuresOpened, alternative.exitSigns,
+                alternative.paceClasses, alternative.timeScale,
             )
         }
 

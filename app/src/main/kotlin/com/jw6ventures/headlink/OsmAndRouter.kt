@@ -363,6 +363,11 @@ class OsmAndRouter(
             val signs = ArrayList<ExitSign?>()
             val roadStarts = ArrayList<Int>()
             val roadNames = ArrayList<String?>()
+            // Per point, for the learned pace: the class of the road from it on, and whether
+            // another road joins there (OsmAnd's attached roads).
+            val classes = ArrayList<Int>()
+            val junctions = ArrayList<Boolean>()
+            var attachedKnown = false
             var clock = 0.0
             var metres = 0.0
             for ((s, segment) in segments.withIndex()) {
@@ -390,6 +395,7 @@ class OsmAndRouter(
                 // The segment's own first point is the last one's end: keep one of the two.
                 val shared = first > 0
                 val seconds = segment.segmentTime.toDouble()
+                val roadClass = PaceRoad.roadOf(road.highway)
                 var walked = 0.0
                 point = segment.startPointIndex
                 var k = -1
@@ -397,10 +403,18 @@ class OsmAndRouter(
                     if (k >= 0) walked += pieces[k]
                     val lat = MapUtils.get31LatitudeY(road.getPoint31YTile(point))
                     val lon = MapUtils.get31LongitudeX(road.getPoint31XTile(point))
+                    val joined = joins(segment, point)
+                    if (joined != null) attachedKnown = true
                     if (!(k < 0 && shared)) {
                         lats += lat
                         lons += lon
                         times += (clock + if (lengths > 0) seconds * walked / lengths else 0.0).toFloat()
+                        classes += roadClass
+                        junctions += joined == true
+                    } else {
+                        // The shared point starts this segment's stretch, and is a junction if either side says so.
+                        classes[classes.size - 1] = roadClass
+                        if (joined == true) junctions[junctions.size - 1] = true
                     }
                     if (point == segment.endPointIndex) break
                     point += step
@@ -424,6 +438,7 @@ class OsmAndRouter(
             }
             if (lats.size < 2) throw RoutingException("no route found")
             val total = segments.sumOf { it.segmentTime.toDouble() }
+            val paceClasses = paceClasses(lats, lons, classes, junctions, attachedKnown)
             return Route(
                 lats.toDoubleArray(),
                 lons.toDoubleArray(),
@@ -440,7 +455,34 @@ class OsmAndRouter(
                 0,
                 false,
                 if (signs.any { it != null }) signs.toTypedArray() else emptyArray(),
+                paceClasses,
             ).withTimeScale(options.timeFactor)
+        }
+
+        /**
+         * Whether a road other than the route's joins [segment] at its [point]: true or
+         * false, or null where OsmAnd attached no roads to the segment at all (a segment
+         * that never went through its result preparation).
+         */
+        private fun joins(segment: RouteSegmentResult, point: Int): Boolean? = try {
+            segment.getAttachedRoutes(point).any { PaceRoad.countsAsJunction(it.getObject().highway) }
+        } catch (e: NullPointerException) {
+            // getAttachedRoutes reads an array that only result preparation creates.
+            null
+        } catch (e: ArrayIndexOutOfBoundsException) {
+            null
+        }
+
+        /** Each point's [PaceRoad] code from its road class and the junctions around it. */
+        @JvmStatic
+        fun paceClasses(
+            lats: List<Double>, lons: List<Double>, classes: List<Int>, junctions: List<Boolean>, attachedKnown: Boolean,
+        ): ByteArray {
+            val n = lats.size
+            val along = DoubleArray(n)
+            for (i in 1 until n) along[i] = along[i - 1] + MapUtils.getDistance(lats[i - 1], lons[i - 1], lats[i], lons[i])
+            val densities = if (attachedKnown) PaceRoad.densities(along, junctions.toBooleanArray()) else IntArray(n)
+            return ByteArray(n) { PaceRoad.code(classes[it], densities[it]) }
         }
 
         /**

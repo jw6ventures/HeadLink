@@ -177,8 +177,22 @@ class Route @JvmOverloads constructor(
      * routing data; BRouter's has no exit numbers or destinations.
      */
     val exitSigns: Array<ExitSign?> = emptyArray(),
+    /**
+     * The road class and surroundings of the stretch from each point to the next, a
+     * [PaceRoad] code, for the learned pace ([PaceBook]); one per point, the last unused.
+     * Empty when not known: BRouter's routes and routes saved before 0.11.
+     */
+    val paceClasses: ByteArray = ByteArray(0),
+    /**
+     * The factor [withTimeScale] put on every time (the Routing screen's time adjustment),
+     * 1 when none: [PaceBook] learns against the times as the router gave them.
+     */
+    val timeScale: Double = 1.0,
 ) {
     val points: Int get() = latitudes.size
+
+    /** The [PaceRoad] code of the stretch starting at point [index], or null when not known. */
+    fun paceClassAt(index: Int): Byte? = if (paceClasses.size == points) paceClasses.getOrNull(index) else null
 
     /** The sign for the maneuver at position [k] in [maneuverIndices], or null. */
     fun exitSign(k: Int): ExitSign? = exitSigns.getOrNull(k)
@@ -196,7 +210,7 @@ class Route @JvmOverloads constructor(
         return Route(
             latitudes, longitudes, distanceM, (seconds * factor).roundToInt(), maneuverIndices, exitNumbers, commands,
             FloatArray(pointSeconds.size) { (pointSeconds[it] * factor).toFloat() }, roadStarts, roadNames, topSpeedKmh, via,
-            nogoCount, closuresOpened, exitSigns,
+            nogoCount, closuresOpened, exitSigns, paceClasses, timeScale * factor,
         )
     }
 
@@ -205,7 +219,7 @@ class Route @JvmOverloads constructor(
         require(starts.size == names.size) { "one name per stretch" }
         return Route(
             latitudes, longitudes, distanceM, seconds, maneuverIndices, exitNumbers, commands,
-            pointSeconds, starts, names, topSpeedKmh, via, nogoCount, closuresOpened, exitSigns,
+            pointSeconds, starts, names, topSpeedKmh, via, nogoCount, closuresOpened, exitSigns, paceClasses, timeScale,
         )
     }
 
@@ -214,14 +228,14 @@ class Route @JvmOverloads constructor(
         require(signs.size == maneuverIndices.size) { "one sign per maneuver" }
         return Route(
             latitudes, longitudes, distanceM, seconds, maneuverIndices, exitNumbers, commands,
-            pointSeconds, roadStarts, roadNames, topSpeedKmh, via, nogoCount, closuresOpened, signs,
+            pointSeconds, roadStarts, roadNames, topSpeedKmh, via, nogoCount, closuresOpened, signs, paceClasses, timeScale,
         )
     }
 
     /** This route marked as made with [count] traffic nogos, and whether closures were opened for it. */
     fun withNogos(count: Int, opened: Boolean): Route = Route(
         latitudes, longitudes, distanceM, seconds, maneuverIndices, exitNumbers, commands,
-        pointSeconds, roadStarts, roadNames, topSpeedKmh, via, count, opened, exitSigns,
+        pointSeconds, roadStarts, roadNames, topSpeedKmh, via, count, opened, exitSigns, paceClasses, timeScale,
     )
 
     /**
@@ -249,6 +263,8 @@ class Route @JvmOverloads constructor(
             IntArray(roads.size) { maxOf(0, roadStarts[roads[it]] - start) }, Array(roads.size) { roadNames[roads[it]] },
             topSpeedKmh, via, nogoCount, closuresOpened,
             if (exitSigns.size == maneuverIndices.size) Array(keep.size) { exitSigns[keep[it]] } else emptyArray(),
+            if (paceClasses.size == points) paceClasses.copyOfRange(start, points) else ByteArray(0),
+            timeScale,
         )
     }
 

@@ -142,6 +142,11 @@ data class RouteOptions(
  *
  * A re-route keeps what was learned: it is the same drive. A new destination resets it.
  * Pure and single-threaded, driven from the main thread like [RouteFollower].
+ *
+ * **Against the learned pace.** Since 0.11 [Guide] feeds it the time to go at the pace
+ * learned across drives ([PaceBook]), so what it measures is how this drive differs from
+ * the usual (a jam, the weather), and gives the router's own fall alongside, which
+ * [countedRawS] and [countedActualS] hand on for [PaceBook] to learn from.
  */
 class PaceTracker {
     /** Seconds the estimate fell by, over every counted stretch. */
@@ -154,6 +159,7 @@ class PaceTracker {
 
     private var generation = -1L
     private var lastRemainingS: Int? = null
+    private var lastRawS: Int? = null
     private var lastMs = 0L
     private var moving = false
 
@@ -166,12 +172,25 @@ class PaceTracker {
      * route's estimate of the seconds still to go from it, or null when the fix is not on
      * the route.
      */
-    fun onFix(generation: Long, remainingS: Int?, nowMs: Long) {
+    fun onFix(generation: Long, remainingS: Int?, nowMs: Long) = onFix(generation, remainingS, nowMs, remainingS)
+
+    /**
+     * [onFix], with [remainingS] at the learned pace and [rawRemainingS] the route's own
+     * estimate from the same point: the start rule and the factor read [remainingS]; what
+     * was counted is left in [countedRawS] and [countedActualS] until the next fix.
+     */
+    fun onFix(generation: Long, remainingS: Int?, nowMs: Long, rawRemainingS: Int?) {
+        countedRawS = 0.0
+        countedActualS = 0.0
         val last = lastRemainingS
-        if (remainingS == null || generation != this.generation || last == null || nowMs - lastMs > GAP_MS || nowMs < lastMs) {
+        val lastRaw = lastRawS
+        if (remainingS == null || rawRemainingS == null || generation != this.generation || last == null || lastRaw == null ||
+            nowMs - lastMs > GAP_MS || nowMs < lastMs
+        ) {
             // A new stretch: nothing between the last fix and this one is counted.
             this.generation = generation
             lastRemainingS = remainingS
+            lastRawS = rawRemainingS
             lastMs = nowMs
             moving = false
             pendingFall = 0
@@ -189,11 +208,23 @@ class PaceTracker {
             if (pendingFall >= START_FALL_S) moving = true
         } else {
             estimatedS += fell
-            actualS += (nowMs - lastMs) / 1000.0
+            val passed = (nowMs - lastMs) / 1000.0
+            actualS += passed
+            countedRawS = (lastRaw - rawRemainingS).toDouble()
+            countedActualS = passed
         }
         lastRemainingS = remainingS
+        lastRawS = rawRemainingS
         lastMs = nowMs
     }
+
+    /** The route's own estimate's fall over the last fix's interval, if it was counted; else 0. */
+    var countedRawS = 0.0
+        private set
+
+    /** The seconds that passed over the last fix's interval, if it was counted; else 0. */
+    var countedActualS = 0.0
+        private set
 
     /** The factor on the time still to go; 1 until enough of the drive is known. */
     fun factor(): Double {
@@ -212,7 +243,10 @@ class PaceTracker {
         actualS = 0.0
         generation = -1L
         lastRemainingS = null
+        lastRawS = null
         lastMs = 0L
+        countedRawS = 0.0
+        countedActualS = 0.0
         moving = false
         pendingFall = 0
         pendingMs = 0L

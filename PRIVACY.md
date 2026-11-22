@@ -23,6 +23,10 @@ turned off for all of it, so none of it is copied to a cloud backup or a new pho
 - **Saved places and recent destinations.**
 - **Where you parked:** the car's last position when a drive ends, so you can walk back
   to it. Only the latest one is kept, and **Forget** on the Home screen deletes it.
+- **Your learned driving pace**, if Learn my pace is on: how your driving time compared
+  with the route's estimate, per kind of road and per area about 15 miles across. It
+  records which areas you have driven in, but no routes, times of day or positions within
+  an area. **Forget learned pace** on the Routing screen deletes it.
 - **Diagnostic reports** of each connection attempt. A report records how the connection
   went (timings, counters, what the head unit offered, errors). It does not contain your
   location, destinations, routes, callers, phone numbers, contacts, notification content,

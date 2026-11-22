@@ -31,7 +31,8 @@
 #   and in, the margin at a band's edge, the glide, that a pinch or +/- holds the zoom
 #   until recentre, that a panned map is left alone, and the settings' repair.
 # * RouteOptionsTest: Maps & routing -> Route preferences: the profile parameters each
-#   switch sends, repair, labels, the time adjustment, the stored keys, and Learn my pace
+#   switch sends, repair, labels, the time adjustment, the stored keys, Learn my pace and
+#   its pace learned across drives (kinds of road, buckets, fading, saved text),
 #   over synthetic drives. ROUTING_SEGMENTS with W100_N30.rd5 adds Austin routes (Avoid toll
 #   roads leaves SH 130, 56 against 75 mph); with it or W75_N40.rd5, that each route's
 #   switches reach BRouter even when its profile cache would have reused the last ones.

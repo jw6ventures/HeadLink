@@ -15,6 +15,7 @@ import kotlin.Pair;
 import java.util.ArrayList;
 import com.jw6ventures.headlink.AlternativeFinder;
 import com.jw6ventures.headlink.Destination;
+import com.jw6ventures.headlink.ExitSign;
 import com.jw6ventures.headlink.DestinationSource;
 import com.jw6ventures.headlink.LiveAlternative;
 import com.jw6ventures.headlink.NavigationFile;
@@ -97,6 +98,15 @@ public final class RoutePreviewTest {
                 new int[0], new int[0], new int[0]);
         P.writeChoice(file, 8L, untimed);
         check(P.readChoice(file).getSecond().getPointSeconds().length == 0, "a route with no point times reads back with none");
+        // 0.11: each stretch's kind of road and the time adjustment cross the file, for the learned pace.
+        Route kinds = new Route(new double[] {30.0, 30.01}, new double[] {-97.0, -97.0}, 1112, 66, new int[0], new int[0],
+                new int[0], new float[] {0f, 66f}, new int[0], new String[0], 121, null, 0, false, new ExitSign[0],
+                new byte[] {13, 0}, 1.1);
+        P.writeChoice(file, 10L, kinds);
+        Route kindsBack = P.readChoice(file).getSecond();
+        check(Arrays.equals(kindsBack.getPaceClasses(), new byte[] {13, 0}) && Math.abs(kindsBack.getTimeScale() - 1.1) < 1e-12,
+                "a route's kinds of road and time adjustment read back");
+        check(P.readChoice(writeAndRead(file, untimed)).getSecond().getPaceClasses().length == 0, "a route with none reads back with none");
     }
 
     private static void aStrangeFileIsRefused(File work) throws IOException {
@@ -222,10 +232,11 @@ public final class RoutePreviewTest {
         Route shapedBack = P.readChoice(file).getSecond();
         check(shapedBack.getTrafficShaped() && shapedBack.getClosuresOpened(), "a traffic-shaped route through a closure reads back as one");
         check(!P.readChoice(writeAndRead(file, sample())).getSecond().getTrafficShaped(), "one without reads back without");
-        // A version 2 file, written before P9 (the same bytes less the two flags), is still read.
+        // A version 2 file, written before P9 (the same bytes less the two flags, and less
+        // version 5's road classes flag and time scale), is still read.
         P.writeChoice(file, 9L, shaped);
         byte[] bytes = Files.readAllBytes(file.toPath());
-        byte[] old = Arrays.copyOf(bytes, bytes.length - 2);
+        byte[] old = Arrays.copyOf(bytes, bytes.length - 2 - 1 - 8);
         old[3] = 2;
         Files.write(file.toPath(), old);
         Route oldBack = P.readChoice(file).getSecond();

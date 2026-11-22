@@ -35,6 +35,7 @@ import com.jw6ventures.headlink.Nogo;
 import com.jw6ventures.headlink.ObfReaderFailures;
 import com.jw6ventures.headlink.OsmAndRouter;
 import com.jw6ventures.headlink.PositionalFile;
+import com.jw6ventures.headlink.PaceRoad;
 import com.jw6ventures.headlink.Route;
 import com.jw6ventures.headlink.RouteOptions;
 import com.jw6ventures.headlink.RouteRequest;
@@ -129,6 +130,15 @@ public final class OsmAndRoutingTest {
         check(Math.abs(times[times.length - 1] - route.getSeconds()) <= 1f, "ending at the route's own total: "
             + times[times.length - 1] + " against " + route.getSeconds());
         check(route.getDistanceM() > 1_000 && route.getDistanceM() < 2_500, "a plausible length: " + route.getDistanceM());
+        // 0.11: each stretch's kind of road, for the learned pace: the motorway, then its exit ramp.
+        byte[] kinds = route.getPaceClasses();
+        check(kinds.length == route.getPoints(), "a kind of road for every point");
+        boolean highway = false, ramp = false;
+        for (byte k : kinds) {
+            highway |= PaceRoad.INSTANCE.road(k) == PaceRoad.HIGHWAY;
+            ramp |= PaceRoad.INSTANCE.road(k) == PaceRoad.RAMP;
+        }
+        check(highway && ramp, "the motorway and its ramp are told apart: " + java.util.Arrays.toString(kinds));
         RouteRequest slower = new RouteRequest(FROM_LAT, FROM_LON, TO_LAT, TO_LON, null,
             new RouteOptions(false, false, false, false, false, RouteOptions.DEFAULT_TOP_SPEED_KMH, 20, true, true, true));
         Route scaled = route(router, slower);

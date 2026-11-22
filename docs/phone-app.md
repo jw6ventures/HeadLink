@@ -252,7 +252,7 @@ are in [navigation.md](navigation.md).
 | Allow tracks | off | Opens farm and forest tracks and unclassified roads |
 | Top speed | 75 mph (121 km/h) | The profile's top speed, from 56 to 85 mph. It changes routes as well as times. |
 | Time adjustment | as estimated | −15% to +30% on every estimated time; changes no route |
-| Learn my pace | on | Corrects the time left by how the drive so far compares with the estimate |
+| Learn my pace | on | Corrects the time left by your pace learned across drives (per road kind, surroundings and 15 mile area) and by how this drive compares; Forget learned pace clears it |
 | Show other routes on the map | on | Up to two grey alternatives with "+N min" while a route is followed |
 
 The 75 mph default was chosen because BRouter's own 56 mph timed Austin to Dallas at

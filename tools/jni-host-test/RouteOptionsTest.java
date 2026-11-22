@@ -1,7 +1,8 @@
 // Maps & routing -> Route preferences on a desktop JVM: the options' profile parameters,
 // repair, labels and time scaling, the Learn my pace tracker over synthetic drives, and
-// the stored keys. RouteOptions and PaceTracker are pure Kotlin; the switches and spinners
-// around them need a device.
+// the stored keys, and since 0.11 the pace learned across drives (PaceRoad's kinds of road,
+// PaceBook's buckets, fading, text form and route times). RouteOptions, PaceTracker and
+// PaceBook are pure Kotlin; the switches and spinners around them need a device.
 //
 // With a directory of routing tiles as the first argument it also routes for real: with
 // W100_N30.rd5 (Austin) a toll road the default route takes and Avoid toll roads leaves,
@@ -10,6 +11,9 @@
 import java.io.File;
 import java.nio.file.Files;
 import java.util.Map;
+import com.jw6ventures.headlink.ExitSign;
+import com.jw6ventures.headlink.PaceBook;
+import com.jw6ventures.headlink.PaceRoad;
 import com.jw6ventures.headlink.PaceTracker;
 import com.jw6ventures.headlink.Route;
 import com.jw6ventures.headlink.RouteOptions;
@@ -33,6 +37,12 @@ public final class RouteOptionsTest {
         paceIsLearnedOnlyWhileMovingOnTheRoute();
         aParkedFixWanderingIsNotDriving();
         paceIsHeldToItsLimits();
+        roadsAreSortedIntoKinds();
+        thePaceIsLearnedAcrossDrivesByKindAndArea();
+        oldDrivingFades();
+        theLearnedPaceIsKeptAsText();
+        aRouteIsTimedAtTheLearnedPace();
+        theTrackerHandsOnTheRoutesOwnFall();
         String segments = args.length > 0 ? args[0] : "";
         String real = "real routes skipped (no tile directory given)";
         if (!segments.isEmpty()) {
@@ -235,6 +245,147 @@ public final class RouteOptionsTest {
         backwards.onFix(1, 100, 10_000);
         backwards.onFix(1, 99, 5_000);
         check(backwards.getActualS() == 0.0, "a clock going backwards starts a new stretch");
+    }
+
+    private static final PaceRoad R = PaceRoad.INSTANCE;
+    /** Austin, and Hico (about 110 miles north-west): different grid squares. */
+    private static final double AUSTIN_LAT = 30.27, AUSTIN_LON = -97.74, HICO_LAT = 31.98, HICO_LON = -98.03;
+
+    private static void roadsAreSortedIntoKinds() {
+        check(R.roadOf("motorway") == PaceRoad.HIGHWAY && R.roadOf("trunk") == PaceRoad.HIGHWAY, "motorway and trunk are highways");
+        check(R.roadOf("primary") == PaceRoad.MAJOR, "primary is a major road");
+        check(R.roadOf("secondary") == PaceRoad.MINOR && R.roadOf("tertiary") == PaceRoad.MINOR, "secondary and tertiary are minor roads");
+        check(R.roadOf("residential") == PaceRoad.LOCAL && R.roadOf("service") == PaceRoad.LOCAL, "streets are local");
+        check(R.roadOf("motorway_link") == PaceRoad.RAMP && R.roadOf("primary_link") == PaceRoad.RAMP, "links are ramps");
+        check(R.roadOf(null) == PaceRoad.UNKNOWN && R.roadOf("busway") == PaceRoad.UNKNOWN, "anything else is not known");
+        check(!R.countsAsJunction("service") && !R.countsAsJunction("track") && R.countsAsJunction("residential"),
+                "driveways and tracks are not junctions");
+        byte code = R.code(PaceRoad.MINOR, PaceRoad.RURAL);
+        check(R.road(code) == PaceRoad.MINOR && R.density(code) == PaceRoad.RURAL && R.valid(code), "a code packs both");
+        check(!R.valid((byte) 99), "and a strange one is not valid");
+        // Two kilometres with a junction every 100 m, and with one every kilometre.
+        double[] along = new double[21];
+        boolean[] grid = new boolean[21];
+        boolean[] country = new boolean[21];
+        for (int i = 0; i < 21; i++) {
+            along[i] = i * 100.0;
+            grid[i] = true;
+            country[i] = i % 10 == 5;
+        }
+        int[] urban = R.densities(along, grid);
+        int[] rural = R.densities(along, country);
+        check(urban[10] == PaceRoad.URBAN, "a junction every block is urban: " + urban[10]);
+        check(rural[10] == PaceRoad.RURAL, "one a kilometre is rural: " + rural[10]);
+        boolean[] suburb = new boolean[21];
+        for (int i = 0; i < 21; i++) suburb[i] = i % 3 == 0;
+        check(R.densities(along, suburb)[10] == PaceRoad.SUBURBAN, "one every 300 m is suburban");
+        check(R.densities(new double[] {0, 100}, new boolean[] {true, true})[0] == PaceRoad.DENSITY_UNKNOWN,
+                "a route too short says nothing");
+        check(!R.cell(AUSTIN_LAT, AUSTIN_LON).equals(R.cell(HICO_LAT, HICO_LON)), "Austin and Hico are different squares");
+        check(R.cell(AUSTIN_LAT, AUSTIN_LON).equals(R.cell(AUSTIN_LAT + 0.05, AUSTIN_LON + 0.05)), "and nearby Austin is the same one");
+    }
+
+    /** [minutes] of driving taking [ratio] times the estimate, one minute at a time. */
+    private static void drive(PaceBook book, Byte code, double lat, double lon, int minutes, double ratio) {
+        for (int i = 0; i < minutes; i++) book.add(code, lat, lon, 60.0, 60.0 * ratio);
+    }
+
+    private static void thePaceIsLearnedAcrossDrivesByKindAndArea() {
+        PaceBook book = new PaceBook();
+        Byte ruralMinor = R.code(PaceRoad.MINOR, PaceRoad.RURAL);
+        Byte urbanMinor = R.code(PaceRoad.MINOR, PaceRoad.URBAN);
+        Byte highway = R.code(PaceRoad.HIGHWAY, PaceRoad.RURAL);
+        check(book.factor(ruralMinor, HICO_LAT, HICO_LON, 1.1) == 1.1, "nothing learned is the time adjustment");
+        drive(book, ruralMinor, HICO_LAT, HICO_LON, 5, 0.8);
+        check(book.factor(ruralMinor, HICO_LAT, HICO_LON, 1.0) == 1.0, "five minutes is not enough to go on");
+        // Two hours on rural FM roads near Hico at 0.85, and two hours in Austin's grid at 1.2.
+        drive(book, ruralMinor, HICO_LAT, HICO_LON, 115, 0.85);
+        drive(book, urbanMinor, AUSTIN_LAT, AUSTIN_LON, 120, 1.2);
+        double hico = book.factor(ruralMinor, HICO_LAT, HICO_LON, 1.0);
+        double austin = book.factor(urbanMinor, AUSTIN_LAT, AUSTIN_LON, 1.0);
+        check(Math.abs(hico - 0.85) < 0.02, "rural FM roads near Hico are learned as faster: " + hico);
+        check(Math.abs(austin - 1.2) < 0.02, "the same class of road in Austin as slower: " + austin);
+        // A rural minor road somewhere never driven: no square of its own, so the rural one.
+        double elsewhere = book.factor(ruralMinor, 33.0, -101.0, 1.0);
+        check(Math.abs(elsewhere - 0.85) < 0.05, "a rural road never driven gets the rural pace: " + elsewhere);
+        // A rural minor road inside Austin's square: the square's own pace for minor roads wins.
+        double ruralInAustin = book.factor(ruralMinor, AUSTIN_LAT, AUSTIN_LON, 1.0);
+        check(ruralInAustin > 1.1, "a square driven for an hour or more has the last word: " + ruralInAustin);
+        // A highway never driven: the overall pace, between the two.
+        double never = book.factor(highway, HICO_LAT, HICO_LON, 1.0);
+        check(never > 0.9 && never < 1.15, "a kind of road never driven gets the overall pace: " + never);
+        check(book.factor(null, HICO_LAT, HICO_LON, 1.0) == never, "and so does a stretch of unknown kind");
+        PaceBook jam = new PaceBook();
+        drive(jam, ruralMinor, HICO_LAT, HICO_LON, 120, 3.0);
+        check(Math.abs(jam.factor(ruralMinor, HICO_LAT, HICO_LON, 1.0) - PaceTracker.MAX_FACTOR) < 1e-9, "held to its limits");
+        check(book.report().contains("pace_learned_squares=2") && !book.report().contains(","), "the report counts squares and names none");
+    }
+
+    private static void oldDrivingFades() {
+        PaceBook book = new PaceBook();
+        Byte code = R.code(PaceRoad.HIGHWAY, PaceRoad.RURAL);
+        drive(book, code, HICO_LAT, HICO_LON, 120, 1.4);
+        // Then ten hours at the estimate: the old slow drives have faded away.
+        drive(book, code, HICO_LAT, HICO_LON, 600, 1.0);
+        double f = book.factor(code, HICO_LAT, HICO_LON, 1.0);
+        check(f < 1.05, "recent driving counts more than old: " + f);
+    }
+
+    private static void theLearnedPaceIsKeptAsText() {
+        PaceBook book = new PaceBook();
+        Byte code = R.code(PaceRoad.MAJOR, PaceRoad.SUBURBAN);
+        drive(book, code, AUSTIN_LAT, AUSTIN_LON, 90, 1.25);
+        check(book.getDirty(), "learning marks the book to save");
+        String text = book.encode();
+        check(!book.getDirty(), "and saving clears the mark");
+        PaceBook back = new PaceBook();
+        back.decode(text + "nonsense line\ng9 x y\n");
+        check(back.getSize() == book.getSize(), "every bucket reads back, a bad line is skipped: " + back.getSize());
+        check(Math.abs(back.factor(code, AUSTIN_LAT, AUSTIN_LON, 1.0) - book.factor(code, AUSTIN_LAT, AUSTIN_LON, 1.0)) < 1e-3,
+                "with the same pace");
+        PaceBook strange = new PaceBook();
+        strange.decode("something else 9\nall 100 100\n");
+        check(strange.getSize() == 0, "a file of another kind is not read");
+        back.clear();
+        check(back.getSize() == 0 && back.getDirty(), "forgetting empties it, to be saved");
+    }
+
+    private static void aRouteIsTimedAtTheLearnedPace() {
+        Byte slow = R.code(PaceRoad.LOCAL, PaceRoad.URBAN);
+        Byte fast = R.code(PaceRoad.HIGHWAY, PaceRoad.RURAL);
+        byte[] classes = {slow, fast, fast, fast};
+        // 100 s on a city street, then 200 s of highway, timed with a 10% time adjustment.
+        Route route = new Route(new double[] {AUSTIN_LAT, AUSTIN_LAT + 0.01, AUSTIN_LAT + 0.02, AUSTIN_LAT + 0.03},
+                new double[] {AUSTIN_LON, AUSTIN_LON, AUSTIN_LON, AUSTIN_LON}, 3336, 300, new int[0], new int[0], new int[0],
+                new float[] {0f, 100f, 200f, 300f}, new int[0], new String[0], 121, null, 0, false, new ExitSign[0],
+                classes, 1.0).withTimeScale(1.1);
+        check(Math.abs(route.getTimeScale() - 1.1) < 1e-9 && route.getPaceClasses().length == 4, "the route keeps its kinds and scale");
+        PaceBook book = new PaceBook();
+        float[] none = book.times(route);
+        check(Math.abs(none[3] - 330f) < 0.1, "with nothing learned, the route's own times: " + none[3]);
+        drive(book, slow, AUSTIN_LAT, AUSTIN_LON, 120, 1.3);
+        drive(book, fast, AUSTIN_LAT, AUSTIN_LON, 120, 0.9);
+        float[] learned = book.times(route);
+        double street = learned[1], highwayPart = learned[3] - learned[1];
+        check(Math.abs(street - 130) < 3, "the street at the street's pace: " + street);
+        check(Math.abs(highwayPart - 180) < 4, "the highway at the highway's pace: " + highwayPart);
+        Route remainder = route.remainder(1);
+        check(remainder.getPaceClasses().length == 3 && remainder.getPaceClasses()[0] == fast, "what is still ahead keeps its kinds");
+        check(book.times(new Route(new double[] {0, 0}, new double[] {0, 0.001}, 111, 10, new int[0], new int[0])) == null,
+                "a route with no point times has none at the learned pace");
+    }
+
+    private static void theTrackerHandsOnTheRoutesOwnFall() {
+        PaceTracker pace = new PaceTracker();
+        long now = 0;
+        int learned = 2000, raw = 1000;
+        pace.onFix(1, learned, now += 1000, raw);
+        // Under way: the learned time falls 2 s a second, the route's own 1 s.
+        for (int i = 0; i < 30; i++) pace.onFix(1, learned -= 2, now += 1000, raw -= 1);
+        check(pace.getCountedRawS() == 1.0 && pace.getCountedActualS() == 1.0, "the last interval's own fall and time are handed on");
+        check(Math.abs(pace.getActualS() / pace.getEstimatedS() - 0.5) < 0.05, "the drive is measured against the learned time");
+        pace.onFix(1, null, now += 1000, null);
+        check(pace.getCountedActualS() == 0.0, "off the route nothing is handed on");
     }
 
     private static Route route(Router router, double fromLat, double fromLon, double toLat, double toLon, RouteOptions o) throws Exception {

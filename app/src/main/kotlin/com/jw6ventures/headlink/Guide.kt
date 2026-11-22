@@ -58,6 +58,9 @@ object Guide {
      */
     const val ARRIVAL_HOLD_MS = 30_000L
 
+    /** Seconds of driving learned between saves of the learned pace mid-route. */
+    private const val SAVE_EVERY_S = 300.0
+
     /**
      * Told what the dashboard's turn card and trip panel should say about the route each
      * time guidance publishes (P7.4): installed by [ProjectionService] while a dashboard
@@ -135,6 +138,17 @@ object Guide {
 
     /** The Routing screen's Learn my pace, set by [Navigation] at every request and change. */
     var learnPace = RouteOptions().learnPace
+
+    /**
+     * The followed route's times from its start at the pace learned across drives
+     * ([LearnedPace]), worked out when the route is followed and kept for it, so the time
+     * to go does not jump while the book learns; null before the book is read or with no
+     * point times.
+     */
+    private var learnedTimes: FloatArray? = null
+
+    /** Seconds credited to the book since it was last saved. */
+    private var unsavedS = 0.0
     /** A fix at least [HEADING_BASE_M] behind the newest, and the travel bearing between them. */
     private var headingFrom: Pair<Double, Double>? = null
     private var heading: Double? = null
@@ -237,6 +251,9 @@ object Guide {
         if (!rerouting) pace.reset()
         val follower = RouteFollower(route, generation)
         this.follower = follower
+        appContext?.let(LearnedPace::load)
+        learnedTimes = if (appContext != null) LearnedPace.book.times(route) else null
+        LearnedPace.save()
         viaAlongM = route.via?.takeIf { Navigation.via != null }?.let { follower.alongNearest(it[0], it[1]) }
         last = null
         if (rerouting) {
@@ -280,7 +297,19 @@ object Guide {
      * asked for, and the traffic delay ahead on the followed route (P9.4, [ArrivalTime]).
      */
     private fun shown(seconds: Int): Int =
-        ArrivalTime.shown(seconds, pace, learnPace, follower?.route?.let(Traffic::delaySeconds) ?: 0)
+        ArrivalTime.shown(seconds, learned(seconds), pace, learnPace, follower?.route?.let(Traffic::delaySeconds) ?: 0)
+
+    /**
+     * [seconds] to go by the route's own times, at the pace learned across drives instead:
+     * from where the last fix put the vehicle, by [learnedTimes]. [seconds] as it is while
+     * nothing is learned for this route.
+     */
+    private fun learned(seconds: Int): Int {
+        val times = learnedTimes ?: return seconds
+        val follower = follower ?: return seconds
+        val along = last?.alongM ?: return seconds
+        return follower.remainingBy(along, times).roundToInt()
+    }
 
     /**
      * The route asked for failed. [Routing] keeps a failed re-route's old route on the map,
@@ -377,10 +406,13 @@ object Guide {
         cancelArrivalEnd()
         follower = null
         last = null
+        learnedTimes = null
         rerouting = false
         closureRerouting = false
         Traffic.onRouteEnded()
         pace.reset()
+        LearnedPace.save()
+        unsavedS = 0.0
         voice.reset()
         LiveAlternatives.clear()
     }
@@ -392,7 +424,12 @@ object Guide {
      * used to time spoken prompts, never reported.
      */
     fun onFix(context: Context, latitude: Double, longitude: Double, source: String, speedMps: Double? = null) {
-        appContext = context.applicationContext
+        if (appContext == null) {
+            appContext = context.applicationContext
+            // A route followed before the first fix (a restart) is timed once the book is read.
+            LearnedPace.load(context)
+            follower?.route?.let { learnedTimes = LearnedPace.book.times(it) }
+        }
         lastFix = latitude to longitude
         lastSpeed = speedMps
         val from = headingFrom
@@ -417,7 +454,11 @@ object Guide {
         // Learned whether or not it is shown, so turning it on mid-drive has a pace to use.
         // BRouter's own seconds, never the shown ones with traffic in: the pace and the
         // delay must not count the same jam twice (P9.4).
-        pace.onFix(generation, result.step?.destinationSeconds?.takeIf { result.state == FollowState.ON_ROUTE }, now)
+        // The drive's own pace is measured against the learned one, so it says how today
+        // differs from the usual; the book learns from the route's own times.
+        val raw = result.step?.destinationSeconds?.takeIf { result.state == FollowState.ON_ROUTE }
+        pace.onFix(generation, raw?.let(::learned), now, raw)
+        if (learnPace && pace.countedActualS > 0.0) learn(follower, result)
         Traffic.onPosition(follower.route, result)
         // Past the chosen alternative's via point, or at a stop added from search ahead
         // (P11.5a), the best route is the chosen one again: a re-route from here must not be
@@ -438,6 +479,25 @@ object Guide {
             backOnRoute()
         }
         publish()
+    }
+
+    /**
+     * The interval [pace] just counted, credited to the stretch the vehicle is on ([PaceBook]),
+     * against the router's own time with the time adjustment taken back out. Saved every
+     * [SAVE_EVERY_S] of driving as well as at the end of the route, in case the app is stopped.
+     */
+    private fun learn(follower: RouteFollower, result: FollowResult) {
+        val route = follower.route
+        val i = follower.indexAt(result.alongM)
+        val scale = route.timeScale.takeIf { it > 0.0 } ?: 1.0
+        LearnedPace.book.add(
+            route.paceClassAt(i), route.latitudes[i], route.longitudes[i], pace.countedRawS / scale, pace.countedActualS,
+        )
+        unsavedS += pace.countedActualS
+        if (unsavedS >= SAVE_EVERY_S) {
+            LearnedPace.save()
+            unsavedS = 0.0
+        }
     }
 
     /** Counts what one result changed; [previous] is null for a route's first fix. */
@@ -595,6 +655,14 @@ object Guide {
             "guidance_learn_pace=$learnPace guidance_pace_estimated_s=${pace.estimatedS.roundToInt()} " +
                 "guidance_pace_actual_s=${pace.actualS.roundToInt()} " +
                 "guidance_pace_factor=${String.format(java.util.Locale.ROOT, "%.3f", pace.factor())}",
+        )
+        // How much is learned across drives, and what it makes of this route: no places.
+        val route = follower?.route
+        val learnedRoute = route?.let { r -> learnedTimes?.lastOrNull()?.let { it / r.seconds.coerceAtLeast(1) } }
+        appendLine(
+            "guidance_${LearnedPace.book.report().replace(" ", " guidance_")} " +
+                "guidance_pace_route_classes=${route?.paceClasses?.isNotEmpty() ?: false} " +
+                "guidance_pace_route_learned=${learnedRoute?.let { String.format(java.util.Locale.ROOT, "%.3f", it) } ?: "-"}",
         )
         val follower = follower
         val step = result?.step

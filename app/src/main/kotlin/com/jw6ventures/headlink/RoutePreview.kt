@@ -290,6 +290,12 @@ object RoutePreview {
                 writeOptional(out, sign.toward)
             }
         }
+        // Version 5: each stretch's road class and surroundings, and the time adjustment
+        // already on the times, so a restart keeps the learned pace's view of the route.
+        val classes = route.paceClasses.size == route.points
+        out.writeBoolean(classes)
+        if (classes) out.write(route.paceClasses)
+        out.writeDouble(route.timeScale)
     }
 
     private fun writeOptional(out: DataOutputStream, value: String?) {
@@ -352,10 +358,21 @@ object RoutePreview {
         } else {
             emptyArray()
         }
+        var classes = ByteArray(0)
+        var scale = 1.0
+        if (version >= 5) {
+            if (input.readBoolean()) {
+                classes = ByteArray(points)
+                input.readFully(classes)
+                if (classes.any { !PaceRoad.valid(it) }) throw IOException("route file has an unknown road class")
+            }
+            scale = input.readDouble()
+            if (!(scale > 0.0 && scale < 10.0)) throw IOException("route file time scale out of range: $scale")
+        }
         val timed = if (seconds.any { it.isNaN() }) FloatArray(0) else seconds
         return Route(
             latitudes, longitudes, distance, total, indices, exits, commands, timed, starts, names, topSpeed, via,
-            if (shaped) 1 else 0, opened, signs,
+            if (shaped) 1 else 0, opened, signs, classes, scale,
         )
     }
 
@@ -454,7 +471,7 @@ object RoutePreview {
         (Math.round(lat * 1e6) shl 32) xor (Math.round(lon * 1e6) and 0xFFFFFFFFL)
 
     /** 2: routes carry their via point. 3: and whether traffic shaped them (P9). 4: and their exit signs. */
-    private const val VERSION = 4
+    private const val VERSION = 5
     /** The oldest still read: 2, written before P9, as when 3 was current. */
     private const val OLDEST_VERSION = 2
 
