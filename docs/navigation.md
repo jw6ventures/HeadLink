@@ -659,7 +659,11 @@ routes back under the labels once the map is there.
 **The source.** `ObfMapSource` is a VTM `TileSource` over the vendored `.obf` reader, so
 the pane, its layers, labels, buildings and the day and night themes are unchanged. Each
 of VTM's loader threads opens its own reader per file, because OsmAnd's reader keeps a
-stream position and fills its index lazily. A tile asks every file for the objects in the
+stream position and fills its index lazily. A loader opens its readers on its first tile,
+from the files as they are then: in 0.10.3 it used the list the source saw at open, whose
+descriptors the library had since closed, so every reader failed (`obf_reader_failures=22`,
+`IOException`) and the map stayed blank for the session. With no reader open a tile fails,
+so VTM asks for it again, and the loader asks for the files again at most every 5 s. A tile asks every file for the objects in the
 tile's box at the tile's zoom; a way in two neighbouring regions' files is drawn once.
 Above zoom 17 tiles are cut from zoom 17's, as VTM does for Mapsforge.
 
