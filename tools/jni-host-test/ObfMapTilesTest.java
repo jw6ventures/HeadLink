@@ -48,6 +48,7 @@ public final class ObfMapTilesTest {
         anIslandIsLandInTheSea();
         openSeaIsTheWholeTile();
         noMapDataLeavesTheMapsforgeFile();
+        aLoaderAsksForTheFilesAsTheyAreNow();
         System.out.println("jni-host-test: ok " + passed + " OsmAnd map tile checks");
     }
 
@@ -240,6 +241,44 @@ public final class ObfMapTilesTest {
         } finally {
             java.nio.file.Files.deleteIfExists(file);
         }
+    }
+
+    /**
+     * 0.10.3 on the Pixel: a loader opened the list of files the source saw at open, whose
+     * descriptors had been closed since, and drew nothing for the rest of the session. A
+     * loader now asks for the files on its first tile, fails a tile it has no reader for
+     * (so VTM asks for it again, rather than keeping it empty), and does not ask again
+     * straight away.
+     */
+    private static void aLoaderAsksForTheFilesAsTheyAreNow() {
+        int[] asked = new int[1];
+        String nowhere = System.getProperty("java.io.tmpdir") + "/obf-map-not-here.obf";
+        com.jw6ventures.headlink.ObfMapSource source = new com.jw6ventures.headlink.ObfMapSource(() -> {
+            asked[0]++;
+            return List.of(new com.jw6ventures.headlink.OsmAndRouter.MapFile("gone", "gone.obf", nowhere));
+        }, 0, 20, 17);
+        org.oscim.tiling.ITileDataSource loader = source.getDataSource();
+        check(asked[0] == 0, "nothing is asked for before a tile");
+        org.oscim.tiling.QueryResult[] result = new org.oscim.tiling.QueryResult[1];
+        org.oscim.tiling.ITileDataSink sink = new org.oscim.tiling.ITileDataSink() {
+            @Override
+            public void process(MapElement element) {}
+
+            @Override
+            public void setTileImage(org.oscim.backend.canvas.Bitmap bitmap) {}
+
+            @Override
+            public void completed(org.oscim.tiling.QueryResult r) {
+                result[0] = r;
+            }
+        };
+        loader.query(new org.oscim.layers.tile.MapTile(3740, 6750, 14), sink);
+        check(asked[0] == 1, "the first tile asks for the files as they are then");
+        check(result[0] == org.oscim.tiling.QueryResult.FAILED, "with no reader the tile fails, so it is asked for again");
+        result[0] = null;
+        loader.query(new org.oscim.layers.tile.MapTile(3741, 6750, 14), sink);
+        check(asked[0] == 1 && result[0] == org.oscim.tiling.QueryResult.FAILED, "and the next tile straight after does not ask again");
+        loader.dispose();
     }
 
     private static void check(boolean condition, String what) {

@@ -58,11 +58,19 @@ class ObfMapSource(
 
     override fun close() = Unit
 
-    override fun getDataSource(): ITileDataSource = OverzoomTileDataSource(Reader(files), mOverZoom)
+    override fun getDataSource(): ITileDataSource = OverzoomTileDataSource(Reader(), mOverZoom)
 
-    /** One loader thread's view of the files. */
-    inner class Reader(private val wanted: List<OsmAndRouter.MapFile>) : ITileDataSource {
+    /**
+     * One loader thread's view of the files. Its readers are opened on its first tile, from
+     * [maps] as they are then, not from the list [open] saw: a file from the maps folder is
+     * opened through the library's descriptor, and the library may have closed and reopened
+     * the folder since. 0.10.3 kept the old list, every reader failed (`IOException`, 11
+     * files twice over in the report), and the loader drew nothing for the rest of the
+     * session. With no reader open it asks again, at most every [RETRY_MS].
+     */
+    inner class Reader : ITileDataSource {
         private var opened: List<Pair<RandomAccessFile, BinaryMapIndexReader>>? = null
+        private var triedAt = 0L
         private val element = MapElement()
         private val clipper = TileClipper(0f, 0f, 0f, 0f)
         private val separator = TileSeparator(0f, 0f, Tile.SIZE.toFloat(), Tile.SIZE.toFloat())
@@ -72,8 +80,12 @@ class ObfMapSource(
 
         private fun readers(): List<BinaryMapIndexReader> {
             opened?.let { list -> return list.map { it.second } }
-            val list = wanted.mapNotNull(::openReader)
-            opened = list
+            val now = System.nanoTime()
+            if (triedAt != 0L && now - triedAt < RETRY_MS * 1_000_000L) return emptyList()
+            triedAt = now
+            val list = maps().mapNotNull(::openReader)
+            // An empty list is not kept: the next tile after [RETRY_MS] tries again.
+            if (list.isNotEmpty()) opened = list
             return list.map { it.second }
         }
 
@@ -89,7 +101,15 @@ class ObfMapSource(
                 val ids = HashSet<Long>()
                 val req = BinaryMapIndexReader.buildSearchRequest(box.left, box.right, box.top, box.bottom, box.zoom, null)
                 request = req
-                for (reader in readers()) {
+                val readers = readers()
+                if (readers.isEmpty()) {
+                    // Failed, not an empty tile: VTM keeps an empty tile, and asks again for a
+                    // failed one, by which time a reader may be open.
+                    failures.incrementAndGet()
+                    sink.completed(QueryResult.FAILED)
+                    return
+                }
+                for (reader in readers) {
                     req.clearSearchResults()
                     val found = reader.searchMapIndex(req)
                     if (req.isCancelled) {
@@ -142,6 +162,9 @@ class ObfMapSource(
 
     companion object {
         private val LOG = Logger.getLogger(ObfMapSource::class.java.name)
+
+        /** How long a loader with no reader open waits before asking [maps] again. */
+        const val RETRY_MS = 5_000L
 
         /** VTM's MapFile clip margin below building zoom, in tile pixels. */
         private const val CLIP_BUFFER = 16f

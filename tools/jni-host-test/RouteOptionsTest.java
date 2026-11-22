@@ -31,6 +31,7 @@ public final class RouteOptionsTest {
         theTimeAdjustmentScalesEveryTime();
         theOptionsAreStoredWhole();
         paceIsLearnedOnlyWhileMovingOnTheRoute();
+        aParkedFixWanderingIsNotDriving();
         paceIsHeldToItsLimits();
         String segments = args.length > 0 ? args[0] : "";
         String real = "real routes skipped (no tile directory given)";
@@ -188,6 +189,31 @@ public final class RouteOptionsTest {
         check(pace.getActualS() == actual, "a re-route starts a new stretch");
         pace.reset();
         check(pace.factor() == 1.0 && pace.getActualS() == 0.0, "a new destination starts afresh");
+    }
+
+    /**
+     * 2026-11-19: parked with the route up, the position wandered 4 s along the route and
+     * the next 417 parked seconds were counted as driving (guidance_pace_estimated_s=4,
+     * guidance_pace_actual_s=421). The drive that followed, a little faster than the
+     * estimate, then showed close to 1.5 times the time still to go.
+     */
+    private static void aParkedFixWanderingIsNotDriving() {
+        PaceTracker pace = new PaceTracker();
+        long now = 0;
+        int remaining = 3354;
+        pace.onFix(1, remaining, now += 1000);
+        // Seven minutes parked: the fix drifts forward and back by a few seconds' worth.
+        int[] drift = {0, -2, -4, -1, 0, 2, -3, -4, -1, 1};
+        for (int i = 0; i < 420; i++) pace.onFix(1, remaining + drift[i % drift.length], now += 1000);
+        check(pace.getActualS() == 0.0 && pace.getEstimatedS() == 0.0, "a parked fix wandering a few seconds is not driving: "
+            + pace.getEstimatedS() + "/" + pace.getActualS());
+        // Then ten minutes driving 30% faster than the estimate.
+        double left = remaining;
+        for (int i = 0; i < 600; i++) {
+            left -= 1.3;
+            pace.onFix(1, (int) Math.round(left), now += 1000);
+        }
+        check(pace.factor() < 1.0, "a drive faster than estimated shows less time, not more: " + pace.factor());
     }
 
     private static void paceIsHeldToItsLimits() {

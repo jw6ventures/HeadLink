@@ -1,0 +1,1 @@
+OsmAnd map no longer stays blank when its files are reopened. Learn my pace no longer counts time parked as slow driving, which made the trip time too long.
