@@ -54,7 +54,7 @@ class AheadSearcher(
 
     /** The short route running on the routing thread, so turning the button off can stop it. */
     @Volatile
-    private var engine: btools.router.RoutingEngine? = null
+    private var engine: SearchHandle? = null
 
     /**
      * A POI button was pressed and left [on]. On, while guidance follows a route with a
@@ -108,7 +108,7 @@ class AheadSearcher(
         val gen = generation.incrementAndGet()
         val token = Routing.token
         val values = PoiSettings.load(app)
-        val options = AppSettings.load(app).routing
+        val options = Routing.options(app)
         val nogos = Traffic.nogos(options)
         val corridor = AheadCorridor(route, alongM, values.aheadMiles * AheadSearch.METRES_PER_MILE)
         val widthM = values.corridorMiles * AheadSearch.METRES_PER_MILE

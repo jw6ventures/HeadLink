@@ -1,6 +1,6 @@
 #!/bin/sh
 # The only networked dependency step: downloads crates pinned by Cargo.lock checksums
-# (workspace and tools/proto-gen) and the pinned OpenSSL and protoc archives, verified by
+# (workspace and tools/proto-gen) and the pinned OpenSSL, whisper.cpp and protoc archives, verified by
 # SHA-256, into the cache used by the offline scripts. Gradle's cache is filled separately
 # by `tools/android-build.sh --online`, verified against gradle/verification-metadata.xml.
 set -eu
@@ -22,6 +22,12 @@ fetch() { # file url sha256
 fetch openssl-3.5.8.tar.gz \
     https://github.com/openssl/openssl/releases/download/openssl-3.5.8/openssl-3.5.8.tar.gz \
     a8f84a39918ec6415ce765d9b429d313ba97b8143169c172e734b9514464f5b2
+# whisper.cpp 1.8.3 (ggml 0.9.5), voice input's recognizer, as published inside the
+# whisper-rs-sys 0.15.0 crate: crates.io archives are immutable and this SHA-256 is the one
+# the crates.io index records. tools/whisper-build.sh uses only its whisper.cpp/ directory.
+fetch whisper-rs-sys-0.15.0.crate \
+    https://static.crates.io/crates/whisper-rs-sys/whisper-rs-sys-0.15.0.crate \
+    6986c0fe081241d391f09b9a071fbcbb59720c3563628c3c829057cf69f2a56f
 # VTM's tessellator for x86_64, so the emulator lab can exercise the owned map (P5.5).
 # The shipped APK is arm64-v8a only and takes its copy from the Gradle cache through the
 # natives-arm64-v8a dependency; this is the emulator's, injected into a copy of the APK

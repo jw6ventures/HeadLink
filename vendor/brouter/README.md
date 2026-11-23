@@ -70,6 +70,11 @@ The relocation is the only change: no byte of either file differs.
 Nothing in `src/main/java` is edited. Re-syncing to a later BRouter is a delete and a
 re-copy of the five directories, followed by the checks below.
 
+One setting is changed from outside rather than in the tree: `Router.widenIslandCheck` sets
+`RoutingEngine`'s private `MAXNODES_ISLAND_CHECK` and `islandNodePairs` by reflection on
+each engine, to find large cut-off road networks at the destination (docs/navigation.md,
+"A destination behind a gate"). `RoutingTest` fails if a re-sync renames either field.
+
 Two consequences of holding it unmodified, both deliberate:
 
 - `Rd5DiffTool` and `StackSampler` carry `main()` methods, and `Rd5DiffTool` calls

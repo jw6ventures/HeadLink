@@ -430,6 +430,169 @@ destination or speed. The event log says only "notification read aloud" or "voic
 - **Synthesis to PCM played through HeadLink's own `AudioTrack`** pinned to the A2DP
   device. This is the fallback if default routing ever misbehaves, and it would be the
   first half of speech-channel work. Not needed so far.
-- **Voice input.** No microphone and no `RECORD_AUDIO` permission. The head unit's
-  `av_input` microphone channel is not opened. A voice assistant is deferred
-  (spec.md §2.1).
+- **Voice input** beyond its microphone and recognizer (both below): the spoken
+  conversation, texting, replies and destinations. The head unit's `av_input` microphone channel is not
+  opened. Spec.md §2.1, §5.2 and §8.1 were amended on 11 November 2026 to allow it.
+
+## Voice input: the car's microphone
+
+`BluetoothMic` captures one push-to-talk utterance from the car's hands-free microphone,
+over the phone's ordinary Bluetooth link to the car (HFP/SCO), the path a hands-free call
+uses (spec.md §2.1 and §5.2 as amended 11 November 2026). It is the first piece of voice
+input; recognition (whisper.cpp) and the conversation around it are separate.
+
+- **Never the phone's microphone.** The route is chosen only among SCO ports. If there is
+  none (Bluetooth off, the car not linked for calls), capture fails with
+  `no_bluetooth_mic` and says so. Once recording, the recorder's routed device is checked
+  on the first frame and every 250 ms: anything other than SCO is closed with
+  `not_bluetooth`, or `lost` if the link dropped mid-utterance, and nothing heard is kept.
+- **Routing.** `AudioManager.setCommunicationDevice` to the car's SCO port (API 31+, in
+  place of the deprecated `startBluetoothSco`), then a wait for it to open. If it has not
+  opened after 1.5 s, the audio mode is also set to `MODE_IN_COMMUNICATION`, which some
+  phones need before they open SCO, and the report counts it (`mic_call_mode_needed`).
+  After 4 s it gives up (`route_timeout`). Capture tries the `VOICE_RECOGNITION` source
+  first (least processing) and falls back to `VOICE_COMMUNICATION` only if the first is
+  not routed to the car. Transient exclusive focus (`USAGE_ASSISTANT`) pauses media while
+  listening. Afterwards the route is cleared, the mode put back and focus abandoned, so
+  music returns to A2DP and turn prompts play. While the mode is `MODE_IN_COMMUNICATION`,
+  `Speaker` treats it as a call and says nothing.
+- **Format.** 16 kHz mono 16-bit signed PCM in memory (`VoiceClip`), at most 30 s, the
+  speech engine's own cap. Android resamples from the link's own rate (8 kHz narrowband or
+  16 kHz wideband).
+- **End of speech.** `UtteranceDetector` works on 20 ms frame levels in dBFS: the noise
+  floor is the quietest of the first 100 ms, then follows the cabin (fast down, slowly up,
+  at most 1 dB/s while loud). Speech is 3 frames in a row 10 dB over the floor and above
+  -50 dBFS; 900 ms of quiet after speech ends the utterance, and no speech in 6 s ends
+  with `no_speech`. A caller can end it early (`finished`) or cancel it. These numbers are
+  a first guess, to be tuned in the car.
+- **Busy and calls.** One capture at a time (`busy`). None during a call or while another
+  app holds call audio (`in_call`).
+- **Report.** `[voice_mic]` holds whether Voice input is on and Microphone granted, the
+  capture count, each outcome's count, the last and slowest route open in ms, how often
+  call mode was needed, the last source that delivered, and the total time heard. The
+  event log has one line per capture with the same kind of numbers and its peak and
+  background levels. No audio, words, device name or address.
+- **Foreground.** `ProjectionService` adds the `microphone` type while Voice input is on
+  and Microphone is granted, so listening works with the screen off. Android refuses that
+  type for a session started from the background (a wireless start); the session then runs
+  without it and the event log says `foreground microphone type not held`.
+- **Settings → Voice input.** Off by default; turning it on asks for Microphone. Until the
+  rest of voice input lands, its only action is **Test car microphone**: one capture, then
+  how long it heard, how much was speech, how fast the link opened, and the levels. The
+  audio is dropped once those numbers are taken.
+
+Host-tested by `MicCaptureTest`: the route choice, the routed-device check, the clip format,
+levels, end of speech, no speech, road noise, and the report's contents. Not yet tried on
+a phone or in the car.
+
+## Speech recognition
+
+Voice input's speech-to-text (spec §2.1 as amended 11 November 2026): whisper.cpp, on the
+phone, with a model file the operator supplies. No other recognizer is used, not even as
+an option: not Android's `SpeechRecognizer`, not Google's.
+
+| Piece | Code |
+| --- | --- |
+| The engine interface the microphone side feeds, and its results | `Recognizer.kt` (`Recognizer`, `Transcript`, `SpeechText`, `SpeechStats`) |
+| whisper.cpp behind it | `WhisperEngine` in `Recognizer.kt`, `WhisperNative.kt`, `app/src/main/cpp/whisper_jni.cpp` |
+| The model file, loading, Check model, the report line | `SpeechModel.kt` |
+| Settings → Voice input's model rows, inside `VoiceInputCard` | `SpeechModelViews.kt` (`SpeechModelRows`) |
+| The native build | `tools/whisper-build.sh`, run by `tools/android-build.sh` |
+
+### What goes in, what comes out
+
+The microphone side hands over **one whole utterance** at a time: 16 kHz, mono, 16-bit
+signed PCM in a `ShortArray`, held in memory. `Recognizer.transcribe(samples, count,
+prompt)` blocks (call it off the main thread) and returns:
+
+- `Text`: the words, cleaned of Whisper's sound tags (`[BLANK_AUDIO]`, `(music)`,
+  `*coughs*`, ♪) and stray spaces, with the utterance's length and how long recognising it
+  took;
+- `Silence`: it ran and heard no words;
+- `Cancelled`: `cancel()` stopped it (whisper.cpp's abort callback);
+- `Failed`: under 0.3 s (`too_short`), over 30 s (`too_long`, refused rather than cut),
+  used after `close()` (`closed`), or whisper.cpp failed (`engine`).
+
+`prompt` primes Whisper with words to expect (contact names, the "Ready to send?"
+answers), cut to 800 characters, and is not kept. The language is English. Recognition is
+greedy, without timestamps or carried context, so one utterance never colours the next.
+Whisper's own 30 s window is why audio over 30 s is refused.
+
+Audio is converted to floats in native code and both buffers are zeroed after use; the
+caller should clear its array once `transcribe` returns. whisper.cpp's and ggml's logging
+is switched off before any model is read, so neither a file name nor a transcript reaches
+logcat. `Transcript.Text.toString()` shows the length, not the words.
+
+### The model file
+
+**Settings → Voice input → Choose speech model** takes a read grant on one document
+through the Storage Access Framework, and the model is read in place through that
+document's file descriptor: never copied, never downloaded, never bundled. The card says
+"a whisper.cpp model file (ggml format, usually ending in .bin)" and nothing about where to
+get one. The grant is told apart from the OsmAnd maps folder and the drop folder by being
+on a document rather than a folder (`ObfRules.isSpeechModelGrant`), so choosing one never
+drops another.
+
+`SpeechModel.engine` loads it on first use and keeps it loaded (about 150 MB of memory
+for base.en) until `release`, a new file or Remove. Before reading, the loader refuses a
+file that is not a whole, usable model, so a wrong pick is a message, not a crash:
+
+- the header must be Whisper's: the "ggml" magic, the English or multilingual vocabulary,
+  1500 audio and 448 text positions, 80 or 128 mels, sane widths, heads and layers;
+- **all-F32 models are refused**: ggml 0.9.5's convolution asserts F16 kernels and would
+  abort the app. F16 and quantized models load;
+- the file must end exactly where whisper.cpp's tensor loop looks for the next tensor. A
+  file cut short is otherwise read past its end, and one with no weights at all would load
+  as whisper.cpp's empty test model.
+
+**Check model** loads it and recognises 5 s of silence, then shows the size (whisper.cpp's
+own name: tiny, base, small, medium, large), whether it is English-only, the load time and
+the 5 s time. A model loaded only for the check is let go afterwards.
+
+### Processor
+
+The arm64 build targets Armv8.2-A with half-precision arithmetic and dot product
+(`asimdhp`, `asimddp`): every core since Cortex-A55 and A75. An older core (Cortex-A53,
+A73) would stop on an illegal instruction, so `SpeechModel` reads `/proc/cpuinfo` before
+loading the library and says the phone's processor is too old instead. This was checked
+by running the arm64 build under QEMU: it recognises on an Armv8.2 CPU model and faults on
+a Cortex-A53 one.
+
+### Build
+
+`tools/whisper-build.sh` compiles whisper.cpp and ggml's CPU backend with the NDK's
+clang (`aarch64-linux-android33`), and the same sources for x86_64 Linux for the host
+test, into one `libwhisper_jni.so` with libc++ linked in statically. It needs only libc,
+libm and libdl, exports only `WhisperNative`'s JNI functions, uses 16 KiB pages, and is
+byte-identical from build to build (`-ffile-prefix-map`, fixed object order, no dates).
+`tools/verify-apk.sh` checks its needed libraries, exports, alignment and version.
+
+The source is **whisper.cpp 1.8.3 (ggml 0.9.5) as published inside the `whisper-rs-sys`
+0.15.0 crate** on crates.io, used unmodified; only its `whisper.cpp/` directory is
+compiled, and the crate's Rust bindings are not. A crates.io archive is immutable and its
+SHA-256 is recorded in the crates.io index, which a GitHub tag archive does not promise.
+`tools/fetch-deps.sh` fetches it with that checksum. Moving to a newer whisper.cpp means a
+newer crate (or another immutable archive), a new checksum in both scripts, and a run of
+the host test.
+
+### Report
+
+The session report's `[speech_input]` section: whether a model file is chosen, the model
+size loaded (`base.en`, `small`), loads and the last load time, why it could not load,
+and counts of heard, heard-nothing, cancelled and failed (by reason), with total audio,
+total and slowest recognition times. Never a word, a name or a sample.
+
+### Testing and verified state
+
+- **Host test** (`RecognizerTest`, `tools/jni-host-test.sh`, `-Xcheck:jni`): the release
+  Kotlin classes over the x86_64 library. No real model is in the repository, so the test
+  writes one: whisper.cpp's real file format and tensor set at tiny widths, with weights
+  that make the decoder say one word whatever it hears and then stop. That runs the whole
+  path (the descriptor loader, mel, encoder, decoder, prompt, text, cancel, free and
+  reload) and checks every refusal above. `WHISPER_MODEL=<a model file>` adds a real
+  model's load time and 5 s of silence.
+- **Emulated arm64**: the same sources and flags, built for aarch64 Linux and run under
+  QEMU on the test model.
+- **Not yet**: a real model on the phone, real speech, and timings. Wiring `BluetoothMic`'s
+  `VoiceClip.samples` into `transcribe`, the conversation and the three uses are separate
+  work.

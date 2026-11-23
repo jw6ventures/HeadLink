@@ -127,6 +127,23 @@
          pocket still answers the button. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
+    <!-- Voice input (spec.md 2.1 and 5.2 as amended 11 November 2026; docs/audio-and-speech.md,
+         "Voice input: the car's microphone"). Off by default: RECORD_AUDIO, the runtime
+         Microphone grant, is asked for only when the operator turns Settings, Voice input on.
+         The app records only after a push-to-talk press, at 16 kHz mono, only from the car's
+         Bluetooth hands-free link (never the phone's own microphone), and keeps the audio in
+         memory until it is transcribed. MODIFY_AUDIO_SETTINGS (normal) is what
+         AudioManager.setCommunicationDevice needs to route capture to that link; the route is
+         cleared as soon as listening ends. FOREGROUND_SERVICE_MICROPHONE (normal) is for the
+         microphone type on ProjectionService below, added only while RECORD_AUDIO is granted.
+         The microphone feature is optional, so the app still installs without one. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-feature
+        android:name="android.hardware.microphone"
+        android:required="false" />
+
     <!-- P7.5: the idle media pane lists player apps that can be resumed with no session
          left, through Android's media resumption (docs/dashboard.md, "Media pane"). This makes apps
          exporting a MediaBrowserService visible to this one. It is a package-visibility
@@ -228,7 +245,7 @@
         <service
             android:name=".ProjectionService"
             android:exported="false"
-            android:foregroundServiceType="connectedDevice|location" />
+            android:foregroundServiceType="connectedDevice|location|microphone" />
         <!-- Enabled by the operator in Settings, never bound by this app.
              MediaSessionManager.getActiveSessions accepts only a notification listener or
              the signature-level MEDIA_CONTENT_CONTROL, so this is the one route an

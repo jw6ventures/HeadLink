@@ -91,6 +91,23 @@ object Maneuvers {
         else -> "${maneuver.instruction} to stay on $onto"
     }
 
+    /**
+     * The instruction for [maneuver] at a signed exit: "Take exit 23A toward I 35 South /
+     * Waco", "Take exit 23A on the left", or, with no number, the maneuver's own words and
+     * where it goes: "Keep right toward El Paso". The side is said only for a left exit,
+     * the unusual one, as signs and drivers do; [toward] overrides the sign's own, so the
+     * voice can say it differently or leave it out (empty).
+     */
+    fun exitInstruction(maneuver: Maneuver, sign: ExitSign, toward: String? = sign.toward): String {
+        val to = toward?.takeIf { it.isNotEmpty() }?.let { " toward $it" }.orEmpty()
+        val number = sign.number ?: return maneuver.instruction + to
+        val left = when (maneuver.type) {
+            OFF_RAMP_SLIGHT_LEFT, KEEP_LEFT, TURN_SLIGHT_LEFT, TURN_NORMAL_LEFT, TURN_SHARP_LEFT -> " on the left"
+            else -> ""
+        }
+        return "Take exit $number$left$to"
+    }
+
     private fun roundabout(type: Int, exit: Int): Maneuver =
         if (exit > 0) {
             Maneuver(type, exit, "At the roundabout, take exit $exit")

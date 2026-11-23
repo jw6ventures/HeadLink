@@ -23,7 +23,7 @@ grepping reports for marker strings.
 | Map | `MapEngine.kt`, `MapData.kt`, `MapAssets.kt`, `MapReadGuard.kt`, `MapLoaderInterrupts.kt`, `app/src/main/resources/assets/oaa/dashboard-{dark,light}.xml` |
 | Routing | `vendor/brouter/`, `Router.kt` (`RouteRequest`, `Route`, `Router`, `RoutePlanner`), `Routing.kt`, `RoutingData.kt`, `RouteOptions.kt` |
 | Destinations | `DestinationParser.kt`, `DestinationActivity.kt`, `Navigation.kt`, `NavigationStore.kt`, `Favorite.kt`, `Favorites.kt` |
-| Guidance | `Guide.kt`, `RouteFollower.kt`, `Maneuvers.kt`, `app/src/main/kotlin/btools/router/VoiceHintReader.kt`, `StreetNames.kt` |
+| Guidance | `Guide.kt`, `RouteFollower.kt`, `Maneuvers.kt`, `app/src/main/kotlin/btools/router/VoiceHintReader.kt`, `StreetNames.kt`, `ExitSigns.kt` |
 | Cluster | `core/aap-session/src/navigation.rs`, `core/aap-session/src/projection.rs`, `NativeBridge.submitGuidance` |
 | Preview, alternatives | `PreviewActivity.kt`, `RoutePreview.kt`, `LiveAlternatives.kt` |
 | Live traffic | `Traffic*.kt` |
@@ -204,6 +204,22 @@ route up does not count), skips fixes off the route or over a 30 s gap, phases i
 2 and 10 minutes of driving, and is held to 0.67–1.5. It applies to the time to the
 destination, not to the next turn; a re-route keeps it and a new destination resets it.
 
+**Learned across drives (0.11).** `PaceBook` keeps the same comparison across drives in
+`learned_pace.txt` (app private files, no backup), credited per counted fix to four
+buckets: all driving, the road class (highway = motorway/trunk, major = primary, minor =
+secondary/tertiary, local, ramp), the class in urban/suburban/rural surroundings, and the
+class in a quarter-degree grid square (about 17 by 15 miles at Austin). Surroundings come
+from junctions per km over 1 km of route (OsmAnd's attached roads, not service roads or
+tracks): 7 and up urban, 2.5 and up suburban, else rural. Each credit fades what a bucket
+held by `exp(-s / 5 h)`. A stretch's factor starts at the time adjustment and is pulled
+towards each bucket's ratio in turn, all, class, surroundings, square, each weighted 0
+under 10 min of estimated driving and 1 from an hour. The route's times at that pace are
+worked out once per followed route (`PaceBook.times`), and the drive's own `PaceTracker`
+is measured against them, so it only carries how today differs. Learning is off with
+Learn my pace off. BRouter routes carry no classes and use the overall bucket only.
+Routing → Forget learned pace deletes the file. The report has counts and the overall
+factor (`guidance_pace_learned_*`), never squares.
+
 A change that can alter the route recomputes the route on show from where the vehicle is
 (`Navigation.optionsChanged`).
 
@@ -361,6 +377,27 @@ still off. A new route is placed at once from the fix in hand, so the cluster go
 from `REROUTING` to the first maneuver. A failed re-route keeps the old route on the map; a
 vehicle back on it is guided along it again.
 
+**No route yet.** BRouter places a start only within a few hundred metres of a road the car
+profile can use, so a destination set off road (a field, a long private drive, a lot whose
+aisles are not mapped as roads) can come back with no route. The destination is kept, and
+`Navigation.retry` asks again from each fix once 10 s have passed and the vehicle has moved
+50 m from where the last request started, or after 60 s wherever it is, until a route
+arrives. A failed first route also drops any route still followed from an earlier
+destination. Meanwhile the dashboard's turn card says `Finding route…` (computing, or
+waiting for a position) or `No route yet, retrying…`, and the trip panel keeps End route;
+the cluster stays idle. The report counts `routing_failures` and `routing_retries`.
+
+**A destination behind a gate.** BRouter snaps the destination to the nearest way the car
+profile can use, and checks, with a short search from it, whether that way's network is cut
+off; if so it excludes it and snaps again. Upstream stops that check at 500 links, which
+catches a lone parking aisle but not a fairground's or a campus's lots and drives joined to
+the public road only through a gate or a private way: a pin on the Travis County Expo Center
+(2026-10-31) stayed snapped inside and failed with "no route". `Router.widenIslandCheck`
+raises the limit to 20,000 links (`ISLAND_CHECK_LINKS`), so such a network is found and
+the route ends at the nearest road the vehicle can reach. BRouter is held unmodified, so
+the limit and its pair set are set by reflection on two private fields; `RoutingTest` pins
+both names.
+
 **Why re-routes don't turn round.** BRouter honours `startDirection` only as a flat 40 s
 U-turn at the start, so a re-route after a missed turn began by going back the way the
 vehicle came, and a second re-route followed seconds later. `Router.behind` adds a
@@ -467,6 +504,211 @@ unnamed in OSM.
 
 **Verified:** host tests on a real route and map, and the lab. On the truck a road name
 appears on the cluster; which field it comes from is unknown.
+
+## Exit signs
+
+**What.** At a highway exit the turn card, the cluster and the voice give the exit number
+and where the ramp goes: "Exit 23A: I 35 South / Waco" on the card and as the cluster's
+road name, "Take exit 23A toward I 35 South / Waco" as the cluster's instruction, and
+"Take exit 23A toward Interstate 35 South, Waco" spoken (just "Take exit 23A" with street
+names off in the voice settings). It needs OsmAnd maps covering the road
+([OsmAnd maps](#osmand-maps-search-and-places)); without them nothing changes.
+
+**Why OsmAnd's files.** Neither other source has the data. BRouter's `lookups.dat` keeps
+no `motorway_junction` and no `destination`. The Mapsforge writer keeps an exit's point and
+its `name`, but VTM's `MapFile` reads only a point's name, house number and elevation, so
+the junction's `ref`, which is the exit number, is gone, and the writer's default tag
+mapping keeps no `destination` at all (checked against `mapsforge-map-writer` 0.25.0 and
+VTM 0.25.0 sources). OsmAnd's routing section (`OsmAndRoutingIndex`, field 9) keeps all of
+it on the same OSM ways BRouter drives.
+
+**The reader** (`ObfRouteReader`, behind `ObfFile.roadWays`). Written from OsmAnd's
+`BinaryMapRouteReaderAdapter` and `RouteDataObject` at `b75433b`. The table of contents
+notes where each routing section is and reads nothing more; the section's rules and root
+boxes are read on the first query. Rules are a tag and value each, numbered from 1 in
+order unless they carry an id. Root boxes have absolute zoom-31 bounds and children deltas
+from their parent; a box outside the query is skipped with everything under it, and the
+`basemapBoxes` are never read. A box's `shiftToData` is a big-endian offset from the box's
+own body to a varint-prefixed `RouteDataBlock`. Points are zoom-31 positions shifted right
+by 4 (about 0.3 m), deltas from the box's left and top. Text tags (`destination`, a
+junction's `ref`) are rule ids paired with an index into the block's string table. Box
+headers and the last 64 decoded blocks are cached per file.
+
+**The matching** (`ExitSigns`, pure JVM, run with `StreetNames` in `RoutePlanner`'s
+`annotate` and on live traffic's alternatives). For each maneuver except the destination,
+roundabouts and U-turns, the roads within 260 m are read. The route past the maneuver
+(`StreetNames.samples`) must lie, by a majority of samples within 8 m, on one `*_link`
+road: a "keep left" that stays on the highway at an exit gets no sign. The destination is
+the ramp's `destination:ref` then `destination` (the `:forward` or `:backward` form for
+the way the ramp is driven, when it has one), OSM's `;` read as " / ". The number is the
+ramp's `junction:ref`, else the `ref` of a `motorway_junction` point within 40 m of the
+maneuver or the ramp's first point, OsmAnd's `getExitRef` order; an on-ramp from a surface
+street has no junction near it, so it gets a destination and no number. With no
+destination, the junction's `exit_to`, the ramp's `junction:name` or the junction's `name`
+stands in. A file that fails to read leaves the maneuver unsigned.
+
+`Route.exitSigns` holds one `ExitSign` (or null) per maneuver, kept through scaling,
+naming, `remainder` and the route file (version 4; versions 2 and 3 still read).
+`RouteFollower` puts the sign's label in `NextStep.onto` and its instruction in
+`NextStep.instruction`, so the card and cluster need no change of their own.
+
+**Not done.** With BRouter routing, routes adopted from the phone's route preview carry
+no signs until the next re-route: the preview runs in its own process, which holds no
+OsmAnd files. OsmAnd's router signs them itself. Lane guidance
+is in the same OsmAnd data and still out of scope.
+
+**Verified:** host tests on a synthetic file built from the proto (`ExitSignsTest`). Not
+yet checked against a real OsmAnd file or on the truck.
+
+## Routing on OsmAnd maps
+
+**What.** Settings -> Route preferences -> **Route with OsmAnd maps**, on by default since
+0.9. On, every route, re-route, traffic re-route, alternative and phone preview is
+computed by OsmAnd's own router over the `.obf` files in the OsmAnd maps folder
+([OsmAnd maps](#osmand-maps-search-and-places)), and no `.rd5` tile is needed. Off,
+BRouter routes as before. With no maps folder chosen and BRouter tiles installed,
+`Routing.options` hands BRouter the request anyway, so a phone set up before 0.9 keeps
+routing. 0.8's test switch was stored as `route_osmand`, false on every phone that saved
+any setting; 0.9 stores `route_engine` (`osmand` or `brouter`) and leaves the old key
+unread, so those phones get the new default. BRouter stays only until OsmAnd's routing has
+proven itself on the road, and then goes with Mapsforge.
+
+**Wrong-sign destinations.** With OsmAnd routing, a destination outside every open map
+whose mirrored longitude is inside one is refused with the same "did you mean" hint the
+`.rd5` tile check gives (`DestinationParser.mirroredLongitude` over the maps' bounds).
+
+**The engine.** `vendor/osmand` is OsmAnd-java's router and file reader as source, pinned
+and described in its README. `OsmAndRouter` implements the same `RouteEngine` as BRouter's
+`Router`, and `EngineChoice` picks one per request from `RouteOptions.osmAndRouting`, so
+`RoutePlanner`, `AheadSearcher`, `LiveAlternatives` and the preview need no other change.
+OsmAnd's reader takes a `RandomAccessFile`; each reader gets a `PositionalFile` reading its own
+duplicate of the folder's document descriptor with `pread` (a `FileChannel` would be closed
+for good by VTM's loader interrupts), kept open and keyed by name, size and
+modification time, so a replaced file is reopened. Up to 0.10.1 the readers reopened the
+descriptor's `/proc/self/fd` link instead. On the Pixel that open was refused (the link
+reopens the file by its place in shared storage, which the app may not read), so with all
+11 files listed and open (`obf_files_open=11`) every route failed "no OsmAnd maps open",
+the map said "no OsmAnd map with map data" and drew from Mapsforge (`obf_tiles=0`). The
+lab's files are app-private paths, which reopen fine, so the lab never showed it. The
+report's `obf_reader_failures` and `obf_reader_failure_last` (exception class only) count
+readers that could not open a listed file.
+A route search holds the folder's files itself while it runs. In 0.10.0 a destination
+shared from OsmAnd with nothing projecting and the HeadLink screen closed raced the
+listing the share starts: on the Pixel (11 files through the document provider) the
+search ran first, found nothing open and failed "no OsmAnd maps open" (report:
+`obf_files_open=0`, `obf_closes=2`). The lab's one local file opens too fast to lose
+that race, so the lab step shows the fixed build routing, not the old one failing.
+The car profile is OsmAnd's `routing.xml`, unmodified; the top speed is its `max_speed`
+and Avoid motorways, Avoid toll roads and Avoid unpaved roads are its own parameters.
+Prefer bypassing towns and Allow tracks have no counterpart and do nothing here, which the
+switch's help text says. The starting bearing goes in as OsmAnd's initial direction.
+
+**Search mode and memory.** Every search runs in OsmAnd's COMPLEX mode: past 18 km it
+first routes over the maps' base roads, then searches the detail only within 3 km of that
+line. The plain NORMAL search explores every road out to the destination, and under the
+phone's 256 MB heap (OsmAnd's budget is a third of it, 85 MB) it ran out of memory on
+anything much past 50 km, Taylor to downtown Austin included: a traffic-priced route to
+work came back as no route while BRouter found one (2026-11-13). OsmAnd's memory error
+names the start and destination by coordinates; it becomes "out of routing memory", and
+OsmAnd's other errors lose their coordinates, because route errors reach the report.
+
+**Mixed map builds.** Each OsmAnd build of the maps (one HH edition) carries its own
+highway hierarchy, and maps downloaded at different times are different builds: the Pixel
+had three (Austin from September, Amarillo, Lubbock and San Angelo from October, the other
+seven from July). The hierarchy is used only when one build has road data at the start,
+every via and the destination (`OsmAndRouter.hierarchyCovers`). Otherwise OsmAnd picks the
+newest build near the route, fails to join it to the far end, retries every nearby start
+and only then falls back: Austin to San Antonio took 30 to 50 s on a desktop that way,
+against 1.5 s straight to the plain search. Updating every map in OsmAnd at once puts
+them back in one build.
+
+**Traffic and future knobs.** With nothing to steer round, OsmAnd's precomputed highway
+hierarchy answers in milliseconds. A request with traffic points or earlier alternatives
+uses the plain search with `PenaltyRouter`, a `GeneralRouter` whose per-step obstacle
+time is where every penalty goes: a closure makes a step impassable; a jam adds the metres
+inside its circle times its weight, priced as BRouter prices it (`TrafficCost`), so the
+same jam moves both engines alike; and a step an earlier alternative drove costs double,
+as BRouter's alternatives do. Closures with no way round are opened rather than failing,
+and a route whose end lands more than 250 m from the destination is treated the same way.
+Toll penalties, a learned preferred route and other knobs are meant to be added here, as
+more per-step costs, each behind its own switch.
+
+**What the route carries.** Geometry, per-point times (scaled by the time adjustment, as
+with BRouter), maneuvers from OsmAnd's turn types, road names or refs, and exit signs read
+straight from the route's own roads: a keep left or right from a motorway or trunk onto a
+`*_link` is the exit, its number is the link's `junction:ref` or the nearby
+`motorway_junction` point's `ref`, and its words are the link's `destination:ref` and
+`destination`. `StreetNames` and `ExitSigns` are skipped because the router already filled
+them in, and the phone preview's routes carry signs too.
+
+**Logging.** OsmAnd prints route details, including road names and coordinates, to the
+console. Those switches are off, and its INFO lines are logged at FINE, which Android
+drops.
+
+**Not done.** Lane guidance (in the same data, not yet carried into `Route`). Drawing the
+map from `.obf` is behind its own setting ([Drawing the map from OsmAnd
+maps](#drawing-the-map-from-osmand-maps)); dropping Mapsforge and BRouter comes later.
+
+**Verified:** host tests on `ExitSignsTest`'s synthetic file (`OsmAndRoutingTest`): the
+exit with its number and signs, times, closures, jams, opened closures, the second
+alternative, a stopped search and no maps. With `OBF_DIR`, the same test under a 256 MB
+heap routes Taylor to downtown Austin with a jam, and Austin to San Antonio over two
+builds. Routes across Texas over the Pixel's own maps (2026-11-13) on the host: all
+found, COMPLEX matching the hierarchy's distance and time where both ran. Emulator lab
+(`osmand` script, 2026-11-13): with 23 traffic points held, downtown Austin to Taylor came
+back in 8 to 9 s on the debug build, 56.9 km and traffic-priced; the build from before the
+fix gave up after its 300 s limit with no route. Not yet on the Pixel or in the car.
+
+## Drawing the map from OsmAnd maps
+
+**What.** Settings -> Map -> **Draw map from OsmAnd files**, on by default since 0.9
+(stored as `map_source`, `osmand` or `mapsforge`; 0.8's `map_osmand` is left unread). On,
+the map pane and the phone's route preview draw from the `.obf` files in the OsmAnd maps
+folder ([OsmAnd maps](#osmand-maps-search-and-places)) instead of the Mapsforge `.map`
+file. With no maps folder chosen, or no OsmAnd map that has a map section, they draw
+from the Mapsforge file as before. Once this has held up on the road, Mapsforge goes.
+
+**The preview.** The route preview runs in a process of its own: it holds OsmAnd's maps
+open for its map while it is shown, opens the source on its worker thread, and puts the
+routes back under the labels once the map is there.
+
+**The source.** `ObfMapSource` is a VTM `TileSource` over the vendored `.obf` reader, so
+the pane, its layers, labels, buildings and the day and night themes are unchanged. Each
+of VTM's loader threads opens its own reader per file, because OsmAnd's reader keeps a
+stream position and fills its index lazily. A loader opens its readers on its first tile,
+from the files as they are then: in 0.10.3 it used the list the source saw at open, whose
+descriptors the library had since closed, so every reader failed (`obf_reader_failures=22`,
+`IOException`) and the map stayed blank for the session. With no reader open a tile fails,
+so VTM asks for it again, and the loader asks for the files again at most every 5 s. A tile asks every file for the objects in the
+tile's box at the tile's zoom; a way in two neighbouring regions' files is drawn once.
+Above zoom 17 tiles are cut from zoom 17's, as VTM does for Mapsforge.
+
+**Tags** (`ObfMapTiles`). OsmAnd's map types are OSM tag and value pairs, the keys the
+themes already match, so they pass through; additional types (`oneway`, `toll`) and names
+(`name`, `ref`) become tags too. Points are OsmAnd's 31-bit Mercator numbers, the
+projection VTM draws in, so a tile's pixels are a shift and a scale. Areas keep their
+holes; ways are clipped to the tile with VTM's margin; buildings at zoom 17 and above are
+kept whole in one tile, as VTM's own reader does, so extruded walls are not cut.
+
+**Sea.** OsmAnd keeps the coast as lines. Each tile's coastline pieces are clipped,
+joined and closed along the tile's edges into water and land rings, adapted from OsmAnd's
+own `MapRenderRepositories.processCoastlines`; a tile with no coastline that OsmAnd's
+index marks as ocean is water whole. They are tagged `natural=sea` and `natural=land`,
+which both themes now fill first, under everything else. A Mapsforge file's own sea
+polygons pick up the same colour.
+
+**Report.** The session report names the data `obf:N` (a count; file names say which
+region the phone is in) and counts `obf_tiles` and `obf_tile_failures`.
+
+**Not done.** The world basemap is not read, so far-out zoom levels show only what the
+regional files carry. Theme rules have not been tuned against OsmAnd's data, which
+generalises roads by zoom differently from the Mapsforge writer. Not yet timed on the phone.
+
+**Verified:** host tests over objects built in memory (`ObfMapTilesTest`): the tile box,
+a road's tags, names and pixels, an area's hole, a building kept whole, points in and out
+of the tile, a coast across the tile with the sea on its right, an island, open sea, and
+the fall-back with no map data. Not yet drawn from a real OsmAnd file, on the phone or in
+the car.
 
 ## Route preview and alternatives
 
@@ -637,8 +879,9 @@ vs stacked card choice and the night queue red being close to motorway red are o
 Older code comments call this P11.
 
 **What.** HeadLink reads OsmAnd's own `.obf` map files in place, read-only, for typed
-address search on the phone, Gas/Food/Shop markers on the car's map, and "search ahead"
-along the route. It never routes on OBF data, renders it, or writes anything. BRouter and
+address search on the phone, Gas/Food/Shop markers on the car's map, "search ahead"
+along the route, and exit numbers and signs ([Exit signs](#exit-signs)). It never routes
+on OBF data, renders it, or writes anything. BRouter and
 the Mapsforge map are unchanged. Settings tab → **OsmAnd maps**; folder setup in
 [data.md](data.md).
 
@@ -650,15 +893,15 @@ separate setting; `DropFolder.choose()` releases only earlier read+write grants.
 `*.obf` files directly in the folder are read (not `.srtm`, `.wiki`, `World_basemap`, or
 `.obf.download` partials). Files are opened through `ParcelFileDescriptor` and read with
 positional `FileChannel` reads, never memory-mapped (a mapping caps at 2 GB). They stay
-open while a projection or the phone screen holds them, keyed by name, size and
-modified time.
+open while a projection, the phone screen or a route search holds them, keyed by name,
+size and modified time.
 
 **The reader** (`ObfWire`, `ObfFile`, `ObfAddressReader`, `ObfPoiReader`; pure JVM). Our
 own walker against OsmAnd's `OBF.proto`, vendored unmodified in
 `protocol/upstream/osmand/` with no code generated: OsmAnd frames large sections with its
 own wire type 6, a 4-byte **big-endian** length (8 bytes if the top bit is set), which no
-generator understands, and its offsets are big-endian too. Only the address (7) and POI
-(8) sections are opened. Lessons from real files:
+generator understands, and its offsets are big-endian too. Only the address (7), POI
+(8) and, for exit signs, routing (9) sections are opened. Lessons from real files:
 
 - **POI names are text tags, not fields 6/7.** The first run decoded every name empty. The
   same holds for `name:en`, `brand` and `opening_hours`. Schema names are not evidence.

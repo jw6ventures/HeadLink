@@ -238,8 +238,12 @@ object DestinationParser {
      * it puts Austin in a Chinese desert where there is no routing data; the P6.3a lab run
      * made exactly this mistake. Only a suggestion: the operator decides.
      */
-    fun mirroredLongitude(lat: Double, lon: Double, installedTiles: Set<String>): Double? {
-        if (lon == 0.0 || RoutingData.tileFor(lat, lon) in installedTiles) return null
-        return if (RoutingData.tileFor(lat, -lon) in installedTiles) -lon else null
+    fun mirroredLongitude(lat: Double, lon: Double, installedTiles: Set<String>): Double? =
+        mirroredLongitude(lat, lon) { a, b -> RoutingData.tileFor(a, b) in installedTiles }
+
+    /** [mirroredLongitude] over any coverage: OsmAnd's maps' bounds as well as BRouter's tiles. */
+    fun mirroredLongitude(lat: Double, lon: Double, covered: (Double, Double) -> Boolean): Double? {
+        if (lon == 0.0 || covered(lat, lon)) return null
+        return if (covered(lat, -lon)) -lon else null
     }
 }

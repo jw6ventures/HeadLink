@@ -1,0 +1,2 @@
+• Maps and routing now use OsmAnd's .obf map files. Choose the folder where OsmAnd keeps its maps, and HeadLink draws the map and plans routes from the same files.
+• Without an OsmAnd maps folder, HeadLink keeps using your Mapsforge map and BRouter files as before.

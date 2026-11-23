@@ -1,0 +1,2 @@
+• Fixed "no route found" with OsmAnd maps on longer trips, especially with live traffic on. Routes across maps downloaded at different times are also found faster.
+• Voice input can turn speech into text on the phone. Choose a speech model under Settings → Voice input.

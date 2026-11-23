@@ -29,6 +29,8 @@ Assistant button, both off by default.
 - **Destinations** shared from OsmAnd or any other app, address search from OsmAnd's map
   files, places of interest on the map, saved favorites, and a route preview with
   alternatives on the phone.
+- **Find your car**: HeadLink remembers where the drive ended, and **Walk to car** on the
+  Home screen opens OsmAnd with walking directions back to it.
 - **Media controls** and now-playing for whatever is playing on the phone.
 - **Notifications on the dashboard**, optionally read aloud when tapped, and **call
   controls** (answer, decline, hang up).
@@ -84,7 +86,7 @@ computer or the phone and import them:
 | --- | --- | --- |
 | A Mapsforge `.map` file | <https://download.mapsforge.org/maps/v5/> (for example `north-america/us/texas.map`) | The map |
 | BRouter `.rd5` tiles | <https://brouter.de/brouter/segments4/>, every 5°×5° tile your trips pass through | Routes and directions |
-| OsmAnd `.obf` maps (optional) | Downloaded in the OsmAnd app | Address search and places |
+| OsmAnd `.obf` maps (optional) | Downloaded in the OsmAnd app | Address search, places, and exit numbers and signs |
 
 Import them from the **Maps** tab, either one at a time with **Import map** and
 **Import routing data**, or by choosing a **drop folder** that HeadLink empties into its

@@ -43,6 +43,12 @@ private data class NowPlaying(
     val artist: String,
     /** App-owned, already scaled cover art, or null. Never sent on the wire. */
     val art: android.graphics.Bitmap? = null,
+    /** Position in the track as of [atMillis], or -1; drawn on the media pane only. */
+    val positionMs: Long = -1L,
+    /** Track length, or -1 when the player does not say (a live stream). */
+    val durationMs: Long = -1L,
+    /** Wall-clock time [positionMs] was read, so a replay carries it forward. */
+    val atMillis: Long = 0L,
 )
 
 class ProjectionService : Service() {
@@ -103,6 +109,11 @@ class ProjectionService : Service() {
         var vehicle: VehicleReading? = null
         var restriction: Pair<String, String>? = null
         /**
+         * The last position guidance was given this drive (the car's, else the phone's),
+         * saved as the parking spot when the session ends ([ParkingSpot]).
+         */
+        var lastPosition: Pair<Double, Double>? = null
+        /**
          * Latest published now-playing. Media control starts with the session but the
          * encoder only at video start, so without this the scene would show nothing until
          * the next poll after projection began.
@@ -140,27 +151,39 @@ class ProjectionService : Service() {
     /**
      * Promotes to a connectedDevice foreground service, adding the location type while a
      * location permission is granted: without it Android stops delivering the phone's
-     * position, the map's fallback, once no activity is visible. If the platform refuses
-     * the location type (a start from the background, or the grant gone in between), the
-     * session still runs, as it did before, on connectedDevice alone.
+     * position, the map's fallback, once no activity is visible. Likewise the microphone
+     * type while Voice input is on and Microphone is granted, so push-to-talk can listen
+     * with the screen off (spec §5.2 as amended 11 November 2026). Android refuses the
+     * microphone type for a start from the background (a wireless start), and may refuse
+     * location then too, so each refused combination drops the newest type and tries
+     * again; the session still runs on connectedDevice alone, as it did before.
      */
     private fun promote() {
         val connected = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
         val location = listOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
             .any { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
-        if (location) {
+        val microphone = VoiceInputPrefs.enabled(this) &&
+            checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        val locationType = if (location) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0
+        val candidates = listOfNotNull(
+            if (microphone) connected or locationType or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else null,
+            if (location) connected or locationType else null,
+        )
+        for (type in candidates) {
             try {
-                startForeground(
-                    NOTIFICATION_ID,
-                    buildNotification(),
-                    connected or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION,
-                )
+                startForeground(NOTIFICATION_ID, buildNotification(), type)
+                if (microphone) {
+                    val withMic = (type and ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE) != 0
+                    SessionController.note("foreground microphone type ${if (withMic) "held" else "not held"}")
+                }
                 return
             } catch (e: SecurityException) {
-                SessionController.note("foreground location type refused: $e")
+                val what = if ((type and ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE) != 0) "microphone" else "location"
+                SessionController.note("foreground $what type refused: $e")
             }
         }
         startForeground(NOTIFICATION_ID, buildNotification(), connected)
+        if (microphone) SessionController.note("foreground microphone type not held")
     }
 
     private fun start(generation: Long) {
@@ -349,12 +372,15 @@ class ProjectionService : Service() {
                         this,
                         result.handle,
                         { SessionController.note(it) },
-                    ) { access, state, source, title, artist, art ->
+                    ) { access, state, source, title, artist, art, positionMs, durationMs ->
+                        // Read here, on the media thread, so the time the position was
+                        // true is not shifted by however long main takes to get to it.
+                        val at = System.currentTimeMillis()
                         // Media thread: the pipeline and the scene are owned on main.
                         main.post {
                             if (running === session) {
-                                session.nowPlaying = NowPlaying(access, state, source, title, artist, art)
-                                session.pipeline?.nowPlaying(access, state, source, title, artist, art)
+                                session.nowPlaying = NowPlaying(access, state, source, title, artist, art, positionMs, durationMs, at)
+                                session.pipeline?.nowPlaying(access, state, source, title, artist, art, positionMs, durationMs, at)
                             }
                         }
                     }
@@ -558,6 +584,7 @@ class ProjectionService : Service() {
                 // P8.2: with the speed its prompts are timed by, read at the scale the drive
                 // supports when a dashboard is keeping that evidence.
                 reading.position()?.let { (lat, lon) ->
+                    session.lastPosition = lat to lon
                     Guide.onFix(this, lat, lon, "vehicle", session.pipeline?.guidanceSpeed() ?: reading.speed())
                 }
             }
@@ -622,6 +649,7 @@ class ProjectionService : Service() {
                 alertLevel = saved.weather.alertLevel,
                 clockFormat = saved.clockFormat,
                 homeAssistant = dashboardScene && HomeAssistantPrefs.load(this).usable,
+                adaptiveZoom = saved.adaptiveZoom,
             ),
             dashboardSaves(),
             MapData.resolveAll(this, session.attempt.settings.mapFile),
@@ -633,6 +661,10 @@ class ProjectionService : Service() {
         // P11: OsmAnd's maps stay open for the drive (docs/navigation.md). Held before the
         // markers' first query, which opens nothing without a hold.
         ObfLibrary.hold(MAPS_HOLDER, true)
+        // Settings -> Map -> Draw map from OsmAnd files: the pane reads the same open files,
+        // and falls back to the Mapsforge files when none has map data.
+        val mapsContext = applicationContext
+        MapEngine.obfMaps = if (saved.osmAndMap && ObfLibrary.chosen(mapsContext)) ({ ObfLibrary.routingMaps(mapsContext) }) else null
         // P11.5: the map's Gas, Food and Shop markers, read from OsmAnd's maps on a thread of
         // their own, one query at a time; the files stay open while this projects. Buttons
         // start off and are not saved; a debug build's lab may light some (lab-poi).
@@ -692,7 +724,7 @@ class ProjectionService : Service() {
         Guide.attach(session.handle)
         // Whatever was last published, so the first projected frame already shows it.
         session.nowPlaying?.let {
-            pipeline.nowPlaying(it.access, it.state, it.source, it.title, it.artist, it.art)
+            pipeline.nowPlaying(it.access, it.state, it.source, it.title, it.artist, it.art, it.positionMs, it.durationMs, it.atMillis)
         }
         // The same for anything the sensor channel already reported: it opens before
         // the video start indication, so these normally arrive before this pipeline
@@ -713,6 +745,7 @@ class ProjectionService : Service() {
                     val lat = snapshot.latitude
                     val lon = snapshot.longitude
                     if (lat != null && lon != null) {
+                        session.lastPosition = lat to lon
                         Guide.onFix(this, lat, lon, "phone", session.pipeline?.guidanceSpeed() ?: snapshot.speedMetresPerSecond)
                     }
                 }
@@ -998,8 +1031,23 @@ class ProjectionService : Service() {
         // Stopped from the phone (Home or the notification), a standby link waits for the button only.
         val operator = session.stopRequested || session.shutdownRequested
         if (session.attempt.settings.wireless) WirelessLink.sessionEnded(session.attempt.generation, "session ended: $category", operator)
+        // Before finish, whose render shows Home's parked-car card.
+        saveParkingSpot(session)
         SessionController.finish(session.attempt, category, detail)
         stopIfIdle()
+    }
+
+    /**
+     * The drive is over, so the car is where it last was. A drive with no position keeps
+     * the last spot rather than clearing it, and the lab receiver's made-up position is
+     * never saved. Only the outcome is noted, never the place.
+     */
+    private fun saveParkingSpot(session: Running) {
+        if (session.attempt.settings.labSocket != null) return
+        val (lat, lon) = session.lastPosition ?: return
+        session.lastPosition = null
+        ParkingSpot.save(this, lat, lon, System.currentTimeMillis())
+        SessionController.note("parking spot saved from the drive's last position")
     }
 
     /**
@@ -1032,6 +1080,7 @@ class ProjectionService : Service() {
         session.ahead = null
         session.poiExecutor?.shutdown()
         session.poiExecutor = null
+        MapEngine.obfMaps = null
         ObfLibrary.hold(MAPS_HOLDER, false)
     }
 
@@ -1077,6 +1126,7 @@ class ProjectionService : Service() {
                 }
             }
             if (session.attempt.settings.wireless) WirelessLink.sessionEnded(session.attempt.generation, "service destroyed", operator = false)
+            saveParkingSpot(session)
             SessionController.finish(session.attempt, "CANCELLED", "service destroyed")
         }
         running = null

@@ -16,7 +16,6 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
-import btools.router.RoutingEngine
 import org.oscim.android.MapView
 import org.oscim.core.BoundingBox
 import org.oscim.core.GeoPoint
@@ -57,13 +56,16 @@ class PreviewActivity : Activity() {
     private val worker = Executors.newSingleThreadExecutor { Thread(it, "preview-route").apply { isDaemon = true } }
 
     @Volatile
-    private var running: RoutingEngine? = null
+    private var running: SearchHandle? = null
 
     @Volatile
     private var closed = false
 
     private lateinit var request: PreviewRequest
     private lateinit var mapView: MapView
+
+    /** Whether this preview holds OsmAnd's maps open for its map ([MAP_HOLDER]). */
+    private var mapHeld = false
     private lateinit var statusText: TextView
     private lateinit var optionsList: LinearLayout
     private lateinit var useButton: Button
@@ -189,17 +191,46 @@ class PreviewActivity : Activity() {
         }
     }
 
-    /** The installed maps under the app's own theme, day or night as the phone is. */
+    /**
+     * The map under the app's own theme, day or night as the phone is: from OsmAnd's files
+     * when Draw map from OsmAnd files is on and a folder is chosen, else the Mapsforge
+     * files. OsmAnd's are opened on [worker], since that reads the folder, and the map is
+     * shown when they are; a folder with no map data falls back to the Mapsforge files.
+     */
     private fun startMap() {
+        if (!AppSettings.load(this).osmAndMap || !ObfLibrary.chosen(this)) {
+            showMap(tileSource())
+            return
+        }
+        val app = applicationContext
+        ObfLibrary.hold(MAP_HOLDER, true)
+        mapHeld = true
+        worker.execute {
+            val source = ObfMapSource({ ObfLibrary.routingMaps(app) })
+            val opened = try {
+                source.open().isSuccess
+            } catch (e: RuntimeException) {
+                false
+            }
+            main.post {
+                if (closed) return@post
+                showMap(if (opened) source else tileSource())
+                // The routes were drawn before the map was there; put them back under its labels.
+                drawRoutes()
+            }
+        }
+    }
+
+    private fun showMap(source: TileSource?) {
         val map = mapView.map()
-        val source = tileSource()
         if (source == null) {
             mapNoteText.visibility = View.VISIBLE
             attributionText.visibility = View.GONE
             return
         }
         val base = map.setBaseMap(source)
-        map.layers().add(BuildingLayer(map, base))
+        // Just above the base map, under any route already drawn.
+        map.layers().add(map.layers().indexOf(base) + 1, BuildingLayer(map, base))
         val night = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
         val asset = if (night) THEME_NIGHT_ASSET else THEME_DAY_ASSET
         val theme = try {
@@ -326,13 +357,18 @@ class PreviewActivity : Activity() {
      * numbered in the order found, and each row says how much longer it is.
      */
     private fun findAlternatives() {
-        if (RoutingData.installed(RoutingData.segments(RoutingData.root(filesDir))).isEmpty()) return
+        val osmand = request.options.osmAndRouting
+        if (!osmand && RoutingData.installed(RoutingData.segments(RoutingData.root(filesDir))).isEmpty()) return
         statusText.setText(R.string.preview_finding)
         val app = applicationContext
         worker.execute {
             val root = RoutingData.root(app.filesDir)
+            // OsmAnd's router reads the maps folder, which this process opens for itself
+            // while it searches and lets go of after.
+            if (osmand) ObfLibrary.hold(MAPS_HOLDER, true)
+            val osmandRouter = if (osmand) OsmAndRouter { ObfLibrary.routingMaps(app) } else null
             val router = try {
-                Router(RoutingData.segments(root), RoutingData.installProfile(RoutingData.profiles(root)))
+                osmandRouter ?: Router(RoutingData.segments(root), RoutingData.installProfile(RoutingData.profiles(root)))
             } catch (e: IOException) {
                 main.post { if (!closed) statusText.text = getString(R.string.preview_failed, e.message ?: e.toString()) }
                 return@execute
@@ -340,10 +376,15 @@ class PreviewActivity : Activity() {
             val finder = AlternativeFinder(router, request, started = { running = it }, cancelled = { closed })
             val failure = try {
                 finder.find { found ->
-                    val named = try {
-                        StreetNames.name(found, MapData.installed(app))
-                    } catch (e: RuntimeException) {
+                    // OsmAnd's routes come named from the same maps.
+                    val named = if (osmand) {
                         found
+                    } else {
+                        try {
+                            StreetNames.name(found, MapData.installed(app))
+                        } catch (e: RuntimeException) {
+                            found
+                        }
                     }
                     main.post {
                         if (closed || RoutePreview.duplicate(named, options.map { it.second })) return@post
@@ -356,6 +397,8 @@ class PreviewActivity : Activity() {
                 e.toString()
             } finally {
                 running = null
+                osmandRouter?.close()
+                if (osmand) ObfLibrary.hold(MAPS_HOLDER, false)
             }
             if (closed) return@execute
             main.post {
@@ -397,6 +440,7 @@ class PreviewActivity : Activity() {
 
     override fun onDestroy() {
         closed = true
+        if (mapHeld) ObfLibrary.hold(MAP_HOLDER, false)
         running?.terminate()
         worker.shutdownNow()
         if (::mapView.isInitialized) {
@@ -408,6 +452,12 @@ class PreviewActivity : Activity() {
     companion object {
         /** The end of this activity's process name; [SourceApplication] skips its setup there. */
         const val PROCESS_SUFFIX = ":preview"
+
+        /** This process's hold on OsmAnd's maps while it looks for alternatives ([ObfLibrary.hold]). */
+        private const val MAPS_HOLDER = "preview"
+
+        /** This process's hold on OsmAnd's maps while the preview draws its map from them. */
+        private const val MAP_HOLDER = "preview-map"
 
         /** The [PreviewRequest.token] a choice was made against. */
         const val EXTRA_TOKEN = "preview_token"

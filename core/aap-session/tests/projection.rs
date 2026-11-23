@@ -2076,6 +2076,46 @@ fn transport_keycodes_become_transport_events_and_other_keys_stay_keys() {
     assert!(text.contains("input_key_events=5"), "{text}");
 }
 
+/// Every keycode the head unit sends is named in the report with its press and release
+/// counts, including one pressed while the head unit shows its own screen: that is how a
+/// drive answers which code a steering-wheel button (the voice button) sends.
+#[test]
+fn the_report_names_each_keycode_including_ones_sent_without_focus() {
+    let (mut s, mut hu, t0) = start(small_frame_hu(), |c| c.projection.media_info = true);
+    let link = s.media();
+    let mut source = Source::new(800, 480);
+    link.submit(CONFIG, 0, &source.config());
+    let (frame, flags) = source.frame(true);
+    link.submit(flags, 1_000, &frame);
+    pump(&mut s, &mut hu, t0);
+    let text = s.report().to_string();
+    assert!(
+        text.contains("input_keys=- input_keys_overflow=0"),
+        "{text}"
+    );
+
+    for (keycode, down) in [(85, true), (85, false), (84, true), (84, false)] {
+        hu.send_key(keycode, down);
+    }
+    pump(&mut s, &mut hu, t0);
+    // The head unit takes its own screen back, then the button is pressed again.
+    hu.send_focus(2);
+    pump(&mut s, &mut hu, t0);
+    hu.send_key(84, true);
+    hu.send_key(231, true);
+    pump(&mut s, &mut hu, t0);
+    let text = s.report().to_string();
+    assert!(
+        text.contains(
+            "input_keys=85(KEYCODE_MEDIA_PLAY_PAUSE):down=1,up=1,long=0,unfocused=0,first=0ms;\
+             84(KEYCODE_SEARCH):down=2,up=1,long=0,unfocused=1,first=0ms;\
+             231(KEYCODE_VOICE_ASSIST):down=1,up=0,long=0,unfocused=1,first=0ms \
+             input_keys_overflow=0"
+        ),
+        "{text}"
+    );
+}
+
 /// 0x8002 is the one message this channel carries head unit → phone. Nothing acts on it,
 /// but it must not show up as traffic this source cannot explain.
 #[test]

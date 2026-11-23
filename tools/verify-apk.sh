@@ -14,9 +14,9 @@ line "minSdkVersion:'33'"
 line "targetSdkVersion:'36'"
 line "native-code: 'arm64-v8a'"
 # The spec §5.2 baseline plus P5.5's four optional dashboard grants. Still notably no
-# microphone, and Bluetooth only for W0 below. Each addition here is a deliberate,
-# separately optional integration that degrades without its grant (APP09); this list is
-# the guard that makes adding another a visible act.
+# microphone unless voice input below adds it, and Bluetooth only for W0 below. Each
+# addition here is a deliberate, separately optional integration that degrades without
+# its grant (APP09); this list is the guard that makes adding another a visible act.
 # P7.9 adds MANAGE_ONGOING_CALLS (signature|appop; docs/dashboard.md,
 # "Calls and the keypad"). Declaring it grants nothing: it takes effect only after
 # `adb shell appops set com.jw6ventures.headlink MANAGE_ONGOING_CALLS allow`, and even
@@ -50,9 +50,36 @@ line "native-code: 'arm64-v8a'"
 # Standby adds WAKE_LOCK (normal; spec §5.2, the standby amendment): held only while the
 # linked truck's own start request sets up (at most 90 s), and 5 s per Bluetooth frame from
 # the truck while waiting for one.
+# Voice input (spec §2.1, §5.2 as amended 11 November 2026) permits five more, which its
+# feature streams add to the manifest one by one with their code, so each may be present
+# or absent here; nothing else may:
+#   RECORD_AUDIO (dangerous): push-to-talk capture from the car's hands-free link only.
+#   MODIFY_AUDIO_SETTINGS (normal): routing capture to that link while listening.
+#   FOREGROUND_SERVICE_MICROPHONE (normal): the microphone type on ProjectionService.
+#   READ_CONTACTS (dangerous): names and numbers for "Text John", memory only.
+#   SEND_SMS (dangerous): one confirmed text. No READ_SMS, RECEIVE_SMS or MMS permission.
+voice_permissions="android.permission.FOREGROUND_SERVICE_MICROPHONE android.permission.MODIFY_AUDIO_SETTINGS android.permission.READ_CONTACTS android.permission.RECORD_AUDIO android.permission.SEND_SMS"
+has_permission() { printf '%s\n' "$badging" | grep -q "^uses-permission: name='$1'"; }
 permissions=$(printf '%s\n' "$badging" | sed -n "s/^uses-permission: name='\([^']*\)'.*/\1/p" | LC_ALL=C sort | tr '\n' ' ')
+for voice in $voice_permissions; do
+    permissions=$(printf '%s' "$permissions" | sed "s/$voice //")
+done
 [ "$permissions" = "android.permission.ACCESS_COARSE_LOCATION android.permission.ACCESS_FINE_LOCATION android.permission.ACCESS_NETWORK_STATE android.permission.BLUETOOTH_CONNECT android.permission.CHANGE_NETWORK_STATE android.permission.FOREGROUND_SERVICE android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE android.permission.FOREGROUND_SERVICE_LOCATION android.permission.INTERNET android.permission.MANAGE_ONGOING_CALLS android.permission.POST_NOTIFICATIONS android.permission.READ_PHONE_STATE android.permission.REQUEST_COMPANION_START_FOREGROUND_SERVICES_FROM_BACKGROUND android.permission.REQUEST_OBSERVE_COMPANION_DEVICE_PRESENCE android.permission.WAKE_LOCK org.breezyweather.READ_PROVIDER " ] \
     || fail "unexpected permission set: $permissions"
+# The microphone's foreground type needs the microphone itself.
+if has_permission android.permission.FOREGROUND_SERVICE_MICROPHONE && ! has_permission android.permission.RECORD_AUDIO; then
+    fail "FOREGROUND_SERVICE_MICROPHONE without RECORD_AUDIO"
+fi
+# RECORD_AUDIO and SEND_SMS imply required microphone and telephony features, which would
+# stop the app installing on a phone without them; the manifest must mark both optional.
+if has_permission android.permission.RECORD_AUDIO \
+    && printf '%s\n' "$badging" | grep -q "^ *uses-feature: name='android.hardware.microphone'"; then
+    fail "android.hardware.microphone must be declared required=false"
+fi
+if has_permission android.permission.SEND_SMS \
+    && printf '%s\n' "$badging" | grep -q "^ *uses-feature: name='android.hardware.telephony'"; then
+    fail "android.hardware.telephony must be declared required=false"
+fi
 # One launcher entry, the main screen. The probe is reached from Diagnostics alone.
 [ "$(printf '%s\n' "$badging" | grep -c '^launchable-activity:')" = 1 ] || fail "launcher entry count"
 printf '%s\n' "$badging" | grep -q "^launchable-activity: name='com.jw6ventures.headlink.ConnectionActivity'" \
@@ -102,8 +129,14 @@ projection=$(printf '%s\n' "$services" | grep '"com.jw6ventures.headlink.Project
 printf '%s\n' "$projection" | grep -q ':exported([^)]*)=false\( \|$\)' || fail "ProjectionService must not be exported"
 # connectedDevice (0x10) plus location (0x08), so the phone-location fallback keeps
 # working with the screen off; the service adds location only while it is granted.
-printf '%s\n' "$projection" | grep -q ':foregroundServiceType([^)]*)=0x00000018' \
-    || fail "ProjectionService foregroundServiceType must be connectedDevice|location"
+# With voice input's FOREGROUND_SERVICE_MICROPHONE, microphone (0x80) too, and only then.
+if has_permission android.permission.FOREGROUND_SERVICE_MICROPHONE; then
+    printf '%s\n' "$projection" | grep -q ':foregroundServiceType([^)]*)=0x00000098' \
+        || fail "ProjectionService foregroundServiceType must be connectedDevice|location|microphone"
+else
+    printf '%s\n' "$projection" | grep -q ':foregroundServiceType([^)]*)=0x00000018' \
+        || fail "ProjectionService foregroundServiceType must be connectedDevice|location"
+fi
 
 # W2/W3: the foreground while a wireless link sets up. Unexported, connectedDevice only.
 linking=$(printf '%s\n' "$services" | grep '"com.jw6ventures.headlink.WirelessLinkService"') \
@@ -173,20 +206,22 @@ filter=$(aapt2 dump xmltree --file "$filter_path" "$apk")
 printf '%s\n' "$filter" | grep -q 'manufacturer="Android"' || fail "accessory filter manufacturer"
 printf '%s\n' "$filter" | grep -q 'model="Android Auto"' || fail "accessory filter model"
 
-# Two native libraries now: this project's own, and VTM's 45 KB tessellator (P5.5).
-# Listed exactly, so a renderer that starts dragging further ABIs or .so files in is a
-# build failure rather than a silent APK growth.
-[ "$(unzip -Z1 "$apk" | grep '^lib/' | LC_ALL=C sort | tr '\n' ' ')" = "lib/arm64-v8a/libaap_jni.so lib/arm64-v8a/libvtm-jni.so " ] \
+# Three native libraries now: this project's own, VTM's 45 KB tessellator (P5.5), and
+# voice input's whisper.cpp recognizer (spec §2.1 as amended 11 November 2026). Listed
+# exactly, so a renderer that starts dragging further ABIs or .so files in is a build
+# failure rather than a silent APK growth.
+[ "$(unzip -Z1 "$apk" | grep '^lib/' | LC_ALL=C sort | tr '\n' ' ')" = "lib/arm64-v8a/libaap_jni.so lib/arm64-v8a/libvtm-jni.so lib/arm64-v8a/libwhisper_jni.so " ] \
     || fail "native library set: $(unzip -Z1 "$apk" | grep '^lib/' | tr '\n' ' ')"
 notices=$(unzip -p "$apk" assets/NOTICES.txt)
 printf '%s\n' "$notices" | grep -q '^   OpenSSL 3.5.8' || fail "third-party notices asset"
 # Every component's license text must travel with the APK, not only its name.
 for heading in '^   BRouter ' '^MIT License' '^Apache License 2.0' '^SGI Free Software License B 2.0' \
     '^GNU Lesser General Public License 3.0' '^GNU General Public License 3.0' \
+    '^   OsmAnd-java ' '^   whisper.cpp 1.8.3 ' '^GNU Lesser General Public License 2.1' 'Version 2.1, February 1999' \
     'GNU LESSER GENERAL PUBLIC LICENSE' 'END OF TERMS AND CONDITIONS'; do
     printf '%s\n' "$notices" | grep -q -- "$heading" || fail "third-party notices: $heading"
 done
-for library in libaap_jni.so libvtm-jni.so; do
+for library in libaap_jni.so libvtm-jni.so libwhisper_jni.so; do
     unzip -v "$apk" "lib/arm64-v8a/$library" | grep -q ' Stored ' || fail "library is compressed: $library"
 done
 zipalign -c -P 16 4 "$apk" || fail "zip alignment"
@@ -211,6 +246,28 @@ if llvm-readelf --program-headers "$so" | awk '$1 == "LOAD" { print $NF }' | gre
     fail "LOAD segments not 16 KiB aligned"
 fi
 grep -a -q 'OpenSSL 3\.5\.8 ' "$so" || fail "pinned OpenSSL 3.5.8 version text not in the library"
+# whisper.cpp: libc++ linked in (no libc++_shared.so), nothing but the platform's C
+# libraries needed, only WhisperNative's JNI functions exported, 16 KiB pages, and the
+# pinned version (tools/whisper-build.sh).
+whisper=$work/lib/arm64-v8a/libwhisper_jni.so
+llvm-readelf --file-header "$whisper" | grep -q 'Machine:.*AArch64' || fail "whisper ELF machine"
+whisper_needed=$(llvm-readelf --dynamic-table "$whisper" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p' | tr '\n' ' ')
+for lib in $whisper_needed; do
+    case $lib in
+        libc.so | libdl.so | libm.so) ;;
+        *) fail "unexpected NEEDED $lib in libwhisper_jni.so" ;;
+    esac
+done
+whisper_exports=$(llvm-nm -D --defined-only "$whisper" | awk '$2 == "T" { print $3 }' | LC_ALL=C sort | tr '\n' ' ')
+[ "$whisper_exports" = "Java_com_jw6ventures_headlink_WhisperNative_nativeCancel \
+Java_com_jw6ventures_headlink_WhisperNative_nativeDescribe Java_com_jw6ventures_headlink_WhisperNative_nativeFree \
+Java_com_jw6ventures_headlink_WhisperNative_nativeLoad Java_com_jw6ventures_headlink_WhisperNative_nativeQuiet \
+Java_com_jw6ventures_headlink_WhisperNative_nativeTranscribe Java_com_jw6ventures_headlink_WhisperNative_nativeVersion " ] \
+    || fail "unexpected whisper exports: $whisper_exports"
+if llvm-readelf --program-headers "$whisper" | awk '$1 == "LOAD" { print $NF }' | grep -qvx 0x4000; then
+    fail "libwhisper_jni.so LOAD segments not 16 KiB aligned"
+fi
+grep -a -q '1\.8\.3' "$whisper" || fail "pinned whisper.cpp 1.8.3 version text not in the library"
 if cat "$work"/classes*.dex | grep -a -q -e 'com/google/android/gms' -e 'gearhead'; then
     fail "Google Play services or gearhead reference in dex"
 fi
@@ -219,4 +276,4 @@ case $apk in
     *) signer=$(apksigner verify --print-certs "$apk" | sed -n 's/^Signer #1 certificate DN: //p')
        [ -n "$signer" ] || fail "signature" ;;
 esac
-echo "verify-apk: ok $(basename "$apk") needed=[${needed% }] signer=[$signer]"
+echo "verify-apk: ok $(basename "$apk") needed=[${needed% }] whisper_needed=[${whisper_needed% }] signer=[$signer]"

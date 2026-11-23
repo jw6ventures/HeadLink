@@ -21,13 +21,16 @@ enum class FollowState(val label: String) {
  * The next maneuver, and how far and how long to it and to the destination — all from one
  * position along the route, so they cannot disagree (P6.2's rule, now over a real route).
  */
-class NextStep(
+class NextStep @JvmOverloads constructor(
     /** Unique across routes: a change of this is a change of maneuver on the cluster. */
     val id: Long,
     val maneuver: Maneuver,
     /** What the driver reads: the maneuver, with the road it turns onto when the map names it. */
     val instruction: String,
-    /** The road the maneuver turns onto, or null when the map names none. */
+    /**
+     * The road the maneuver turns onto, or null when the map names none. At a signed exit,
+     * the sign's [ExitSign.label] ("Exit 23A: I 35 South / Waco") instead.
+     */
     val onto: String?,
     /** The road being driven now, or null when unnamed or not yet on the route. */
     val road: String?,
@@ -42,6 +45,8 @@ class NextStep(
      * wire: the cluster is told one maneuver at a time.
      */
     val later: List<LaterStep> = emptyList(),
+    /** The exit sign for this maneuver, or null where there is none or none is known. */
+    val sign: ExitSign? = null,
 )
 
 /** A maneuver past the next one, and the metres along the route from the vehicle to it. */
@@ -85,6 +90,9 @@ class RouteFollower(val route: Route, private val generation: Long) {
     /** Point index and maneuver of each step, in route order, with non-maneuvers dropped. */
     private val steps: List<Pair<Int, Maneuver>>
 
+    /** The exit sign of each of [steps], or null: what [ExitSigns] read for that maneuver. */
+    private val signs: List<ExitSign?>
+
     var state = FollowState.JOINING
         private set
 
@@ -106,19 +114,21 @@ class RouteFollower(val route: Route, private val generation: Long) {
             )
         }
         totalM = if (count > 0) along[count - 1] else 0.0
-        steps = route.maneuverIndices.indices.mapNotNull { k ->
+        val found = route.maneuverIndices.indices.mapNotNull { k ->
             val index = route.maneuverIndices[k]
             val command = route.commands.getOrElse(k) { btools.router.VoiceHintReader.CONTINUE }
-            Maneuvers.of(command, route.exitNumbers.getOrElse(k) { 0 })?.let { index.coerceIn(0, count - 1) to it }
-        }.let { found ->
+            Maneuvers.of(command, route.exitNumbers.getOrElse(k) { 0 })?.let { Triple(index.coerceIn(0, count - 1), it, route.exitSign(k)) }
+        }
+        signs = found.map { it.third } + null
+        steps = found.map { it.first to it.second }.let { pairs ->
             // The destination is a step of its own at the last point. BRouter does not
             // supply it: its END marker is internal to voice-hint processing and never
             // survives into the hints a track carries (measured on two Massachusetts
             // routes, P6.5). If a future BRouter does supply one, it is not doubled.
-            if (found.lastOrNull()?.second?.type == Maneuvers.DESTINATION) {
-                found
+            if (pairs.lastOrNull()?.second?.type == Maneuvers.DESTINATION) {
+                pairs
             } else {
-                found + ((count - 1) to Maneuvers.of(btools.router.VoiceHintReader.END, 0)!!)
+                pairs + ((count - 1) to Maneuvers.of(btools.router.VoiceHintReader.END, 0)!!)
             }
         }
     }
@@ -173,11 +183,14 @@ class RouteFollower(val route: Route, private val generation: Long) {
         val now = secondsAt(from)
         val stepM = along[index] - from + lead
         val destinationM = totalM - from + lead
-        val onto = if (maneuver.type == Maneuvers.DESTINATION) null else route.roadAt(index)
+        val sign = if (maneuver.type == Maneuvers.DESTINATION) null else signs.getOrNull(k)
+        // An exit's sign says more than the ramp's name, which is usually none.
+        val onto = if (maneuver.type == Maneuvers.DESTINATION) null else sign?.label ?: route.roadAt(index)
         return NextStep(
             id = generation * STEP_ID_STRIDE + k,
             maneuver = maneuver,
-            instruction = Maneuvers.instruction(maneuver, onto, route.roadAt(index - 1)),
+            instruction = sign?.let { Maneuvers.exitInstruction(maneuver, it) }
+                ?: Maneuvers.instruction(maneuver, onto, route.roadAt(index - 1)),
             onto = onto,
             // Joining or off it, the vehicle is on some road the route does not know.
             road = if (onRoute) route.roadAt(segmentAt(from)) else null,
@@ -188,14 +201,25 @@ class RouteFollower(val route: Route, private val generation: Long) {
             later = (k + 1 until minOf(steps.size, k + 1 + LATER_STEPS)).map { j ->
                 LaterStep(steps[j].second, along[steps[j].first] - from + lead)
             },
+            sign = sign,
         )
     }
 
     /** BRouter's own time at [metres] along, interpolated between the two points around it. */
-    private fun secondsAt(metres: Double): Double {
+    private fun secondsAt(metres: Double): Double = secondsAt(metres, route.pointSeconds, route.seconds.toDouble())
+
+    /**
+     * Seconds from [metres] along to the destination by [times], one per point from the
+     * start ([PaceBook.times]), interpolated as the route's own are.
+     */
+    fun remainingBy(metres: Double, times: FloatArray): Double {
+        val total = times.lastOrNull()?.toDouble() ?: 0.0
+        return secondsAt(totalM, times, total) - secondsAt(metres, times, total)
+    }
+
+    private fun secondsAt(metres: Double, times: FloatArray, total: Double): Double {
         if (totalM <= 0.0) return 0.0
-        val times = route.pointSeconds
-        if (times.size != count) return route.seconds * (metres / totalM).coerceIn(0.0, 1.0)
+        if (times.size != count) return total * (metres / totalM).coerceIn(0.0, 1.0)
         val i = segmentAt(metres)
         val length = along[i + 1] - along[i]
         val t = if (length > 0.0) ((metres - along[i]) / length).coerceIn(0.0, 1.0) else 0.0

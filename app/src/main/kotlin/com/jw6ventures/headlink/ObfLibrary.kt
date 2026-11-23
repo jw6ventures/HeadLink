@@ -9,10 +9,15 @@ import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.provider.DocumentsContract
+import android.system.ErrnoException
+import android.system.Os
+import android.system.OsConstants
 import java.io.Closeable
 import java.io.File
 import java.io.FileInputStream
 import java.io.IOException
+import java.io.InterruptedIOException
+import java.io.RandomAccessFile
 import java.nio.channels.FileChannel
 import java.time.Instant
 import java.time.ZoneId
@@ -114,11 +119,18 @@ object ObfRules {
     /**
      * Which persisted grant is which: the drop folder's reads and writes, the
      * maps folder's only reads. Each folder's choice gives up only earlier grants of its
-     * own kind, so choosing one never drops the other.
+     * own kind, so choosing one never drops the other. Both are folder (tree) grants; the
+     * speech model's read grant is on a single file ([isSpeechModelGrant]), so neither
+     * folder's choice touches it.
      */
-    fun isDropGrant(read: Boolean, write: Boolean): Boolean = read && write
+    @JvmOverloads
+    fun isDropGrant(read: Boolean, write: Boolean, tree: Boolean = true): Boolean = tree && read && write
 
-    fun isMapsGrant(read: Boolean, write: Boolean): Boolean = read && !write
+    @JvmOverloads
+    fun isMapsGrant(read: Boolean, write: Boolean, tree: Boolean = true): Boolean = tree && read && !write
+
+    /** The speech model file (Settings → Voice input): a read grant on one document, not a folder. */
+    fun isSpeechModelGrant(read: Boolean, tree: Boolean): Boolean = !tree && read
 
     /** How long a listing is trusted before [ObfLibrary.sources] looks at the folder again. */
     const val RELIST_MS = 15_000L
@@ -149,9 +161,45 @@ object ObfLibrary {
         Executors.newSingleThreadExecutor { runnable -> Thread(runnable, "obf-library").apply { isDaemon = true } }
     private val refreshQueued = AtomicBoolean()
 
-    private class Opened(val key: ObfRules.FileKey, val source: ObfSource, val handle: Closeable, val dateMs: Long, val region: String?)
+    private class Opened(
+        val key: ObfRules.FileKey,
+        val source: ObfSource,
+        val handle: Closeable,
+        val dateMs: Long,
+        val region: String?,
+        /** A new handle on the same file for OsmAnd's own reader: see [routingMaps]. */
+        val reopen: () -> RandomAccessFile,
+    )
 
     private enum class Rejection { NEWER, FAILED }
+
+    /**
+     * A [PositionalFile]'s bytes from [pfd] with `pread`, which a thread interrupt does not
+     * stop for good as it does a `FileChannel` (VTM interrupts its tile loaders). Closing
+     * it closes [pfd].
+     */
+    private class DescriptorSource(private val pfd: ParcelFileDescriptor) : PositionalFile.Source {
+        override fun size(): Long = try {
+            Os.fstat(pfd.fileDescriptor).st_size
+        } catch (e: ErrnoException) {
+            throw IOException(e)
+        }
+
+        override fun read(b: ByteArray, off: Int, len: Int, position: Long): Int {
+            while (true) {
+                try {
+                    val n = Os.pread(pfd.fileDescriptor, b, off, len, position)
+                    return if (n == 0) -1 else n
+                } catch (e: ErrnoException) {
+                    if (e.errno != OsConstants.EINTR) throw IOException(e)
+                } catch (e: InterruptedIOException) {
+                    // The thread was interrupted mid-read; the descriptor is fine, so read again.
+                }
+            }
+        }
+
+        override fun close() = pfd.close()
+    }
 
     /**
      * Held for the whole of a listing, so only one runs at a time and nothing is closed
@@ -182,8 +230,11 @@ object ObfLibrary {
     /** The granted maps folder: a persisted grant to read that does not also write. */
     fun folder(context: Context): Uri? =
         context.contentResolver.persistedUriPermissions
-            .firstOrNull { ObfRules.isMapsGrant(it.isReadPermission, it.isWritePermission) }
+            .firstOrNull { ObfRules.isMapsGrant(it.isReadPermission, it.isWritePermission, DocumentsContract.isTreeUri(it.uri)) }
             ?.uri
+
+    /** Whether OsmAnd's maps have somewhere to come from: a chosen folder, or (debug) lab files. */
+    fun chosen(context: Context): Boolean = folder(context) != null || labFiles(context).isNotEmpty()
 
     /**
      * Makes [tree] the maps folder: takes a persisted read-only grant on it, lets go of
@@ -196,9 +247,9 @@ object ObfLibrary {
         val app = context.applicationContext
         val resolver = app.contentResolver
         val grants = resolver.persistedUriPermissions
-        if (grants.any { it.uri == tree && ObfRules.isDropGrant(it.isReadPermission, it.isWritePermission) }) return false
+        if (grants.any { it.uri == tree && ObfRules.isDropGrant(it.isReadPermission, it.isWritePermission, DocumentsContract.isTreeUri(it.uri)) }) return false
         grants
-            .filter { it.uri != tree && ObfRules.isMapsGrant(it.isReadPermission, it.isWritePermission) }
+            .filter { it.uri != tree && ObfRules.isMapsGrant(it.isReadPermission, it.isWritePermission, DocumentsContract.isTreeUri(it.uri)) }
             .forEach { resolver.releasePersistableUriPermission(it.uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
         resolver.takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION)
         SessionController.note("maps folder chosen")
@@ -242,6 +293,23 @@ object ObfLibrary {
         // [hasSources] never wait on the provider or on a file being opened.
         if (wanted()) synchronized(scanLock) { if (wanted()) scan(app) }
         return synchronized(lock) { opened.values.map { it.source } }
+    }
+
+    /**
+     * The open maps as [OsmAndRouter] opens them, listed by the same rule as [sources]; off
+     * the main thread. OsmAnd's reader takes a `RandomAccessFile`, and a file from the maps
+     * folder has only a descriptor, so [OsmAndRouter.MapFile.open] reads a duplicate of it
+     * through a [PositionalFile] (its notes say why not the `/proc/self/fd` link). The duplicate
+     * is the reader's own, so a reader keeps working after this library lets go. A lab file
+     * is opened by its path. The id is the file's key, so a reader opened for one file is
+     * never reused for another.
+     */
+    fun routingMaps(context: Context): List<OsmAndRouter.MapFile> {
+        val app = context.applicationContext
+        if (wanted()) synchronized(scanLock) { if (wanted()) scan(app) }
+        return synchronized(lock) {
+            opened.values.map { OsmAndRouter.MapFile("${it.key.name}|${it.key.size}|${it.key.modifiedMs}", it.key.name, it.key.name, it.reopen) }
+        }
     }
 
     /** Held, and the last listing is missing or old. */
@@ -304,7 +372,7 @@ object ObfLibrary {
     fun report(): String = synchronized(lock) {
         "obf_files_open=${opened.size} obf_newer_format=${state?.newer ?: 0} obf_unreadable=${state?.failed ?: 0} " +
             "obf_open_failures=$openFailures obf_listings=$listings obf_opens=$opens obf_newer_seen=$newerFiles " +
-            "obf_closes=$closes\n"
+            "obf_closes=$closes ${ObfReaderFailures.report()}\n"
     } + PhoneSearch.report()
 
     // Under [scanLock], not [lock]: the provider query and the opening run unlocked, and
@@ -315,7 +383,7 @@ object ObfLibrary {
             listedAt = SystemClock.elapsedRealtime()
         }
         val tree = folder(context)
-        val found = ArrayList<Pair<ObfRules.FileKey, () -> Pair<FileChannel, Closeable>>>()
+        val found = ArrayList<Pair<ObfRules.FileKey, () -> Triple<FileChannel, Closeable, () -> RandomAccessFile>>>()
         var unreadable = false
         if (tree != null) {
             try {
@@ -338,10 +406,18 @@ object ObfLibrary {
                         found += key to {
                             val pfd = resolver.openFileDescriptor(document, "r") ?: throw IOException("no descriptor")
                             val stream = FileInputStream(pfd.fileDescriptor)
-                            stream.channel to Closeable {
-                                closeQuietly(stream)
-                                closeQuietly(pfd)
-                            }
+                            Triple(
+                                stream.channel,
+                                Closeable {
+                                    closeQuietly(stream)
+                                    closeQuietly(pfd)
+                                },
+                                {
+                                    // A duplicate of the provider's descriptor, owned by the
+                                    // reader: it stays open after this library closes [pfd].
+                                    PositionalFile(DescriptorSource(pfd.dup()))
+                                },
+                            )
                         }
                     }
                 }
@@ -354,7 +430,7 @@ object ObfLibrary {
             val key = ObfRules.FileKey(file.name, file.length(), file.lastModified())
             found += key to {
                 val stream = FileInputStream(file)
-                stream.channel to Closeable { closeQuietly(stream) }
+                Triple(stream.channel, Closeable { closeQuietly(stream) }, { RandomAccessFile(file, "r") })
             }
         }
         val wanted = found.map { it.first }.toSet()
@@ -372,10 +448,10 @@ object ObfLibrary {
         for ((key, open) in fresh) {
             var handle: Closeable? = null
             try {
-                val (channel, closer) = open()
+                val (channel, closer, reopen) = open()
                 handle = closer
                 val source = ObfReaders.open(channel, key.name)
-                added += Opened(key, source, closer, ObfReaders.dateMs(source).takeIf { it > 0 } ?: key.modifiedMs, ObfRules.region(key.name))
+                added += Opened(key, source, closer, ObfReaders.dateMs(source).takeIf { it > 0 } ?: key.modifiedMs, ObfRules.region(key.name), reopen)
             } catch (e: ObfNewerFormatException) {
                 handle?.let(::closeQuietly)
                 refused += key to Rejection.NEWER

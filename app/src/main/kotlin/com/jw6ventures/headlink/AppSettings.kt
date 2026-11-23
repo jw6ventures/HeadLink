@@ -93,6 +93,15 @@ data class SavedSettings(
     val routing: RouteOptions = RouteOptions(),
     /** P10: Settings → Weather (docs/dashboard.md, "Weather"); off by default (APP09). */
     val weather: WeatherSettings = WeatherSettings(),
+    /** Settings → Map → Adaptive zoom (docs/dashboard.md, "Adaptive zoom"); on by default. */
+    val adaptiveZoom: AdaptiveZoomSettings = AdaptiveZoomSettings(),
+    /**
+     * Settings → Map → Draw map from OsmAnd files (docs/navigation.md, "Drawing the map from
+     * OsmAnd maps"): the map pane reads OsmAnd's `.obf` maps instead of Mapsforge `.map`
+     * files. On by default since 0.9; the pane falls back to a `.map` file when no OsmAnd
+     * file has map data.
+     */
+    val osmAndMap: Boolean = true,
 ) {
     /**
      * This value with every stored choice a list no longer offers put back to its
@@ -118,6 +127,7 @@ data class SavedSettings(
             scene = pick(scene, SessionSettings.SCENES, d.scene),
             notificationExclusions = notificationExclusions.filterTo(HashSet()) { it.isNotBlank() },
             routing = routing.repaired(),
+            adaptiveZoom = adaptiveZoom.repaired(),
         )
     }
 
@@ -234,9 +244,19 @@ data class SavedSettings(
             ROUTE_ETA_PERCENT to s.routing.etaPercent,
             ROUTE_LEARN_PACE to s.routing.learnPace,
             ROUTE_SHOW_ALTERNATIVES to s.routing.showAlternatives,
+            ROUTE_ENGINE to (if (s.routing.osmAndRouting) ENGINE_OSMAND else ENGINE_BROUTER),
             WEATHER_ENABLED to s.weather.enabled,
             WEATHER_SPEAK_ALERTS to s.weather.speakAlerts,
             WEATHER_ALERT_LEVEL to s.weather.alertLevel.key,
+            ADAPTIVE_ZOOM to s.adaptiveZoom.enabled,
+            MAP_SOURCE to (if (s.osmAndMap) SOURCE_OSMAND else SOURCE_MAPSFORGE),
+            ADAPTIVE_ZOOM_LEVEL_0 to s.adaptiveZoom.levels[0],
+            ADAPTIVE_ZOOM_LEVEL_1 to s.adaptiveZoom.levels[1],
+            ADAPTIVE_ZOOM_LEVEL_2 to s.adaptiveZoom.levels[2],
+            ADAPTIVE_ZOOM_LEVEL_3 to s.adaptiveZoom.levels[3],
+            ADAPTIVE_ZOOM_OUT_SECONDS to s.adaptiveZoom.zoomOutSeconds,
+            ADAPTIVE_ZOOM_IN_SECONDS to s.adaptiveZoom.zoomInSeconds,
+            ADAPTIVE_ZOOM_GLIDE_MILLIS to s.adaptiveZoom.glideMillis,
         )
     }
 
@@ -319,12 +339,30 @@ data class SavedSettings(
                     etaPercent = number(ROUTE_ETA_PERCENT, d.routing.etaPercent),
                     learnPace = flag(ROUTE_LEARN_PACE, d.routing.learnPace),
                     showAlternatives = flag(ROUTE_SHOW_ALTERNATIVES, d.routing.showAlternatives),
+                    osmAndRouting = when (stored[ROUTE_ENGINE] as? String) {
+                        ENGINE_BROUTER -> false
+                        ENGINE_OSMAND -> true
+                        else -> d.routing.osmAndRouting
+                    },
                 ),
                 weather = WeatherSettings(
                     enabled = flag(WEATHER_ENABLED, d.weather.enabled),
                     speakAlerts = flag(WEATHER_SPEAK_ALERTS, d.weather.speakAlerts),
                     alertLevel = AlertLevel.of(stored[WEATHER_ALERT_LEVEL] as? String),
                 ),
+                adaptiveZoom = AdaptiveZoomSettings(
+                    enabled = flag(ADAPTIVE_ZOOM, d.adaptiveZoom.enabled),
+                    levels = listOf(ADAPTIVE_ZOOM_LEVEL_0, ADAPTIVE_ZOOM_LEVEL_1, ADAPTIVE_ZOOM_LEVEL_2, ADAPTIVE_ZOOM_LEVEL_3)
+                        .mapIndexed { i, key -> number(key, d.adaptiveZoom.levels[i]) },
+                    zoomOutSeconds = number(ADAPTIVE_ZOOM_OUT_SECONDS, d.adaptiveZoom.zoomOutSeconds),
+                    zoomInSeconds = number(ADAPTIVE_ZOOM_IN_SECONDS, d.adaptiveZoom.zoomInSeconds),
+                    glideMillis = number(ADAPTIVE_ZOOM_GLIDE_MILLIS, d.adaptiveZoom.glideMillis),
+                ),
+                osmAndMap = when (stored[MAP_SOURCE] as? String) {
+                    SOURCE_MAPSFORGE -> false
+                    SOURCE_OSMAND -> true
+                    else -> d.osmAndMap
+                },
             ).repaired()
         }
 
@@ -387,6 +425,23 @@ data class SavedSettings(
         private const val ROUTE_ETA_PERCENT = "route_eta_percent"
         private const val ROUTE_LEARN_PACE = "route_learn_pace"
         private const val ROUTE_SHOW_ALTERNATIVES = "route_show_alternatives"
+        // 0.9 made OsmAnd's files the default. The 0.8 test switches' keys, route_osmand and
+        // map_osmand, were stored false on every phone that saved any setting, so they are
+        // left unread: these replace them, and a phone without them gets the new default.
+        private const val ROUTE_ENGINE = "route_engine"
+        private const val ENGINE_OSMAND = "osmand"
+        private const val ENGINE_BROUTER = "brouter"
+        private const val ADAPTIVE_ZOOM = "adaptive_zoom"
+        private const val MAP_SOURCE = "map_source"
+        private const val SOURCE_OSMAND = "osmand"
+        private const val SOURCE_MAPSFORGE = "mapsforge"
+        private const val ADAPTIVE_ZOOM_LEVEL_0 = "adaptive_zoom_level_0"
+        private const val ADAPTIVE_ZOOM_LEVEL_1 = "adaptive_zoom_level_1"
+        private const val ADAPTIVE_ZOOM_LEVEL_2 = "adaptive_zoom_level_2"
+        private const val ADAPTIVE_ZOOM_LEVEL_3 = "adaptive_zoom_level_3"
+        private const val ADAPTIVE_ZOOM_OUT_SECONDS = "adaptive_zoom_out_seconds"
+        private const val ADAPTIVE_ZOOM_IN_SECONDS = "adaptive_zoom_in_seconds"
+        private const val ADAPTIVE_ZOOM_GLIDE_MILLIS = "adaptive_zoom_glide_millis"
     }
 }
 

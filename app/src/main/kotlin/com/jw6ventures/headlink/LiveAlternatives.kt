@@ -114,7 +114,8 @@ class LiveAlternative(
                 alternative.maneuverIndices, alternative.exitNumbers, alternative.commands, alternative.pointSeconds,
                 alternative.roadStarts, alternative.roadNames, alternative.topSpeedKmh,
                 doubleArrayOf(alternative.latitudes[middle], alternative.longitudes[middle]),
-                alternative.nogoCount, alternative.closuresOpened,
+                alternative.nogoCount, alternative.closuresOpened, alternative.exitSigns,
+                alternative.paceClasses, alternative.timeScale,
             )
         }
 
@@ -180,11 +181,11 @@ object AlternativeSearch {
      * for a way round to be offered ([Traffic.worthLooking]). Returns the last failure, or null.
      */
     fun find(
-        router: Router,
+        router: RouteEngine,
         trip: PreviewRequest,
         aroundTraffic: Boolean,
         maxRunningMs: Long,
-        started: (btools.router.RoutingEngine) -> Unit,
+        started: (SearchHandle) -> Unit,
         cancelled: () -> Boolean,
         found: (Route) -> Unit,
     ): String? {
@@ -357,7 +358,7 @@ object LiveAlternatives {
         val fromVehicle = follower.route.remainder(follower.indexAt(onRoute.alongM) + 1)
         val ahead = fromVehicle.remainder(LiveAlternative.leadIndex(fromVehicle))
         val aheadAlongM = follower.alongNearest(ahead.latitudes[0], ahead.longitudes[0])
-        val options = AppSettings.load(context).routing
+        val options = Routing.options(context)
         val bearing = Guide.fix()?.second
         val trip = PreviewRequest(
             token, ahead.latitudes[0], ahead.longitudes[0], destination.latitude, destination.longitude,
@@ -383,10 +384,15 @@ object LiveAlternatives {
             done = {
                 // Named, so a route taken from a bubble says its roads on the cluster.
                 val named = routes.map { route ->
-                    try {
-                        if (maps != null) StreetNames.name(route, maps) else route
-                    } catch (e: RuntimeException) {
+                    if (trip.options.osmAndRouting) {
                         route
+                    } else {
+                        val withNames = try {
+                            if (maps != null) StreetNames.name(route, maps) else route
+                        } catch (e: RuntimeException) {
+                            route
+                        }
+                        Routing.signed(app, withNames)
                     }
                 }
                 val took = (System.nanoTime() - begun) / 1_000_000L

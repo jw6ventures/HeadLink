@@ -701,6 +701,9 @@ class ProjectionPipeline(
         title: String,
         artist: String,
         art: android.graphics.Bitmap? = null,
+        positionMs: Long = -1L,
+        durationMs: Long = -1L,
+        atMillis: Long = System.currentTimeMillis(),
     ) {
         scene?.nowPlaying(access, state, source, title, artist)
         // The bitmap goes to the renderer, which owns drawing; the dashboard gets only
@@ -709,6 +712,7 @@ class ProjectionPipeline(
         dashboard?.nowPlaying(
             access, state, source, title, artist,
             art?.let { "$title|$artist|${it.width}x${it.height}|${it.generationId}" },
+            positionMs, durationMs, atMillis,
         )
     }
 

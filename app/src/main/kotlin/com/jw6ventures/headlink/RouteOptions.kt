@@ -37,6 +37,12 @@ data class RouteOptions(
     val learnPace: Boolean = true,
     /** Look for other routes now and then while driving and draw them on the projected map ([LiveAlternatives]). */
     val showAlternatives: Boolean = true,
+    /**
+     * Route with OsmAnd's router over the `.obf` maps ([OsmAndRouter]) rather than BRouter
+     * over `.rd5` tiles. On by default since 0.9; [Routing.options] falls back to BRouter
+     * when no OsmAnd maps folder is chosen and BRouter tiles are installed.
+     */
+    val osmAndRouting: Boolean = true,
 ) {
     /** This value with a speed or percentage no list offers any more put back to its default. */
     fun repaired(): RouteOptions = copy(
@@ -73,7 +79,8 @@ data class RouteOptions(
         "routing_avoid_highways=$avoidHighways routing_avoid_tolls=$avoidTolls " +
             "routing_avoid_unpaved=$avoidUnpaved routing_bypass_towns=$bypassTowns " +
             "routing_allow_tracks=$allowTracks routing_top_speed_kmh=$topSpeedKmh " +
-            "routing_eta_percent=$etaPercent routing_learn_pace=$learnPace routing_show_alternatives=$showAlternatives"
+            "routing_eta_percent=$etaPercent routing_learn_pace=$learnPace routing_show_alternatives=$showAlternatives " +
+            "routing_osmand=$osmAndRouting"
 
     companion object {
         /**
@@ -121,15 +128,25 @@ data class RouteOptions(
  * - **Stretches.** Only consecutive fixes on the route count. Off the route, a re-route
  *   (a new [generation]), or a gap over [GAP_MS] with no fix at all ends a stretch without
  *   counting the gap: a lost signal says nothing about the pace.
- * - **Not before moving.** A stretch's time starts once the estimate first falls, so
- *   sitting in a car park with a route up is not read as a slow drive. Traffic lights and
- *   jams after that count in full, which is the point.
+ * - **Not before moving.** A stretch's time starts once the estimate has fallen by
+ *   [START_FALL_S] within [START_WINDOW_MS], so sitting in a car park with a route up is
+ *   not read as a slow drive. Traffic lights and jams after that count in full, which is
+ *   the point. Up to 0.10.3 the first fall of any size started it: on 2026-11-19 the
+ *   position wandering 4 s along the route in a parked car started the clock, and the
+ *   next 417 parked seconds were counted as driving (`guidance_pace_estimated_s=4
+ *   guidance_pace_actual_s=421`), which carried into the drive and pushed the trip
+ *   panel's time towards [MAX_FACTOR] times the estimate.
  * - **Earned slowly.** Under [MIN_ESTIMATE_S] of estimated driving the factor is 1; it
  *   then carries more of the measured ratio until [FULL_WEIGHT_S], and is held to
  *   [MIN_FACTOR]..[MAX_FACTOR] so one long jam cannot make a nonsense of the arrival.
  *
  * A re-route keeps what was learned: it is the same drive. A new destination resets it.
  * Pure and single-threaded, driven from the main thread like [RouteFollower].
+ *
+ * **Against the learned pace.** Since 0.11 [Guide] feeds it the time to go at the pace
+ * learned across drives ([PaceBook]), so what it measures is how this drive differs from
+ * the usual (a jam, the weather), and gives the router's own fall alongside, which
+ * [countedRawS] and [countedActualS] hand on for [PaceBook] to learn from.
  */
 class PaceTracker {
     /** Seconds the estimate fell by, over every counted stretch. */
@@ -142,33 +159,72 @@ class PaceTracker {
 
     private var generation = -1L
     private var lastRemainingS: Int? = null
+    private var lastRawS: Int? = null
     private var lastMs = 0L
     private var moving = false
+
+    /** Before [moving]: how far the estimate has fallen since [pendingMs], in seconds. */
+    private var pendingFall = 0
+    private var pendingMs = 0L
 
     /**
      * A fix on route [generation] at [nowMs] (any monotonic clock). [remainingS] is the
      * route's estimate of the seconds still to go from it, or null when the fix is not on
      * the route.
      */
-    fun onFix(generation: Long, remainingS: Int?, nowMs: Long) {
+    fun onFix(generation: Long, remainingS: Int?, nowMs: Long) = onFix(generation, remainingS, nowMs, remainingS)
+
+    /**
+     * [onFix], with [remainingS] at the learned pace and [rawRemainingS] the route's own
+     * estimate from the same point: the start rule and the factor read [remainingS]; what
+     * was counted is left in [countedRawS] and [countedActualS] until the next fix.
+     */
+    fun onFix(generation: Long, remainingS: Int?, nowMs: Long, rawRemainingS: Int?) {
+        countedRawS = 0.0
+        countedActualS = 0.0
         val last = lastRemainingS
-        if (remainingS == null || generation != this.generation || last == null || nowMs - lastMs > GAP_MS || nowMs < lastMs) {
+        val lastRaw = lastRawS
+        if (remainingS == null || rawRemainingS == null || generation != this.generation || last == null || lastRaw == null ||
+            nowMs - lastMs > GAP_MS || nowMs < lastMs
+        ) {
             // A new stretch: nothing between the last fix and this one is counted.
             this.generation = generation
             lastRemainingS = remainingS
+            lastRawS = rawRemainingS
             lastMs = nowMs
             moving = false
+            pendingFall = 0
+            pendingMs = nowMs
             return
         }
         val fell = last - remainingS
-        if (!moving && fell > 0) moving = true
-        if (moving) {
+        if (!moving) {
+            if (nowMs - pendingMs > START_WINDOW_MS) {
+                pendingFall = 0
+                pendingMs = lastMs
+            }
+            pendingFall = (pendingFall + fell).coerceAtLeast(0)
+            // This fix's own interval is not counted: the stretch starts from here.
+            if (pendingFall >= START_FALL_S) moving = true
+        } else {
             estimatedS += fell
-            actualS += (nowMs - lastMs) / 1000.0
+            val passed = (nowMs - lastMs) / 1000.0
+            actualS += passed
+            countedRawS = (lastRaw - rawRemainingS).toDouble()
+            countedActualS = passed
         }
         lastRemainingS = remainingS
+        lastRawS = rawRemainingS
         lastMs = nowMs
     }
+
+    /** The route's own estimate's fall over the last fix's interval, if it was counted; else 0. */
+    var countedRawS = 0.0
+        private set
+
+    /** The seconds that passed over the last fix's interval, if it was counted; else 0. */
+    var countedActualS = 0.0
+        private set
 
     /** The factor on the time still to go; 1 until enough of the drive is known. */
     fun factor(): Double {
@@ -187,13 +243,22 @@ class PaceTracker {
         actualS = 0.0
         generation = -1L
         lastRemainingS = null
+        lastRawS = null
         lastMs = 0L
+        countedRawS = 0.0
+        countedActualS = 0.0
         moving = false
+        pendingFall = 0
+        pendingMs = 0L
     }
 
     companion object {
         /** Longer than any fix gap a moving vehicle has; the head unit sends about one a second. */
         const val GAP_MS = 30_000L
+
+        /** The fall in the estimate that says the vehicle is under way, and the time it must happen in. */
+        const val START_FALL_S = 20
+        const val START_WINDOW_MS = 60_000L
         const val MIN_ESTIMATE_S = 120.0
         const val FULL_WEIGHT_S = 600.0
         const val MIN_FACTOR = 0.67

@@ -66,6 +66,9 @@ class MapEngine(width: Int, height: Int) {
     var resizes = 0L
         private set
 
+    /** The OsmAnd tile source when the map draws from `.obf` files, for the report. */
+    private var obfSource: ObfMapSource? = null
+
     /** Set once the map has a tile source with a readable file behind it. */
     var mapName: String = "-"
         private set
@@ -850,7 +853,9 @@ class MapEngine(width: Int, height: Int) {
         "map_engine=vtm-$VTM_VERSION pane=${width}x$height resizes=$resizes theme=${theme.ifEmpty { "-" }} " +
             "data=$mapName drawn=$drawn reused=$reused moved=$moved " +
             "route_points=$routePoints route_changes=$routeChanges map_alternatives=$alternativesShown map_alternatives_max=$alternativesShownMax " +
-            "${readGuard?.report() ?: "map_reads=0"} error=${failure ?: "-"}\n" +
+            "${readGuard?.report() ?: "map_reads=0"} " +
+            "obf_tiles=${obfSource?.reads?.get() ?: 0} obf_tile_failures=${obfSource?.failures?.get() ?: 0} " +
+            "error=${failure ?: "-"}\n" +
             "map_theme_switches=$themeSwitches map_theme_call_ms_max=$switchCallMsMax " +
             "map_theme_parse_ms_max=$parseMsMax map_theme_held_frames=$held " +
             "map_theme_hold_ms_last=$holdMsLast map_theme_hold_ms_max=$holdMsMax " +
@@ -882,6 +887,7 @@ class MapEngine(width: Int, height: Int) {
      * roads there being drawn, and labelled, twice.
      */
     private fun openTileSource(mapFiles: List<File>): TileSource? {
+        obfMaps?.let { maps -> openObfSource(maps)?.let { return it } }
         val opened = mapFiles.mapNotNull(::openMapFile)
         if (opened.isEmpty()) return null
         mapName = opened.joinToString(",") { it.first.name }
@@ -890,6 +896,24 @@ class MapEngine(width: Int, height: Int) {
         multi.setDeduplicate(true)
         opened.forEach { multi.add(it.second) }
         return multi
+    }
+
+    /**
+     * The map from OsmAnd's files ([ObfMapSource]), or null to fall back to the Mapsforge
+     * files: a setting switched on with no OsmAnd map that has map data should not leave
+     * the pane empty while a `.map` file is there to draw.
+     */
+    private fun openObfSource(maps: () -> List<OsmAndRouter.MapFile>): TileSource? {
+        val source = ObfMapSource(maps)
+        val result = source.open()
+        if (!result.isSuccess) {
+            fail("OsmAnd maps: ${result.errorMessage}")
+            return null
+        }
+        // A count, not names: OsmAnd's file names say which region the phone is in.
+        mapName = "obf:${source.files.size}"
+        obfSource = source
+        return source
     }
 
     private fun openMapFile(mapFile: File): Pair<File, MapFileTileSource>? {
@@ -1030,6 +1054,14 @@ class MapEngine(width: Int, height: Int) {
 
     companion object {
         const val VTM_VERSION = "0.25.0"
+
+        /**
+         * Settings -> Map -> Draw map from OsmAnd files: set by the projection before the
+         * pipeline starts, while it holds OsmAnd's maps open, and cleared when it ends. Null
+         * draws from the Mapsforge files as before.
+         */
+        @Volatile
+        var obfMaps: (() -> List<OsmAndRouter.MapFile>)? = null
 
         /** `GL_DEPTH24_STENCIL8_OES`, core in GLES3 and an extension everywhere else. */
         private const val GL_DEPTH24_STENCIL8_OES = 0x88F0

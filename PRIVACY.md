@@ -21,9 +21,16 @@ turned off for all of it, so none of it is copied to a cloud backup or a new pho
   other.
 - **Map, routing and address files** you import. HeadLink never downloads them.
 - **Saved places and recent destinations.**
+- **Where you parked:** the car's last position when a drive ends, so you can walk back
+  to it. Only the latest one is kept, and **Forget** on the Home screen deletes it.
+- **Your learned driving pace**, if Learn my pace is on: how your driving time compared
+  with the route's estimate, per kind of road and per area about 15 miles across. It
+  records which areas you have driven in, but no routes, times of day or positions within
+  an area. **Forget learned pace** on the Routing screen deletes it.
 - **Diagnostic reports** of each connection attempt. A report records how the connection
   went (timings, counters, what the head unit offered, errors). It does not contain your
-  location, destinations, routes, callers, phone numbers, or notification content. Device
+  location, destinations, routes, callers, phone numbers, contacts, notification content,
+  or anything you said. Device
   serial numbers are redacted and Wi-Fi network names are replaced by a salted hash.
 - **Your HERE API key**, if you enter one.
 - **Your Home Assistant server address, service, target and access token**, if you set up
@@ -54,6 +61,31 @@ permission at that point, and you can withdraw it at any time in Android's setti
   Device names and addresses are not put in reports.
 - **Weather.** Read from the Breezy Weather app on your phone, if installed and allowed.
   No network is used for it.
+
+## Voice input
+
+Voice input is being built and is not finished. So far, Settings > Voice input can be
+turned on to test the car's microphone: it asks for the Microphone permission, listens
+once through the car when you tap Test car microphone, shows how long and how loudly it
+heard you, and then drops the audio. When the rest ships, it works as described here. It
+is off by default, and each part asks for its permission only when you turn that part on.
+
+- **Microphone.** HeadLink listens only after you press the voice button, through your
+  car's hands-free microphone over Bluetooth. Speech is turned into text on the phone,
+  with a speech model file you supply. No audio or text is sent anywhere for this. The
+  audio is kept in memory only until it is turned into text, and is never saved.
+- **Contacts.** Used only to find the person you name when you say "Text John". Names and
+  numbers are read on the phone, held in memory while voice input is on, and never saved
+  or put in a report.
+- **SMS.** Used only to send a text you have confirmed, either by saying yes after
+  HeadLink reads it back or by tapping Send. HeadLink cannot read your texts. Android
+  keeps a copy of a sent text in your messages, as it does for any text you send.
+- **Replies.** With notification access, HeadLink can send a reply you have confirmed
+  through a message notification's own reply button, in apps such as QUIK SMS and
+  Element. It does not sign in to any messaging service.
+
+What you said, and the text of your messages, is never saved by HeadLink or put in a
+diagnostic report.
 
 ## Live traffic (HERE)
 

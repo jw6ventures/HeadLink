@@ -140,6 +140,19 @@ class MapControl(
     /** The zoom before the fit, given back by [unfit] and by the recentre bubble. */
     private var fitFromScale = DEFAULT_SCALE
 
+    /**
+     * Whether the driver has zoomed by hand since the last recentre, which stops [adapt]
+     * until they press recentre (docs/dashboard.md, "Adaptive zoom").
+     */
+    var autoZoomPaused: Boolean = false
+        private set
+
+    // The glide [adapt] is part way through: from which scale, to which, since when.
+    private var glideTarget: Double? = null
+    private var glideFrom = DEFAULT_SCALE
+    private var glideStart = 0L
+    private var glideMillis = 0L
+
     /** Where the pane is centred once a drag has taken it off the position source. */
     private var freeLatitude = 0.0
     private var freeLongitude = 0.0
@@ -184,6 +197,7 @@ class MapControl(
     private var flips = 0L
     private var longPresses = 0L
     private var fits = 0L
+    private var autoZooms = 0L
     private var pinched = false
 
     /** Degrees clockwise from north at the top of the pane, as last drawn. */
@@ -264,6 +278,7 @@ class MapControl(
      */
     fun recentre() {
         if (!following) recentres++
+        autoZoomPaused = false
         if (fitted) scale = fitFromScale
         fitted = false
         following = true
@@ -354,7 +369,37 @@ class MapControl(
      */
     fun zoomBy(levels: Int) {
         fitted = false
+        autoZoomPaused = true
         scale = (scale * Math.pow(2.0, levels.toDouble())).coerceIn(MIN_SCALE, MAX_SCALE)
+    }
+
+    /**
+     * Adaptive zoom (docs/dashboard.md, "Adaptive zoom"): eases the scale towards zoom
+     * [level] over [glide] milliseconds, once per frame, before [camera].
+     *
+     * Only while following the vehicle on a view the driver has not zoomed by hand: a
+     * panned map, a fitted overview and a pinched or +/− zoom are left alone. A null level
+     * (off, or no speed yet) changes nothing. The ease is in zoom levels rather than in
+     * the linear scale, so zooming out reads as fast as zooming in; a new level part way
+     * through a glide starts from wherever the scale has got to.
+     */
+    fun adapt(level: Int?, glide: Long, nowMillis: Long) {
+        if (level == null || autoZoomPaused || fitted || !following) {
+            glideTarget = null
+            return
+        }
+        val target = Math.pow(2.0, level.toDouble()).coerceIn(MIN_SCALE, MAX_SCALE)
+        if (target != glideTarget) {
+            if (glideTarget != null || target != scale) autoZooms++
+            glideTarget = target
+            glideFrom = scale
+            glideStart = nowMillis
+            glideMillis = glide
+        }
+        val t = if (glideMillis <= 0) 1.0 else ((nowMillis - glideStart).toDouble() / glideMillis).coerceIn(0.0, 1.0)
+        val eased = t * t * (3 - 2 * t)
+        scale = exp(ln(glideFrom) + (ln(target) - ln(glideFrom)) * eased).coerceIn(MIN_SCALE, MAX_SCALE)
+        if (t >= 1.0) scale = target
     }
 
     /** Switches between north-up and direction-of-travel-up, and squares up the twist. */
@@ -460,7 +505,8 @@ class MapControl(
             "turn=${Math.round(turn)} " +
             "gestures=$gestures multi_pointer=$multiPointer pointers_max=$pointersMax " +
             "pans=$pans recentres=$recentres orientation_flips=$flips long_presses=$longPresses " +
-            "tile_size=$tileSize fits=$fits fitted=$fitted"
+            "tile_size=$tileSize fits=$fits fitted=$fitted " +
+            "auto_zooms=$autoZooms auto_zoom_paused=$autoZoomPaused"
 
     /** The zoom level behind [scale], for the report; VTM's scale is 2^zoom. */
     private fun zoom(): Double = ln(scale) / ln(2.0)
@@ -535,6 +581,8 @@ class MapControl(
         travelled += hypot(nextFocalX - focalX, nextFocalY - focalY)
         // A fitted view becomes the driver's once they drag it past the slop or pinch it.
         if (fitted && (travelled > PAN_SLOP || nextScale != scale)) fitted = false
+        // A pinch is the driver choosing the zoom: adaptive zoom waits for recentre.
+        if (nextScale != scale) autoZoomPaused = true
         if (following && travelled > PAN_SLOP) {
             // Only a deliberate drag lets go of the vehicle. A pinch is anchored on the
             // pane centre while the map is following, so zooming out to see the next

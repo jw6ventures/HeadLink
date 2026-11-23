@@ -130,7 +130,8 @@ object SpokenText {
 
     /**
      * The sentence for [step], without a distance: "Turn right onto Main Street", or just
-     * "Turn right" with [streetNames] off.
+     * "Turn right" with [streetNames] off. At a signed exit, "Take exit 23A toward Waco",
+     * and with [streetNames] off "Take exit 23A".
      *
      * Built by [Maneuvers.instruction], as the card's is, with the road names spoken. The
      * card's instruction was built with the road *before* the maneuver, which [NextStep]
@@ -139,6 +140,13 @@ object SpokenText {
      */
     fun instruction(step: NextStep, streetNames: Boolean): String {
         val spoken = maneuver(step.maneuver)
+        // A signed exit: its number always, as the sign's own words; where it goes only
+        // with road names on, said as a road name is.
+        step.sign?.let { sign ->
+            // Each place said as a road name is, with a pause where the sign has a slash.
+            val toward = sign.toward?.takeIf { streetNames }?.split(" / ")?.joinToString(", ") { road(it) }.orEmpty()
+            return Maneuvers.exitInstruction(spoken, sign, toward)
+        }
         val onto = step.onto?.takeIf { streetNames }
             ?: return Maneuvers.instruction(spoken, null, null)
         val stays = step.instruction.endsWith(" to stay on $onto")

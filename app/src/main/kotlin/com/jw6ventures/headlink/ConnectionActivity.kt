@@ -137,6 +137,13 @@ class ConnectionActivity : Activity() {
     private lateinit var autoStartCheck: CompoundButton
     private lateinit var diagnosticsCheck: CompoundButton
     private lateinit var markerColourSpinner: Spinner
+    // Settings → Map zoom (docs/dashboard.md, "Adaptive zoom").
+    private lateinit var adaptiveZoomCheck: CompoundButton
+    private lateinit var osmAndMapCheck: CompoundButton
+    private lateinit var adaptiveZoomLevelSpinners: List<Spinner>
+    private lateinit var adaptiveZoomOutSpinner: Spinner
+    private lateinit var adaptiveZoomInSpinner: Spinner
+    private lateinit var adaptiveZoomGlideSpinner: Spinner
     private lateinit var clockFormatSpinner: Spinner
     private lateinit var dayNightSpinner: Spinner
     private lateinit var notificationsOnDashboardCheck: CompoundButton
@@ -160,6 +167,7 @@ class ConnectionActivity : Activity() {
     private lateinit var avoidHighwaysCheck: CompoundButton
     private lateinit var avoidTollsCheck: CompoundButton
     private lateinit var avoidUnpavedCheck: CompoundButton
+    private lateinit var osmAndRoutingCheck: CompoundButton
     private lateinit var bypassTownsCheck: CompoundButton
     private lateinit var allowTracksCheck: CompoundButton
     private lateinit var topSpeedSpinner: Spinner
@@ -230,7 +238,9 @@ class ConnectionActivity : Activity() {
     private lateinit var searchSuggestions: SearchSuggestions
     /** P11.1: Settings → OsmAnd maps. */
     private lateinit var osmAndMapsCard: OsmAndMapsCard
+    private lateinit var speechModelRows: SpeechModelRows
     private lateinit var homeAssistantCard: HomeAssistantCard
+    private lateinit var voiceInputCard: VoiceInputCard
     private lateinit var routeButton: Button
     private lateinit var clearRouteButton: Button
     private lateinit var previewButton: Button
@@ -273,6 +283,9 @@ class ConnectionActivity : Activity() {
     private lateinit var wirelessAutoCheck: CompoundButton
     private var cardAction = StatusAction.NONE
     private lateinit var routeSummaryText: TextView
+    /** Home's parked-car card ([ParkingSpot]): shown between drives while a spot is saved. */
+    private lateinit var parkingCard: LinearLayout
+    private lateinit var parkingText: TextView
     private lateinit var favoritesList: LinearLayout
     private lateinit var saveDestinationButton: Button
     private var shownFavorites: List<Favorite>? = null
@@ -523,6 +536,8 @@ class ConnectionActivity : Activity() {
     override fun onStop() {
         searchSuggestions.hide()
         ObfLibrary.hold(MAPS_HOLDER, false)
+        // A microphone test never outlives the screen that started it.
+        voiceInputCard.stop()
         super.onStop()
     }
 
@@ -725,6 +740,11 @@ class ConnectionActivity : Activity() {
             renderState()
             return
         }
+        if (requestCode == REQUEST_MICROPHONE) {
+            voiceInputCard.onMicrophoneResult(grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED)
+            renderState()
+            return
+        }
         // P10: Breezy's permission, from turning Show weather on or from a Grant button.
         if (requestCode == REQUEST_WEATHER || requestCode == REQUEST_WEATHER_GRANT) {
             val granted = grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
@@ -902,6 +922,18 @@ class ConnectionActivity : Activity() {
             .show()
     }
 
+    /** Routing → Forget learned pace: the pace learned across drives goes, after a yes. */
+    private fun confirmForgetPace() {
+        AlertDialog.Builder(this)
+            .setMessage(R.string.route_forget_pace_confirm)
+            .setPositiveButton(R.string.route_forget_pace) { _, _ ->
+                LearnedPace.forget(this)
+                Toast.makeText(this, R.string.route_forget_pace_done, Toast.LENGTH_LONG).show()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
     private fun startWireless(device: BluetoothDevice) {
         // A link standing by for the truck gives way: this one asks the truck now.
         if (SessionController.stage == Stage.IDLE) WirelessLink.stopWaiting("replaced by Home's Connect wirelessly")
@@ -1060,6 +1092,15 @@ class ConnectionActivity : Activity() {
             }
             message?.let { Toast.makeText(this, it, Toast.LENGTH_LONG).show() }
             render()
+            return
+        }
+        if (requestCode == REQUEST_SPEECH_MODEL) {
+            try {
+                SpeechModel.choose(this, uri)
+            } catch (e: SecurityException) {
+                Toast.makeText(this, getString(R.string.speech_model_failed, e.message ?: e.toString()), Toast.LENGTH_LONG).show()
+            }
+            speechModelRows.chosen()
             return
         }
         if (requestCode == REQUEST_DROP_FOLDER) {
@@ -1293,6 +1334,22 @@ class ConnectionActivity : Activity() {
     }
 
     /**
+     * Settings → Voice input → Choose speech model: one file, read-only ([SpeechModel.choose]).
+     * Any type, since model files carry no registered MIME type.
+     */
+    private fun chooseSpeechModel() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
+            .addCategory(Intent.CATEGORY_OPENABLE)
+            .setType("*/*")
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+        try {
+            startActivityForResult(intent, REQUEST_SPEECH_MODEL)
+        } catch (e: android.content.ActivityNotFoundException) {
+            SessionController.note("no file picker available: $e")
+        }
+    }
+
+    /**
      * P11.1: Settings → OsmAnd maps → Choose folder. A read-only grant ([ObfLibrary.choose]);
      * the picker opens wherever it last was, and the card's help says where OsmAnd keeps them.
      */
@@ -1419,6 +1476,19 @@ class ConnectionActivity : Activity() {
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
+    }
+
+    /** Home → Walk to car: OsmAnd's walking directions to the saved spot, else any maps app. */
+    private fun walkToCar() {
+        val spot = ParkingSpot.load(this) ?: return renderState()
+        if (!ParkingSpot.openWalking(this, spot, getString(R.string.parking_title))) {
+            Toast.makeText(this, R.string.parking_no_maps_app, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun forgetParkingSpot() {
+        ParkingSpot.forget(this)
+        renderState()
     }
 
     /**
@@ -1636,6 +1706,7 @@ class ConnectionActivity : Activity() {
         renderWeather()
         osmAndMapsCard.render(AppSettings.load(this).speedUnit)
         homeAssistantCard.render()
+        voiceInputCard.render()
         renderTabs()
     }
 
@@ -1732,6 +1803,19 @@ class ConnectionActivity : Activity() {
             figures?.trafficSeconds ?: 0,
         ) ?: getString(R.string.route_none)
         saveDestinationButton.visibility = if (destination != null) View.VISIBLE else View.GONE
+
+        val parked = if (stage == Stage.IDLE) ParkingSpot.load(this) else null
+        parkingCard.visibility = if (parked != null) View.VISIBLE else View.GONE
+        if (parked != null) {
+            val zone = ZoneId.systemDefault()
+            val time = clock.time(parked.savedAtMillis, zone)
+            val day = java.time.Instant.ofEpochMilli(parked.savedAtMillis).atZone(zone).toLocalDate()
+            // A spot from an earlier day says which day, so "5:40 PM" is never read as today's.
+            parkingText.text = getString(
+                R.string.parking_saved,
+                if (day == java.time.LocalDate.now(zone)) time else "${DateFormat.getDateFormat(this).format(Date(parked.savedAtMillis))} $time",
+            )
+        }
 
         // The places are the operator's own and may be listed here, as the destination is.
         val favorites = Favorites.list(this)
@@ -1851,10 +1935,12 @@ class ConnectionActivity : Activity() {
             mediaInfoCheck.isChecked, notificationsOnDashboardCheck.isChecked, callControlsCheck.isChecked,
             CallControl.fullControlsGranted(this),
         )
+        // Saved rather than the switches: the lab may have changed them before this render.
+        val saved = AppSettings.load(this)
         val items = SetupCheck.items(
             maps, tiles, here, wanted, access, location, pins, sessionNotifications,
-            // Saved rather than the switch: the lab may have changed it before this render.
-            weatherWanted = AppSettings.load(this).weather.enabled, weatherPermission = weatherPermitted(),
+            weatherWanted = saved.weather.enabled, weatherPermission = weatherPermitted(),
+            osmAndMap = saved.osmAndMap, osmAndRouting = saved.routing.osmAndRouting, osmAndFolder = ObfLibrary.chosen(this),
         )
         // Only what a drive needs counts; optional items wait under their own heading.
         val required = items.count { !it.optional }
@@ -1907,6 +1993,7 @@ class ConnectionActivity : Activity() {
 
     private fun fix(item: SetupItem) {
         when (item) {
+            SetupItem.NO_OSMAND_MAPS -> chooseMapsFolder()
             SetupItem.NO_MAP -> importMapButton.performClick()
             SetupItem.NO_ROUTING, SetupItem.NO_ROUTING_HERE -> importRoutingButton.performClick()
             SetupItem.NOTIFICATION_ACCESS -> grantNotificationAccess()
@@ -2647,6 +2734,16 @@ class ConnectionActivity : Activity() {
         wirelessAutoCheck = switch(R.string.wireless_auto_label)
         diagnosticsCheck = switch(R.string.diagnostics)
         markerColourSpinner = spinner(MarkerColour.LABELS)
+        osmAndMapCheck = switch(R.string.map_osmand_label)
+        // Adaptive zoom: the switch, a level per speed band, and the three times, each in
+        // AdaptiveZoomSettings' list order, which is how the rows read them.
+        adaptiveZoomCheck = switch(R.string.adaptive_zoom_label)
+        adaptiveZoomLevelSpinners = List(AdaptiveZoomSettings.BANDS) {
+            spinner(AdaptiveZoomSettings.LEVELS.map(AdaptiveZoomSettings::levelLabel))
+        }
+        adaptiveZoomOutSpinner = spinner(AdaptiveZoomSettings.OUT_SECONDS.map(AdaptiveZoomSettings::secondsLabel))
+        adaptiveZoomInSpinner = spinner(AdaptiveZoomSettings.IN_SECONDS.map(AdaptiveZoomSettings::secondsLabel))
+        adaptiveZoomGlideSpinner = spinner(AdaptiveZoomSettings.GLIDE_MILLIS.map(AdaptiveZoomSettings::glideLabel))
         clockFormatSpinner = spinner(ClockFormat.LABELS)
         dayNightSpinner = spinner(DayNightMode.LABELS)
         notificationsOnDashboardCheck = switch(R.string.notifications_on_dashboard)
@@ -2678,6 +2775,7 @@ class ConnectionActivity : Activity() {
         avoidHighwaysCheck = switch(R.string.route_avoid_highways)
         avoidTollsCheck = switch(R.string.route_avoid_tolls)
         avoidUnpavedCheck = switch(R.string.route_avoid_unpaved)
+        osmAndRoutingCheck = switch(R.string.route_osmand_label)
         bypassTownsCheck = switch(R.string.route_bypass_towns)
         allowTracksCheck = switch(R.string.route_allow_tracks)
         topSpeedSpinner = spinner(RouteOptions.TOP_SPEEDS_KMH.map(RouteOptions::topSpeedLabel))
@@ -2791,7 +2889,13 @@ class ConnectionActivity : Activity() {
         }
         searchSuggestions = SearchSuggestions(this, ui, routeInput, ::searchPoint) { routeToSuggestion(it) }
         osmAndMapsCard = OsmAndMapsCard(this, ui) { chooseMapsFolder() }
+        speechModelRows = SpeechModelRows(this, ui) { chooseSpeechModel() }
         homeAssistantCard = HomeAssistantCard(this, ui)
+        voiceInputCard = VoiceInputCard(
+            this, ui,
+            requestMicrophone = { requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQUEST_MICROPHONE) },
+            model = speechModelRows,
+        )
         routeButton = button(R.string.compute_route) { computeRoute() }
         clearRouteButton = button(R.string.clear_route) {
             Navigation.clear()
@@ -2868,6 +2972,15 @@ class ConnectionActivity : Activity() {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
             setPadding(0, ui.dp(4), 0, ui.dp(4))
         }
+        parkingText = ui.caption()
+        parkingCard = ui.card(
+            ui.title(R.string.parking_title),
+            parkingText,
+            ui.row(
+                button(R.string.parking_walk) { walkToCar() },
+                quietButton(R.string.parking_forget) { forgetParkingSpot() },
+            ),
+        ).apply { visibility = View.GONE }
         val favoritesHeader = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = android.view.Gravity.CENTER_VERTICAL
@@ -2884,6 +2997,8 @@ class ConnectionActivity : Activity() {
                 it.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
             },
             wirelessText,
+            // Between drives only: getting back to the car comes before planning the next drive.
+            parkingCard,
             ui.card(
                 ui.title(R.string.route_title), routeSummaryText, routeInput, searchSuggestions.view, ui.row(routeButton, clearRouteButton),
                 previewButton.also {
@@ -2927,7 +3042,9 @@ class ConnectionActivity : Activity() {
                 ui.labelled(R.string.route_top_speed_label, R.string.route_top_speed_help, topSpeedSpinner),
                 ui.labelled(R.string.route_eta_label, R.string.route_eta_help, etaSpinner),
                 ui.withHelp(learnPaceCheck, R.string.route_learn_pace_label, R.string.route_learn_pace_help),
+                quietButton(R.string.route_forget_pace) { confirmForgetPace() },
                 ui.withHelp(showAlternativesCheck, R.string.route_show_alternatives_label, R.string.route_show_alternatives_help),
+                ui.withHelp(osmAndRoutingCheck, R.string.route_osmand_label, R.string.route_osmand_help),
             ),
             // P9.1: live traffic, beside the route preferences it adds to.
             ui.card(
@@ -2987,6 +3104,17 @@ class ConnectionActivity : Activity() {
                 mapSideRow,
                 ui.labelled(R.string.marker_colour_label, null, markerColourSpinner),
                 ui.labelled(R.string.day_night_label, R.string.day_night_help, dayNightSpinner),
+                ui.withHelp(osmAndMapCheck, R.string.map_osmand_label, R.string.map_osmand_help),
+            ),
+            ui.card(
+                ui.title(R.string.adaptive_zoom_title),
+                ui.withHelp(adaptiveZoomCheck, R.string.adaptive_zoom_label, R.string.adaptive_zoom_help),
+                *(0 until AdaptiveZoomSettings.BANDS).map { band ->
+                    ui.labelled(ADAPTIVE_ZOOM_BAND_LABELS[band], if (band == 0) R.string.adaptive_zoom_level_help else null, adaptiveZoomLevelSpinners[band])
+                }.toTypedArray(),
+                ui.labelled(R.string.adaptive_zoom_out_label, R.string.adaptive_zoom_out_help, adaptiveZoomOutSpinner),
+                ui.labelled(R.string.adaptive_zoom_in_label, R.string.adaptive_zoom_in_help, adaptiveZoomInSpinner),
+                ui.labelled(R.string.adaptive_zoom_glide_label, R.string.adaptive_zoom_glide_help, adaptiveZoomGlideSpinner),
             ),
             ui.card(
                 ui.title(R.string.settings_connecting),
@@ -3036,6 +3164,8 @@ class ConnectionActivity : Activity() {
             homeAssistantCard.view,
             // P11.1 (docs/navigation.md): the maps folder, its status, markers and search ahead.
             osmAndMapsCard.view,
+            // Voice input (spec §2.1 as amended 11 November 2026): the switch and the car microphone test.
+            voiceInputCard.view,
             // P8.1: applies to notification reading and, from P8.2, turn prompts.
             ui.card(
                 ui.title(R.string.settings_speech),
@@ -3183,6 +3313,14 @@ class ConnectionActivity : Activity() {
         wirelessAutoCheck.isChecked = saved.wirelessAutoStart
         diagnosticsCheck.isChecked = saved.diagnostics
         markerColourSpinner.setSelection(saved.markerColour.ordinal)
+        adaptiveZoomCheck.isChecked = saved.adaptiveZoom.enabled
+        osmAndMapCheck.isChecked = saved.osmAndMap
+        adaptiveZoomLevelSpinners.forEachIndexed { band, spinner ->
+            spinner.setSelection(AdaptiveZoomSettings.LEVELS.indexOf(saved.adaptiveZoom.levels[band]))
+        }
+        adaptiveZoomOutSpinner.setSelection(AdaptiveZoomSettings.OUT_SECONDS.indexOf(saved.adaptiveZoom.zoomOutSeconds))
+        adaptiveZoomInSpinner.setSelection(AdaptiveZoomSettings.IN_SECONDS.indexOf(saved.adaptiveZoom.zoomInSeconds))
+        adaptiveZoomGlideSpinner.setSelection(AdaptiveZoomSettings.GLIDE_MILLIS.indexOf(saved.adaptiveZoom.glideMillis))
         clockFormatSpinner.setSelection(saved.clockFormat.ordinal)
         dayNightSpinner.setSelection(saved.dayNight.ordinal)
         notificationsOnDashboardCheck.isChecked = saved.notificationsOnDashboard
@@ -3201,6 +3339,7 @@ class ConnectionActivity : Activity() {
         avoidHighwaysCheck.isChecked = saved.routing.avoidHighways
         avoidTollsCheck.isChecked = saved.routing.avoidTolls
         avoidUnpavedCheck.isChecked = saved.routing.avoidUnpaved
+        osmAndRoutingCheck.isChecked = saved.routing.osmAndRouting
         bypassTownsCheck.isChecked = saved.routing.bypassTowns
         allowTracksCheck.isChecked = saved.routing.allowTracks
         topSpeedSpinner.setSelection(RouteOptions.TOP_SPEEDS_KMH.indexOf(saved.routing.topSpeedKmh))
@@ -3260,6 +3399,17 @@ class ConnectionActivity : Activity() {
             s.copy(diagnostics = on)
         }
         markerColourSpinner.saves { s, i -> s.copy(markerColour = MarkerColour.entries[i]) }
+        adaptiveZoomCheck.saves { s, on -> s.copy(adaptiveZoom = s.adaptiveZoom.copy(enabled = on)) }
+        osmAndMapCheck.saves { s, on -> s.copy(osmAndMap = on) }
+        adaptiveZoomLevelSpinners.forEachIndexed { band, spinner ->
+            spinner.saves { s, i ->
+                val levels = s.adaptiveZoom.levels.toMutableList().also { it[band] = AdaptiveZoomSettings.LEVELS[i] }
+                s.copy(adaptiveZoom = s.adaptiveZoom.copy(levels = levels))
+            }
+        }
+        adaptiveZoomOutSpinner.saves { s, i -> s.copy(adaptiveZoom = s.adaptiveZoom.copy(zoomOutSeconds = AdaptiveZoomSettings.OUT_SECONDS[i])) }
+        adaptiveZoomInSpinner.saves { s, i -> s.copy(adaptiveZoom = s.adaptiveZoom.copy(zoomInSeconds = AdaptiveZoomSettings.IN_SECONDS[i])) }
+        adaptiveZoomGlideSpinner.saves { s, i -> s.copy(adaptiveZoom = s.adaptiveZoom.copy(glideMillis = AdaptiveZoomSettings.GLIDE_MILLIS[i])) }
         clockFormatSpinner.saves { s, i -> s.copy(clockFormat = ClockFormat.entries[i]) }
         dayNightSpinner.saves { s, i -> s.copy(dayNight = DayNightMode.entries[i]) }
         notificationsOnDashboardCheck.saves { s, on -> s.copy(notificationsOnDashboard = on) }
@@ -3330,6 +3480,7 @@ class ConnectionActivity : Activity() {
         etaSpinner.savesRouting { r, i -> r.copy(etaPercent = RouteOptions.ETA_PERCENTS[i]) }
         learnPaceCheck.savesRouting { r, on -> r.copy(learnPace = on) }
         showAlternativesCheck.savesRouting { r, on -> r.copy(showAlternatives = on) }
+        osmAndRoutingCheck.savesRouting { r, on -> r.copy(osmAndRouting = on) }
         loadTraffic()
         loadWeather()
     }
@@ -3415,6 +3566,8 @@ class ConnectionActivity : Activity() {
         private const val REQUEST_MAPS_FOLDER = 12
         private const val REQUEST_WIRELESS = 13
         private const val REQUEST_WIRELESS_LINK = 14
+        private const val REQUEST_MICROPHONE = 15
+        private const val REQUEST_SPEECH_MODEL = 16
         /** This screen's hold on OsmAnd's open maps ([ObfLibrary.hold]). */
         private const val MAPS_HOLDER = "screen"
 
@@ -3427,6 +3580,12 @@ class ConnectionActivity : Activity() {
         private const val STATE_TAB = "tab"
         private const val MAPS_DOWNLOAD = "https://download.mapsforge.org/maps/v5/"
         private const val ROUTING_DOWNLOAD = "https://brouter.de/brouter/segments4/"
+
+        /** Adaptive zoom's band rows, slowest first, as [AdaptiveZoomSettings.levels] reads them. */
+        private val ADAPTIVE_ZOOM_BAND_LABELS = listOf(
+            R.string.adaptive_zoom_band_0, R.string.adaptive_zoom_band_1,
+            R.string.adaptive_zoom_band_2, R.string.adaptive_zoom_band_3,
+        )
 
         /** Map side choices, in the order [AttemptSettings.mapOnLeft] reads them. */
         val MAP_SIDES = listOf("map left", "map right")

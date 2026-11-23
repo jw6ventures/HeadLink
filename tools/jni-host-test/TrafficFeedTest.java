@@ -512,7 +512,7 @@ public final class TrafficFeedTest {
         }
         check(hardLast, "hard points after weighted, as Router keeps them");
         // Priced at the request's own top speed.
-        RouteOptions slow = options.copy(false, false, false, false, false, 90, options.getEtaPercent(), options.getLearnPace(), options.getShowAlternatives());
+        RouteOptions slow = options.copy(false, false, false, false, false, 90, options.getEtaPercent(), options.getLearnPace(), options.getShowAlternatives(), options.getOsmAndRouting());
         List<Nogo> cheaper = feed.nogos(slow);
         double scale = TrafficCost.INSTANCE.secondPrice(90) / TrafficCost.INSTANCE.secondPrice(RouteOptions.DEFAULT_TOP_SPEED_KMH);
         boolean scaled = cheaper.size() == nogos.size();

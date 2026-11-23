@@ -42,8 +42,9 @@ not repeat them.
 
 ## Home
 
-From top to bottom: the status card, the large button, **Connect wirelessly**, the Route
-card, the Speech card and the Favorites card.
+From top to bottom: the status card, the large button, **Connect wirelessly**, the Your car
+card (between drives, once one has been saved), the Route card, the Speech card and the
+Favorites card.
 
 ### Status card and the large button
 
@@ -114,6 +115,28 @@ appears in the wireless notification (`res/values/wireless_probe.xml`). Once pro
 the app is standing by for the car's Android Auto button replaces the standby. The
 transport is covered in [connecting.md](connecting.md). **Verified:** truck.
 
+### Your car
+
+`ParkingSpot` remembers where the car was when the last drive ended. `ProjectionService`
+keeps the drive's last position, the car's own fix or else the phone's while the car had
+none (the same order guidance uses), and saves it when the session ends for any reason:
+unplugged, the wireless link dropped, or stopped from the phone. One spot is kept (its own
+`parking` preferences file), replaced by the next drive that has a position. A drive with
+no position keeps the old spot, and lab-socket runs never save one. The report notes only
+that a spot was saved, never where.
+
+While idle, the card reads "Saved where the drive ended, at 5:40 PM" (with the date if it
+was an earlier day, in the Clock setting's format) and has two buttons:
+
+- **Walk to car** opens OsmAnd (`net.osmand.plus`, else `net.osmand`) with
+  `https://osmand.net/map?end=<lat>,<lon>&profile=pedestrian`, which OsmAnd reads as a
+  pedestrian route from its current location to the spot. Without OsmAnd, any maps app
+  gets a `geo:` point labelled "Your car"; with none, a message says to install OsmAnd.
+- **Forget** clears the spot and hides the card.
+
+**Verified:** not yet tried on a phone or in the car. The OsmAnd link format was read from
+OsmAnd's source (`IntentHelper.parseNavigationIntent`, October 2026).
+
 ### Route card
 
 - **The route in words** (`StatusText.routeSummary`): "Routing to Home · 12 mi · 18 min ·
@@ -174,9 +197,10 @@ marked optional are listed last under their own heading and don't keep Setup fro
 | Item | Listed when | Button |
 | --- | --- | --- |
 | No head unit trusted yet | No head unit is pinned | Trust and connect |
-| No map installed | No Mapsforge map is installed | Import map |
-| No routing data installed | No `.rd5` tile is installed | Import routing data |
-| No routing data for where you are | Tiles are installed, but none covers the 5° square of the phone's last cached fix. The fix can be any age, since the square only changes over hundreds of km. The detail names the tile needed. Needs location. | Import routing data |
+| No OsmAnd maps folder chosen | The map or routing is set to OsmAnd's files (the default since 0.9), no maps folder is chosen, and the Mapsforge map or `.rd5` tiles it would fall back to are missing. Listed once, in place of the two below. | Choose folder |
+| No map installed | Draw map from OsmAnd files is off and no Mapsforge map is installed | Import map |
+| No routing data installed | Route with OsmAnd maps is off and no `.rd5` tile is installed | Import routing data |
+| No routing data for where you are | BRouter is routing (OsmAnd routing off, or no maps folder), tiles are installed, but none covers the 5° square of the phone's last cached fix. The fix can be any age, since the square only changes over hundreds of km. The detail names the tile needed. Needs location. | Import routing data |
 | Notification access is off | Something you turned on reads notifications (Media controls, Notifications on the dashboard, or Call controls without the adb grant) and access isn't granted | Grant access: the consent text, then Android's notification-access screen |
 | Weather permission not granted | Show weather is on and Breezy Weather's permission isn't held | Grant |
 | Location is off | Neither location grant is held. Optional. | Allow location: an explanation, then Android's prompt |
@@ -228,7 +252,7 @@ are in [navigation.md](navigation.md).
 | Allow tracks | off | Opens farm and forest tracks and unclassified roads |
 | Top speed | 75 mph (121 km/h) | The profile's top speed, from 56 to 85 mph. It changes routes as well as times. |
 | Time adjustment | as estimated | −15% to +30% on every estimated time; changes no route |
-| Learn my pace | on | Corrects the time left by how the drive so far compares with the estimate |
+| Learn my pace | on | Corrects the time left by your pace learned across drives (per road kind, surroundings and 15 mile area) and by how this drive compares; Forget learned pace clears it |
 | Show other routes on the map | on | Up to two grey alternatives with "+N min" while a route is followed |
 
 The 75 mph default was chosen because BRouter's own 56 mph timed Austin to Dallas at
@@ -391,6 +415,21 @@ The folder picker on the real phone has not been tried.
 | --- | --- | --- |
 | While speaking | Pause media | Lower volume is the other choice. Covers read-aloud, turn prompts and weather alerts. |
 
+**Voice input** (`VoiceInputCard`, with `SpeechModelRows`; spec §2.1 as amended 11 November 2026)
+
+One card: the switch (off by default; turning it on asks for Microphone), then the speech
+model rows, then **Test car microphone**. The model and test rows show only while the
+switch is on. The microphone is described in [audio and speech](audio-and-speech.md#voice-input-the-cars-microphone).
+
+| Control | Default | Effect |
+| --- | --- | --- |
+| Choose speech model | none | A read grant on one file, a whisper.cpp model in ggml format, picked with the system file picker and read in place. Kept apart from the maps and drop folder grants. The card names the format and nothing about where to get one. |
+| Check model | — | Loads the model and recognises 5 s of silence, then says the model's size, whether it is English-only, the load time and the 5 s time. A model loaded only for the check is let go after it. Says why when it can't: no file, unreadable, not a usable model (including all-F32 ones), a processor without Armv8.2 FP16 and dot product, or the library missing |
+| Remove model | — | Gives up the grant and frees a loaded model |
+
+See [audio and speech](audio-and-speech.md#speech-recognition). **Verified:** host tests
+(`RecognizerTest`) only; the picker and a real model on the phone have not been tried.
+
 **Diagnostics** (off). Shows the Diagnostics tab and adds the debug line to the
 dashboard header.
 
@@ -544,6 +583,8 @@ spec.md §5.2 and `app/src/main/AndroidManifest.xml`.
 | Android's companion-device dialog | Turning on **Link the car for wireless** | No wake-up when the car connects |
 | Android's Wi-Fi network approval | The first wireless connection to a car's Wi-Fi ([connecting.md](connecting.md)) | No wireless |
 | Breezy Weather's `READ_PROVIDER` | Turning on **Show weather**, or Grant | The weather item shows a dash |
+| Microphone (`RECORD_AUDIO`), voice input (so far only its car microphone test) | Turning on **Voice input**, or **Test car microphone** while it is not granted | No voice input |
+| Contacts (`READ_CONTACTS`) and SMS (`SEND_SMS`), voice input, not built yet | Turning on **Text a contact by voice** | Replies and destinations by voice still work; texting a contact by name does not |
 | `MANAGE_ONGOING_CALLS` app-op | Never prompted. Run once from a computer: `adb shell appops set --user 0 com.jw6ventures.headlink MANAGE_ONGOING_CALLS allow` (`CallControl.GRANT_COMMAND`, shown under Call controls) | Calls fall back to the dialer's notification: answer, decline and hang up, but no mute or keypad |
 
 About `MANAGE_ONGOING_CALLS`:

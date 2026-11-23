@@ -2,10 +2,14 @@ plugins {
     alias(libs.plugins.android.application)
 }
 
-// Staged by tools/android-build.sh from the Rust aarch64-linux-android build.
+// Staged by tools/android-build.sh from the Rust and whisper.cpp aarch64-linux-android builds.
 // Gradle never invokes Cargo, and refuses to package an APK without the library.
 val rustJniLibs: File = rootProject.file("target/android-jniLibs")
-val requiredNativeLibrary: File = rustJniLibs.resolve("arm64-v8a/libaap_jni.so")
+val requiredNativeLibraries: List<File> = listOf(
+    rustJniLibs.resolve("arm64-v8a/libaap_jni.so"),
+    // Voice input's recognizer, whisper.cpp, staged by the same script (tools/whisper-build.sh).
+    rustJniLibs.resolve("arm64-v8a/libwhisper_jni.so"),
+)
 
 android {
     namespace = "com.jw6ventures.headlink"
@@ -17,8 +21,8 @@ android {
         applicationId = "com.jw6ventures.headlink"
         minSdk = 33
         targetSdk = 36
-        versionCode = 21
-        versionName = "0.5.0"
+        versionCode = 31
+        versionName = "0.11.0"
         ndk {
             abiFilters += "arm64-v8a"
         }
@@ -87,12 +91,19 @@ dependencies {
     // publishes nothing to Maven Central, so there is no checksummed coordinate for
     // verification-metadata.xml to pin. Pure Java, no native library, no new ABI.
     implementation(project(":vendor:brouter"))
+    // OsmAnd's router and .obf reader (vendor/osmand/README.md), behind Settings ->
+    // Route preferences -> Route with OsmAnd maps. Vendored source for the same reason:
+    // OsmAnd publishes no checksummed artifact. Pure Java, no native library.
+    implementation(project(":vendor:osmand"))
+    // Already in the APK through vendor/osmand; named here because ObfTiles' coastline
+    // joining uses OsmAnd's own long lists and MapAlgorithms takes them.
+    implementation(libs.trove4j)
 }
 
 val checkRustJniLibs = tasks.register("checkRustJniLibs") {
-    val library = requiredNativeLibrary
+    val libraries = requiredNativeLibraries
     doLast {
-        check(library.isFile) { "Missing $library; build with tools/android-build.sh" }
+        libraries.forEach { check(it.isFile) { "Missing $it; build with tools/android-build.sh" } }
     }
 }
 tasks.named("preBuild") {

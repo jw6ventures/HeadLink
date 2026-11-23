@@ -52,7 +52,7 @@ RUN set -e; \
     check platforms/android-36 2; \
     check build-tools/36.1.0 36.1.0; \
     check ndk/29.0.14206865 29.0.14206865; \
-    check platform-tools 37.0.1; \
+    check platform-tools 37.0.3; \
     rm -rf /opt/sdk-installer; \
     ls "$ANDROID_HOME"
 

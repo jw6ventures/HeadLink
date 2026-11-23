@@ -64,11 +64,11 @@ class PreviewRequest @JvmOverloads constructor(
  * alternative is handed to [find]'s callback as soon as it is chosen.
  */
 class AlternativeFinder(
-    private val router: Router,
+    private val router: RouteEngine,
     private val trip: PreviewRequest,
     private val maxRunningMs: Long = RoutePlanner.MAX_RUNNING_MS,
     /** Receives each engine before its search, so the caller can stop it. */
-    private val started: (btools.router.RoutingEngine) -> Unit = {},
+    private val started: (SearchHandle) -> Unit = {},
     /** Checked between searches; true stops the search for more. */
     private val cancelled: () -> Boolean = { false },
 ) {
@@ -208,7 +208,7 @@ object RoutePreview {
         out.writeDouble(request.toLon)
         out.writeDouble(request.startBearing ?: Double.NaN)
         val o = request.options
-        for (flag in listOf(o.avoidHighways, o.avoidTolls, o.avoidUnpaved, o.bypassTowns, o.allowTracks, o.learnPace, o.showAlternatives)) {
+        for (flag in listOf(o.avoidHighways, o.avoidTolls, o.avoidUnpaved, o.bypassTowns, o.allowTracks, o.learnPace, o.showAlternatives, o.osmAndRouting)) {
             out.writeBoolean(flag)
         }
         out.writeInt(o.topSpeedKmh)
@@ -224,7 +224,7 @@ object RoutePreview {
         val toLat = input.readDouble()
         val toLon = input.readDouble()
         val bearing = input.readDouble().takeUnless { it.isNaN() }
-        val flags = BooleanArray(7) { input.readBoolean() }
+        val flags = BooleanArray(8) { input.readBoolean() }
         val options = RouteOptions(
             avoidHighways = flags[0],
             avoidTolls = flags[1],
@@ -233,6 +233,7 @@ object RoutePreview {
             allowTracks = flags[4],
             learnPace = flags[5],
             showAlternatives = flags[6],
+            osmAndRouting = flags[7],
             topSpeedKmh = input.readInt(),
             etaPercent = input.readInt(),
         ).repaired()
@@ -279,7 +280,30 @@ object RoutePreview {
         // flags; nothing of HERE's.
         out.writeBoolean(route.trafficShaped)
         out.writeBoolean(route.closuresOpened)
+        // Version 4: each maneuver's exit sign, so a restart keeps "Exit 23A" on the card.
+        val signs = route.exitSigns.size == route.maneuverIndices.size
+        for (k in route.maneuverIndices.indices) {
+            val sign = if (signs) route.exitSigns[k] else null
+            out.writeBoolean(sign != null)
+            if (sign != null) {
+                writeOptional(out, sign.number)
+                writeOptional(out, sign.toward)
+            }
+        }
+        // Version 5: each stretch's road class and surroundings, and the time adjustment
+        // already on the times, so a restart keeps the learned pace's view of the route.
+        val classes = route.paceClasses.size == route.points
+        out.writeBoolean(classes)
+        if (classes) out.write(route.paceClasses)
+        out.writeDouble(route.timeScale)
     }
+
+    private fun writeOptional(out: DataOutputStream, value: String?) {
+        out.writeBoolean(value != null)
+        if (value != null) out.writeUTF(value)
+    }
+
+    private fun readOptional(input: DataInputStream): String? = if (input.readBoolean()) input.readUTF() else null
 
     internal fun readRoute(input: DataInputStream): Route {
         val points = count(input.readInt(), MAX_POINTS)
@@ -320,10 +344,35 @@ object RoutePreview {
         val version = (input as? VersionedInput)?.version ?: VERSION
         val shaped = version >= 3 && input.readBoolean()
         val opened = version >= 3 && input.readBoolean()
+        val signs: Array<ExitSign?> = if (version >= 4) {
+            Array(maneuvers) {
+                if (input.readBoolean()) {
+                    val number = readOptional(input)
+                    val toward = readOptional(input)
+                    if (number == null && toward == null) throw IOException("route file has an empty exit sign")
+                    ExitSign(number, toward)
+                } else {
+                    null
+                }
+            }
+        } else {
+            emptyArray()
+        }
+        var classes = ByteArray(0)
+        var scale = 1.0
+        if (version >= 5) {
+            if (input.readBoolean()) {
+                classes = ByteArray(points)
+                input.readFully(classes)
+                if (classes.any { !PaceRoad.valid(it) }) throw IOException("route file has an unknown road class")
+            }
+            scale = input.readDouble()
+            if (!(scale > 0.0 && scale < 10.0)) throw IOException("route file time scale out of range: $scale")
+        }
         val timed = if (seconds.any { it.isNaN() }) FloatArray(0) else seconds
         return Route(
             latitudes, longitudes, distance, total, indices, exits, commands, timed, starts, names, topSpeed, via,
-            if (shaped) 1 else 0, opened,
+            if (shaped) 1 else 0, opened, signs, classes, scale,
         )
     }
 
@@ -355,8 +404,8 @@ object RoutePreview {
     internal fun <T> read(file: File, body: (DataInputStream) -> T): T =
         DataInputStream(file.inputStream().buffered()).use { raw ->
             val version = raw.readInt()
-            // A route or destination saved by the last version is still read, less what it lacks.
-            if (version != VERSION && version != VERSION - 1) throw IOException("route file version $version, expected $VERSION")
+            // A route or destination saved by an earlier version is still read, less what it lacks.
+            if (version !in OLDEST_VERSION..VERSION) throw IOException("route file version $version, expected $VERSION")
             body(VersionedInput(raw, version))
         }
 
@@ -421,8 +470,10 @@ object RoutePreview {
     private fun key(lat: Double, lon: Double): Long =
         (Math.round(lat * 1e6) shl 32) xor (Math.round(lon * 1e6) and 0xFFFFFFFFL)
 
-    /** 2: routes carry their via point. 3: and whether traffic shaped them (P9). */
-    private const val VERSION = 3
+    /** 2: routes carry their via point. 3: and whether traffic shaped them (P9). 4: and their exit signs. */
+    private const val VERSION = 5
+    /** The oldest still read: 2, written before P9, as when 3 was current. */
+    private const val OLDEST_VERSION = 2
 
     /** Bounds a corrupt count: Austin to Denver was 8,677 points. */
     private const val MAX_POINTS = 2_000_000

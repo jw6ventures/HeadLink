@@ -20,6 +20,9 @@ import java.util.Locale
  */
 object Routing {
     /** Nice 4: behind the default-priority render threads, short of the background group. */
+    /** A route search's own hold on OsmAnd's maps ([ObfLibrary.hold]). */
+    private const val MAPS_HOLDER = "routing"
+
     private const val THREAD_PRIORITY = Process.THREAD_PRIORITY_DEFAULT + 4 * Process.THREAD_PRIORITY_LESS_FAVORABLE
 
     private val main = Handler(Looper.getMainLooper())
@@ -45,6 +48,9 @@ object Routing {
 
     /** [origin] for a re-route round a closure on the route ahead. */
     const val CLOSURE = "closure"
+
+    /** [origin] for asking again after a request found no route and there was none to keep ([Navigation.retry]). */
+    const val RETRY = "retry"
 
     /** Routes computed with live traffic's no-go points (P9.5), and those that had to open a closure. */
     var trafficRoutes = 0
@@ -103,6 +109,20 @@ object Routing {
 
     fun installed(context: Context): List<File> = RoutingData.installed(RoutingData.segments(root(context)))
 
+    /**
+     * The saved route preferences as a request should use them: OsmAnd's router (the
+     * default) unless no OsmAnd maps folder is chosen while BRouter tiles are installed,
+     * when BRouter routes as it did before 0.9 rather than every route failing.
+     */
+    fun options(context: Context): RouteOptions {
+        val saved = AppSettings.load(context).routing
+        return if (saved.osmAndRouting && !ObfLibrary.chosen(context) && installed(context).isNotEmpty()) {
+            saved.copy(osmAndRouting = false)
+        } else {
+            saved
+        }
+    }
+
     /** Starts [request] on the routing thread; the result arrives through [SessionController.note]. */
     fun request(context: Context, request: RouteRequest, from: String, startFrom: String) {
         val planner = planner(context)
@@ -119,7 +139,7 @@ object Routing {
     fun explore(
         context: Context,
         done: () -> Unit = {},
-        work: (Router, (btools.router.RoutingEngine) -> Unit, () -> Boolean) -> Unit,
+        work: (RouteEngine, (SearchHandle) -> Unit, () -> Boolean) -> Unit,
     ) {
         planner(context).explore(done, work)
     }
@@ -130,8 +150,25 @@ object Routing {
         val root = root(context)
         // The planner outlives this call, so it keeps the application, never an activity.
         val app = context.applicationContext
-        return RoutePlanner(
-            router = {
+        // One for the planner's life, so OsmAnd's readers stay open between routes.
+        val router = OsmAndRouter { ObfLibrary.routingMaps(app) }
+        // [ObfLibrary] opens its files only while something holds them: a projection, the
+        // connection screen, the preview. A destination shared from OsmAnd with neither up
+        // (DestinationActivity has no window) found nothing open, and OsmAnd's router said
+        // "no OsmAnd maps open" for every request. A search holds the files itself; its
+        // readers keep their own handles once opened, so letting go afterwards is safe.
+        val osmand = object : RouteEngine {
+            override fun compute(request: RouteRequest, maxRunningMs: Long, started: (SearchHandle) -> Unit): Route {
+                ObfLibrary.hold(MAPS_HOLDER, true)
+                try {
+                    return router.compute(request, maxRunningMs, started)
+                } finally {
+                    ObfLibrary.hold(MAPS_HOLDER, false)
+                }
+            }
+        }
+        val engines = EngineChoice(
+            brouter = {
                 // On the routing thread: the profile copy is file I/O too.
                 val profile = try {
                     RoutingData.installProfile(RoutingData.profiles(root))
@@ -140,14 +177,44 @@ object Routing {
                 }
                 Router(RoutingData.segments(root), profile)
             },
+            osmand = { osmand },
+        )
+        return RoutePlanner(
+            router = { engines },
             // Below the scene and encoder threads, which run at the default and have a
             // frame deadline this does not — but deliberately not THREAD_PRIORITY_BACKGROUND.
             // Android moves a thread at that level into the background scheduling group,
             // which keeps it on the phone's little cores: the first build used it, and a
             // 94 km route took 23.9 s warm on the Pixel against 2.3 s on one desktop core.
             threadSetup = { Process.setThreadPriority(THREAD_PRIORITY) },
-            annotate = { route -> StreetNames.name(route, nameMaps ?: MapData.installed(app)) },
+            annotate = { request, route -> annotated(app, route, request.options, nameMaps) },
         ).also { planner = it }
+    }
+
+    /**
+     * [route] with its street names ([StreetNames], from [maps] or else every installed map)
+     * and exit signs ([signed]), when BRouter made it. One OsmAnd's router made under
+     * [options] already has both from the same maps, and is returned as it is. The
+     * routing thread's work: it opens files.
+     */
+    fun annotated(context: Context, route: Route, options: RouteOptions, maps: List<File>?): Route {
+        if (options.osmAndRouting) return route
+        val named = try {
+            StreetNames.name(route, maps ?: MapData.installed(context))
+        } catch (e: RuntimeException) {
+            route
+        }
+        return signed(context, named)
+    }
+
+    /**
+     * [route] with the exit signs OsmAnd's maps give it ([ExitSigns]); [route] itself with
+     * no maps or when reading them fails. The routing thread's work: it opens files.
+     */
+    fun signed(context: Context, route: Route): Route = try {
+        ExitSigns.sign(route, ObfLibrary.sources(context))
+    } catch (e: RuntimeException) {
+        route
     }
 
     private fun finished(result: RouteResult) {
@@ -172,7 +239,15 @@ object Routing {
         token++
         if (route != null && route.trafficShaped) trafficRoutes++
         if (route != null && route.closuresOpened) closuresOpened++
-        route?.let { Guide.onRoute(it) } ?: Guide.onRouteFailed()
+        if (route != null) {
+            Navigation.routed()
+            Guide.onRoute(route)
+        } else {
+            // Nothing to follow: the destination is held and asked for again as the vehicle
+            // moves ([Navigation.retry]), and the dashboard says so meanwhile.
+            Navigation.routeFailed()
+            Guide.onRouteLost()
+        }
         NavigationStore.changed()
         // No coordinates, only totals: the event log is part of the saved report.
         SessionController.note(
@@ -253,7 +328,7 @@ object Routing {
      */
     fun restore(context: Context, route: Route) {
         val destination = Navigation.destination ?: return
-        val options = AppSettings.load(context).routing
+        val options = Routing.options(context)
         Guide.learnPace = options.learnPace
         lastRequest = RouteRequest(
             route.latitudes[0], route.longitudes[0], destination.latitude, destination.longitude, null, options,

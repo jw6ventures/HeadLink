@@ -38,8 +38,8 @@ use aap_proto::{
     data::AdditionalVideoConfig,
     decode, encode_message,
     enums::{
-        audio_focus_state, audio_focus_type, av_channel_setup_status, sensor_type, status,
-        video_focus_mode, video_focus_reason,
+        android_keycode, audio_focus_state, audio_focus_type, av_channel_setup_status, sensor_type,
+        status, video_focus_mode, video_focus_reason,
     },
     ids,
     messages::{
@@ -957,6 +957,72 @@ pub struct InputStats {
     pub raw_range: Option<[u32; 4]>,
     /// How touches were mapped, once a configuration is selected.
     pub touch_map: Option<TouchMap>,
+    /// Every distinct keycode the head unit sent, in the order first seen, at most
+    /// [`KEY_LOG_LIMIT`]. Recorded before the focus check, so a button pressed while the
+    /// head unit shows its own screen is still named. This is how a report says which
+    /// code a steering-wheel button sends (the voice button, for instance).
+    pub keys: Vec<KeySeen>,
+    /// Button events whose keycode was past [`KEY_LOG_LIMIT`] distinct codes.
+    pub keys_overflow: u64,
+}
+
+/// Distinct keycodes kept in [`InputStats::keys`].
+pub const KEY_LOG_LIMIT: usize = 16;
+
+/// One keycode's button events, for the report.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct KeySeen {
+    pub keycode: u32,
+    pub down: u64,
+    pub up: u64,
+    /// Events with `long_press` set.
+    pub long: u64,
+    /// Events dropped because the stream had not started or projected focus was lost.
+    pub unfocused: u64,
+    /// Session offset of the first event with this code.
+    pub first_at_ms: u128,
+}
+
+impl fmt::Display for KeySeen {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = i32::try_from(self.keycode)
+            .ok()
+            .and_then(|c| android_keycode::Enum::try_from(c).ok())
+            .map_or("unknown", |e| e.as_str_name());
+        write!(
+            f,
+            "{}({name}):down={},up={},long={},unfocused={},first={}ms",
+            self.keycode, self.down, self.up, self.long, self.unfocused, self.first_at_ms
+        )
+    }
+}
+
+impl InputStats {
+    fn key_seen(&mut self, keycode: u32, down: bool, long: bool, focused: bool, at: Duration) {
+        let index = match self.keys.iter().position(|k| k.keycode == keycode) {
+            Some(i) => i,
+            None if self.keys.len() < KEY_LOG_LIMIT => {
+                self.keys.push(KeySeen {
+                    keycode,
+                    first_at_ms: at.as_millis(),
+                    ..KeySeen::default()
+                });
+                self.keys.len() - 1
+            }
+            None => {
+                self.keys_overflow += 1;
+                return;
+            }
+        };
+        let k = &mut self.keys[index];
+        if down {
+            k.down += 1;
+        } else {
+            k.up += 1;
+        }
+        k.long += u64::from(long);
+        k.unfocused += u64::from(!focused);
+    }
 }
 
 /// Projection evidence for the session report (spec §10).
@@ -1818,6 +1884,17 @@ impl fmt::Display for ProjectionReport {
             i.dropped_unfocused,
             self.app_events_dropped
         )?;
+        let keys: Vec<String> = i.keys.iter().map(KeySeen::to_string).collect();
+        writeln!(
+            f,
+            "input_keys={} input_keys_overflow={}",
+            if keys.is_empty() {
+                "-".into()
+            } else {
+                keys.join(";")
+            },
+            i.keys_overflow
+        )?;
         match i.touch_map {
             Some(m) => writeln!(
                 f,
@@ -2369,7 +2446,7 @@ impl Session {
         } else if channel == p.input.channel && p.input_open {
             match id {
                 ids::input::BINDING_RESPONSE => self.binding_response(body, now),
-                ids::input::EVENT_INDICATION => self.input_event(body),
+                ids::input::EVENT_INDICATION => self.input_event(body, now),
                 _ => self.unhandled(message, id, self.report.stage, now),
             }
         } else if p.sensor.as_ref().is_some_and(|s| s.channel == channel) && p.sensor_open {
@@ -4515,16 +4592,28 @@ impl Session {
         self.pump_media(now);
     }
 
-    fn input_event(&mut self, body: &[u8]) {
+    fn input_event(&mut self, body: &[u8], now: Instant) {
         let event = match decode::<InputEventIndication>(body) {
             Ok(event) => event,
             Err(_) => return self.projection_report().input.invalid += 1,
         };
+        let at = self.elapsed(now);
         let p = self.projection_mut();
         let deliver = p.video().started && p.video().focused;
         let touch = p.touch;
         let stats = &mut self.projection_report().input;
         stats.events += 1;
+        if let Some(buttons) = &event.button_event {
+            for b in &buttons.button_events {
+                stats.key_seen(
+                    b.keycode,
+                    b.is_pressed,
+                    b.long_press == Some(true),
+                    deliver,
+                    at,
+                );
+            }
+        }
         if !deliver {
             stats.dropped_unfocused += 1;
             return;

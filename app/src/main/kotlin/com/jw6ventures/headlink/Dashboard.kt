@@ -536,6 +536,17 @@ class DashboardLayout @JvmOverloads constructor(
 
     fun mediaTextWidth(): Int = maxOf(0, media.right - margin - mediaContentX)
 
+    /**
+     * The progress row: elapsed time, bar, track length, in the gap between the artist
+     * line and the transport buttons. Not a target; seeking is the rewind and
+     * fast-forward the head unit's own buttons already send.
+     */
+    val mediaProgress: Box = run {
+        val top = media.y + (media.height * 0.41f).toInt()
+        val bottom = media.y + media.height / 2 - margin / 2
+        Box(mediaContentX, top, mediaTextWidth(), maxOf(0, bottom - top))
+    }
+
     /** The transport action at a point, or null. */
     fun hitMedia(px: Int, py: Int): String? =
         MEDIA_ACTIONS.indices.firstOrNull { mediaButton(it).contains(px, py) }?.let { MEDIA_ACTIONS[it] }
@@ -1090,6 +1101,49 @@ data class TurnCard(
     val line: String,
 )
 
+/**
+ * How far into the track the media pane is, in whole seconds, so the chrome repaints
+ * once a second while playing and not on every frame.
+ */
+data class MediaProgress(val elapsedSeconds: Int, val durationSeconds: Int) {
+    /** 0 to 1 along the bar. */
+    val fraction: Float
+        get() = if (durationSeconds <= 0) 0f else (elapsedSeconds.toFloat() / durationSeconds).coerceIn(0f, 1f)
+
+    val elapsed: String get() = clock(elapsedSeconds)
+    val duration: String get() = clock(durationSeconds)
+
+    companion object {
+        /**
+         * The progress to draw [nowMillis], or null when there is nothing honest to show:
+         * no position, or no duration (a live stream or radio, where the session's
+         * position counts up forever and a bar would be meaningless).
+         *
+         * [positionMs] is what the session said at [atMillis]. While [playing] it is
+         * carried forward from there, because the phone reports about once a second and a
+         * clock that jumps is worse than one that ticks.
+         */
+        @JvmStatic
+        fun at(positionMs: Long, durationMs: Long, atMillis: Long, playing: Boolean, nowMillis: Long): MediaProgress? {
+            if (positionMs < 0 || durationMs <= 0) return null
+            val since = if (playing) (nowMillis - atMillis).coerceAtLeast(0L) else 0L
+            val position = (positionMs + since).coerceIn(0L, durationMs)
+            return MediaProgress((position / 1000L).toInt(), (durationMs / 1000L).toInt())
+        }
+
+        /** "3:07", or "1:02:07" past the hour. */
+        @JvmStatic
+        fun clock(seconds: Int): String {
+            val s = seconds.coerceAtLeast(0)
+            val h = s / 3600
+            val m = (s % 3600) / 60
+            val r = s % 60
+            return if (h > 0) String.format(java.util.Locale.ROOT, "%d:%02d:%02d", h, m, r)
+            else String.format(java.util.Locale.ROOT, "%d:%02d", m, r)
+        }
+    }
+}
+
 /** One maneuver on the trip panel: the cluster's values and the distance to it, in words. */
 data class TripStep(val maneuver: Int, val exit: Int, val distance: String)
 
@@ -1108,6 +1162,8 @@ data class TripPanel(
     val later: List<TripStep>,
     val arrived: Boolean,
     val rerouting: Boolean,
+    /** A destination with no route yet ([UpcomingTurn.FINDING], [UpcomingTurn.NO_ROUTE]): no figures, End route still shown. */
+    val searching: Boolean = false,
     /** A finger is on End route. */
     val endPressed: Boolean,
     /** Voice guidance is on (P8.2): the speaker glyph lit, else slashed. */
@@ -1154,6 +1210,12 @@ data class DashboardChoices @JvmOverloads constructor(
     val clockFormat: ClockFormat = ClockFormat.DEFAULT,
     /** The Home Assistant button, shown while it is set up and on. */
     val homeAssistant: Boolean = false,
+    /**
+     * The follow view's zoom by speed (docs/dashboard.md, "Adaptive zoom"). Off here, on
+     * in [SavedSettings]: a dashboard built without the saved settings keeps the fixed zoom
+     * every test and lab run was written against.
+     */
+    val adaptiveZoom: AdaptiveZoomSettings = AdaptiveZoomSettings.OFF,
 )
 
 /**
@@ -1231,6 +1293,8 @@ class Dashboard @JvmOverloads constructor(
          */
         val artKey: String?,
         val playing: Boolean,
+        /** The bar under the artist, or null with no track length to measure against. */
+        val mediaProgress: MediaProgress? = null,
         val transport: String?,
         val restriction: String,
         val pressedTile: Int,
@@ -1390,6 +1454,12 @@ class Dashboard @JvmOverloads constructor(
     private var artist: String? = null
     private var artKey: String? = null
     private var playing = false
+    /** The session's position in ms as of [mediaPositionAt], or -1 with none. */
+    private var mediaPositionMs = -1L
+    private var mediaDurationMs = -1L
+    private var mediaPositionAt = 0L
+    /** Frames drawn with the progress bar, for the report. */
+    private var mediaProgressFrames = 0L
     private var transports = 0L
     private var lastTransport = "-"
     private var restriction = "-"
@@ -1448,6 +1518,9 @@ class Dashboard @JvmOverloads constructor(
 
     /** Where the map pane is looking, and the gestures that move it. */
     private val mapControl = MapControl(mapOrientation)
+
+    /** Which speed band's zoom the follow view is at; [mapCamera] feeds it. */
+    private val adaptiveZoom = AdaptiveZoom(choices.adaptiveZoom)
 
     /**
      * Whether the marker is an arrow. Latched with hysteresis around [ARROW_ON_MPS] so
@@ -2211,8 +2284,14 @@ class Dashboard @JvmOverloads constructor(
         title: String,
         artist: String,
         artKey: String? = null,
+        positionMs: Long = -1L,
+        durationMs: Long = -1L,
+        atMillis: Long = System.currentTimeMillis(),
     ) {
         playing = state == "playing"
+        mediaPositionMs = positionMs
+        mediaDurationMs = durationMs
+        mediaPositionAt = atMillis
         mediaAccess = access
         this.title = title.ifEmpty { null }
         this.artist = artist.ifEmpty { null }
@@ -2813,6 +2892,8 @@ class Dashboard @JvmOverloads constructor(
             artist = artist,
             artKey = artKey,
             playing = playing,
+            mediaProgress = if (idle) null else MediaProgress.at(mediaPositionMs, mediaDurationMs, mediaPositionAt, playing, nowMillis)
+                ?.also { mediaProgressFrames++ },
             transport = if (transports == 0L) null else "$lastTransport x$transports",
             restriction = restriction,
             pressedTile = pressedTile,
@@ -2888,8 +2969,12 @@ class Dashboard @JvmOverloads constructor(
      * camera this returns.
      */
     @Synchronized
-    fun mapCamera(): MapCamera? =
-        mapControl.camera(followPosition(), resolvedBearing(), if (turnCard() != null) layout.markerBelow else 0)
+    @JvmOverloads
+    fun mapCamera(nowMillis: Long = System.currentTimeMillis()): MapCamera? {
+        // Adaptive zoom eases the scale first, so the camera and the marker under it agree.
+        mapControl.adapt(adaptiveZoom.level(guidanceSpeed(), nowMillis), adaptiveZoom.settings.glideMillis.toLong(), nowMillis)
+        return mapControl.camera(followPosition(), resolvedBearing(), if (turnCard() != null) layout.markerBelow else 0)
+    }
 
     /**
      * The turn card for the route as guidance last described it (P7.4), or null: no
@@ -2899,7 +2984,8 @@ class Dashboard @JvmOverloads constructor(
         val turn = upcomingTurn ?: return null
         return when (turn.text) {
             UpcomingTurn.WAITING -> null
-            UpcomingTurn.REROUTING, UpcomingTurn.ARRIVED -> TurnCard(turn.maneuver, turn.exit, null, turn.text)
+            UpcomingTurn.REROUTING, UpcomingTurn.ARRIVED, UpcomingTurn.FINDING, UpcomingTurn.NO_ROUTE ->
+                TurnCard(turn.maneuver, turn.exit, null, turn.text)
             // The street on its own line, and the instruction when the map
             // names none: "Turn left" says more than an empty line under a left arrow.
             else -> TurnCard(turn.maneuver, turn.exit, turn.metres?.let { speedUnit.distance(it) }, turn.street ?: turn.text)
@@ -2916,8 +3002,9 @@ class Dashboard @JvmOverloads constructor(
         val turn = upcomingTurn ?: return null
         val arrived = turn.text == UpcomingTurn.ARRIVED
         val rerouting = turn.text == UpcomingTurn.REROUTING
-        val seconds = turn.destinationSeconds.takeUnless { arrived || rerouting }
-        val metres = turn.destinationMetres.takeUnless { arrived || rerouting }
+        val searching = UpcomingTurn.searching(turn.text)
+        val seconds = turn.destinationSeconds.takeUnless { arrived || rerouting || searching }
+        val metres = turn.destinationMetres.takeUnless { arrived || rerouting || searching }
         return TripPanel(
             // Rounded to the nearest minute, as the time remaining is: truncated, the first
             // lab frame said "15:23" beside "9 min" at 15:15.
@@ -2926,13 +3013,14 @@ class Dashboard @JvmOverloads constructor(
             },
             remaining = seconds?.let { StatusText.duration(it) },
             distance = metres?.let { speedUnit.distance(it) },
-            later = if (arrived || rerouting) {
+            later = if (arrived || rerouting || searching) {
                 emptyList()
             } else {
                 turn.later.map { TripStep(it.maneuver.type, it.maneuver.exit, speedUnit.distance(it.metres)) }
             },
             arrived = arrived,
             rerouting = rerouting,
+            searching = searching,
             endPressed = pressedEndRoute,
             voiceOn = voiceOn,
             voiceWarning = !speechAvailable,
@@ -3003,6 +3091,13 @@ class Dashboard @JvmOverloads constructor(
             "dashboard_notifications_paused=$notificationsPaused " +
             "dashboard_pause_presses=$pausePresses dashboard_players=${players.size}\n" +
             "dashboard_map_view=${mapControl.report()}\n" +
+            // Adaptive zoom's choices and how often the band moved; never a speed.
+            "dashboard_adaptive_zoom=${adaptiveZoom.settings.enabled} " +
+            "dashboard_adaptive_zoom_levels=${adaptiveZoom.settings.levels.joinToString(",")} " +
+            "dashboard_adaptive_zoom_out_s=${adaptiveZoom.settings.zoomOutSeconds} " +
+            "dashboard_adaptive_zoom_in_s=${adaptiveZoom.settings.zoomInSeconds} " +
+            "dashboard_adaptive_zoom_glide_ms=${adaptiveZoom.settings.glideMillis} " +
+            "dashboard_adaptive_zoom_band_changes=${adaptiveZoom.changes}\n" +
             // How many places and how the tile was used; never which places.
             "dashboard_favorites=${favorites.size} dashboard_favorite_taps=${favoriteList.taps} " +
             "dashboard_favorite_scrolls=${favoriteList.scrolls}\n" +
@@ -3015,6 +3110,8 @@ class Dashboard @JvmOverloads constructor(
             "dashboard_voice_toggle_presses=$voicePresses dashboard_voice_guidance=${if (voiceOn) "on" else "off"}\n" +
             // P7.5: how many players were offered and what Resume did; never which app.
             "dashboard_media_idle=${mediaIdle()} dashboard_media_access=$mediaAccess " +
+            // Whether the progress bar was drawn; never the track or how far into it.
+            "dashboard_media_progress_frames=$mediaProgressFrames " +
             "dashboard_player_rows=$playerRows dashboard_player_rows_max=$playerRowsMax " +
             "dashboard_resume_presses=$resumePresses dashboard_resume_played=$resumePlayed " +
             "dashboard_resume_failures=$resumeFailures\n" +

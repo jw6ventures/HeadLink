@@ -1,0 +1,2 @@
+• The map zooms out as you speed up and back in as you slow down. Zoom levels and timings are adjustable in Settings.
+• Stability fixes for the car connection and the projection service.

@@ -1,5 +1,6 @@
 package com.jw6ventures.headlink
 
+import btools.mapaccess.OsmNodePairSet
 import btools.router.OsmNodeNamed
 import btools.router.ProfileCache
 import btools.router.RoutingContext
@@ -170,8 +171,31 @@ class Route @JvmOverloads constructor(
      * then not a reason to re-route again, which would only find it again.
      */
     val closuresOpened: Boolean = false,
+    /**
+     * The exit sign for the maneuver at the same position in [maneuverIndices], or null
+     * where there is none or none is known. Empty until [ExitSigns] has read OsmAnd's
+     * routing data; BRouter's has no exit numbers or destinations.
+     */
+    val exitSigns: Array<ExitSign?> = emptyArray(),
+    /**
+     * The road class and surroundings of the stretch from each point to the next, a
+     * [PaceRoad] code, for the learned pace ([PaceBook]); one per point, the last unused.
+     * Empty when not known: BRouter's routes and routes saved before 0.11.
+     */
+    val paceClasses: ByteArray = ByteArray(0),
+    /**
+     * The factor [withTimeScale] put on every time (the Routing screen's time adjustment),
+     * 1 when none: [PaceBook] learns against the times as the router gave them.
+     */
+    val timeScale: Double = 1.0,
 ) {
     val points: Int get() = latitudes.size
+
+    /** The [PaceRoad] code of the stretch starting at point [index], or null when not known. */
+    fun paceClassAt(index: Int): Byte? = if (paceClasses.size == points) paceClasses.getOrNull(index) else null
+
+    /** The sign for the maneuver at position [k] in [maneuverIndices], or null. */
+    fun exitSign(k: Int): ExitSign? = exitSigns.getOrNull(k)
 
     /** Traffic nogos were in the search that made this route: see [nogoCount]. */
     val trafficShaped: Boolean get() = nogoCount > 0
@@ -186,7 +210,7 @@ class Route @JvmOverloads constructor(
         return Route(
             latitudes, longitudes, distanceM, (seconds * factor).roundToInt(), maneuverIndices, exitNumbers, commands,
             FloatArray(pointSeconds.size) { (pointSeconds[it] * factor).toFloat() }, roadStarts, roadNames, topSpeedKmh, via,
-            nogoCount, closuresOpened,
+            nogoCount, closuresOpened, exitSigns, paceClasses, timeScale * factor,
         )
     }
 
@@ -195,14 +219,23 @@ class Route @JvmOverloads constructor(
         require(starts.size == names.size) { "one name per stretch" }
         return Route(
             latitudes, longitudes, distanceM, seconds, maneuverIndices, exitNumbers, commands,
-            pointSeconds, starts, names, topSpeedKmh, via, nogoCount, closuresOpened,
+            pointSeconds, starts, names, topSpeedKmh, via, nogoCount, closuresOpened, exitSigns, paceClasses, timeScale,
+        )
+    }
+
+    /** This route with the exit signs [ExitSigns] found, one per maneuver. */
+    fun withExitSigns(signs: Array<ExitSign?>): Route {
+        require(signs.size == maneuverIndices.size) { "one sign per maneuver" }
+        return Route(
+            latitudes, longitudes, distanceM, seconds, maneuverIndices, exitNumbers, commands,
+            pointSeconds, roadStarts, roadNames, topSpeedKmh, via, nogoCount, closuresOpened, signs, paceClasses, timeScale,
         )
     }
 
     /** This route marked as made with [count] traffic nogos, and whether closures were opened for it. */
     fun withNogos(count: Int, opened: Boolean): Route = Route(
         latitudes, longitudes, distanceM, seconds, maneuverIndices, exitNumbers, commands,
-        pointSeconds, roadStarts, roadNames, topSpeedKmh, via, count, opened,
+        pointSeconds, roadStarts, roadNames, topSpeedKmh, via, count, opened, exitSigns, paceClasses, timeScale,
     )
 
     /**
@@ -229,6 +262,9 @@ class Route @JvmOverloads constructor(
             IntArray(keep.size) { commands[keep[it]] }, times,
             IntArray(roads.size) { maxOf(0, roadStarts[roads[it]] - start) }, Array(roads.size) { roadNames[roads[it]] },
             topSpeedKmh, via, nogoCount, closuresOpened,
+            if (exitSigns.size == maneuverIndices.size) Array(keep.size) { exitSigns[keep[it]] } else emptyArray(),
+            if (paceClasses.size == points) paceClasses.copyOfRange(start, points) else ByteArray(0),
+            timeScale,
         )
     }
 
@@ -265,6 +301,38 @@ class RouteResult(
  */
 class RoutingException @JvmOverloads constructor(message: String, val stopped: Boolean = false) : Exception(message)
 
+/** Stops one search in progress, from any thread. Each engine hands one out as a search begins. */
+fun interface SearchHandle {
+    fun terminate()
+}
+
+/**
+ * Something that computes a [Route]: BRouter over `.rd5` tiles ([Router]) or OsmAnd's router
+ * over `.obf` maps ([OsmAndRouter]). Blocking, and used from one thread at a time.
+ */
+interface RouteEngine {
+    /**
+     * Computes one route or throws [RoutingException]. [started] receives a handle before
+     * each search begins, which is the only way another thread can stop it; an engine may
+     * search more than once for one request, and the handle is always the running search's.
+     */
+    @Throws(RoutingException::class)
+    fun compute(request: RouteRequest, maxRunningMs: Long, started: (SearchHandle) -> Unit = {}): Route
+}
+
+/**
+ * The engine each request asked for ([RouteOptions.osmAndRouting]), so a change on the
+ * Routing screen takes effect with the next route and nothing has to be rebuilt. Each
+ * engine is made on first use, on the routing thread.
+ */
+class EngineChoice(
+    private val brouter: () -> RouteEngine,
+    private val osmand: () -> RouteEngine,
+) : RouteEngine {
+    override fun compute(request: RouteRequest, maxRunningMs: Long, started: (SearchHandle) -> Unit): Route =
+        (if (request.options.osmAndRouting) osmand() else brouter()).compute(request, maxRunningMs, started)
+}
+
 /**
  * BRouter over one segment directory and one profile. Blocking, and not thread-safe:
  * BRouter keeps its parsed profile in a process-wide cache, so everything goes through a
@@ -300,7 +368,7 @@ class Router(
     private val profile: File,
     /** BRouter's node-cache budget in MiB; 64 is upstream's own default for its service. */
     private val memoryClassMb: Int = 64,
-) {
+) : RouteEngine {
     /**
      * Computes one route or throws [RoutingException] with BRouter's own message.
      *
@@ -309,7 +377,7 @@ class Router(
      * than one search (see the class notes); it is always the running one.
      */
     @Throws(RoutingException::class)
-    fun compute(request: RouteRequest, maxRunningMs: Long, started: (RoutingEngine) -> Unit = {}): Route {
+    override fun compute(request: RouteRequest, maxRunningMs: Long, started: (SearchHandle) -> Unit): Route {
         if (!profile.isFile) throw RoutingException("no routing profile at ${profile.name}")
         if (!segments.isDirectory) throw RoutingException("no routing data installed")
         if (request.nogos.isEmpty()) return computeStepping(request, emptyList(), maxRunningMs, started)
@@ -330,7 +398,7 @@ class Router(
      * again: first without the weighted points within [CLOSURE_GUARD_M] of the closures it
      * crossed, then without any weighted point, when nothing is left to overwrite them.
      */
-    private fun computeKeepingClosures(request: RouteRequest, maxRunningMs: Long, started: (RoutingEngine) -> Unit): Route {
+    private fun computeKeepingClosures(request: RouteRequest, maxRunningMs: Long, started: (SearchHandle) -> Unit): Route {
         var nogos = request.nogos
         for (attempt in 0 until 2) {
             val route = computeStepping(request, nogos, maxRunningMs, started)
@@ -359,7 +427,7 @@ class Router(
         request: RouteRequest,
         nogos: List<Nogo>,
         maxRunningMs: Long,
-        started: (RoutingEngine) -> Unit,
+        started: (SearchHandle) -> Unit,
     ): Route {
         var options = request.options
         while (true) {
@@ -380,7 +448,7 @@ class Router(
         options: RouteOptions,
         nogos: List<Nogo>,
         maxRunningMs: Long,
-        started: (RoutingEngine) -> Unit,
+        started: (SearchHandle) -> Unit,
     ): Route {
         val context = RoutingContext()
         context.localFunction = profile.absolutePath
@@ -419,9 +487,10 @@ class Router(
             if (via) doubleArrayOf(request.fromLat, request.viaLat!!, request.toLat) else doubleArrayOf(request.fromLat, request.toLat),
         )
         val engine = RoutingEngine(null, null, segments, waypoints, context)
+        widenIslandCheck(engine)
         // Otherwise a route with no output file is printed to stdout as GPX.
         engine.quite = true
-        started(engine)
+        started(SearchHandle { engine.terminate() })
         engine.doRun(maxRunningMs)
         engine.getErrorMessage()?.let { throw RoutingException(it, engine.isTerminated() || it.contains(TIMED_OUT)) }
         val track = engine.getFoundTrack() ?: throw RoutingException("no route found")
@@ -455,6 +524,47 @@ class Router(
     }
 
     companion object {
+        /**
+         * Links BRouter may visit before a road network the start or destination snapped to
+         * stops counting as cut off. Upstream's 500 catches a lone parking aisle; a
+         * fairground's or a campus's lots and drives, joined to the public road only through a
+         * gate or a private way the car profile will not use, run to thousands, so the
+         * destination stayed snapped inside them and the search failed with "no route"
+         * (a pin on the Travis County Expo Center, 2026-10-31). Found cut off, BRouter
+         * excludes every link it visited and snaps again, to the nearest road the vehicle
+         * can actually reach: the route ends there, at the gate.
+         *
+         * The cost is the check's own search, run from the destination before every route:
+         * at most this many links, a fraction of a second on the phone, where a route across
+         * town visits hundreds of thousands.
+         */
+        const val ISLAND_CHECK_LINKS = 20_000
+
+        /**
+         * Sets [ISLAND_CHECK_LINKS] on [engine]. The vendored BRouter is held unmodified
+         * (vendor/brouter/README.md) and keeps the limit and its pair set in private fields
+         * sized at construction, so they are set by reflection; the host test pins both
+         * names, so a re-sync that renames them fails there. False, and upstream's limit
+         * kept, if either cannot be set. The pair set goes first: a limit raised over a set
+         * still sized for 500 would record only part of a network it found cut off.
+         */
+        @JvmStatic
+        fun widenIslandCheck(engine: RoutingEngine): Boolean = try {
+            RoutingEngine::class.java.getDeclaredField(ISLAND_PAIRS_FIELD).apply { isAccessible = true }
+                .set(engine, OsmNodePairSet(ISLAND_CHECK_LINKS))
+            RoutingEngine::class.java.getDeclaredField(ISLAND_LIMIT_FIELD).apply { isAccessible = true }
+                .setInt(engine, ISLAND_CHECK_LINKS)
+            true
+        } catch (e: ReflectiveOperationException) {
+            false
+        } catch (e: RuntimeException) {
+            false
+        }
+
+        /** BRouter's private fields [widenIslandCheck] sets. */
+        const val ISLAND_PAIRS_FIELD = "islandNodePairs"
+        const val ISLAND_LIMIT_FIELD = "MAXNODES_ISLAND_CHECK"
+
         /** BRouter's `osmand` style, the one its own parameter collector maps car clients to. */
         const val TURN_INSTRUCTION_MODE = 3
 
@@ -603,21 +713,22 @@ class Router(
  * [done] is called on the routing thread, once per request, including superseded ones.
  */
 class RoutePlanner @JvmOverloads constructor(
-    private val router: () -> Router,
+    private val router: () -> RouteEngine,
     private val maxRunningMs: Long = MAX_RUNNING_MS,
     /** Runs first on the routing thread; the app lowers its scheduling priority here. */
     threadSetup: () -> Unit = {},
     /**
      * Runs on the routing thread on every route found, before [RoutePlanner.request]'s
-     * callback: the app names its streets here ([StreetNames]). What it throws is dropped
-     * with the route kept as found, because a name is never worth losing a route over.
+     * callback, with the request that made it: the app names its streets here
+     * ([StreetNames]). What it throws is dropped with the route kept as found, because a
+     * name is never worth losing a route over.
      */
-    private val annotate: (Route) -> Route = { it },
+    private val annotate: (RouteRequest, Route) -> Route = { _, route -> route },
 ) : AutoCloseable {
     private val latest = AtomicLong()
 
     @Volatile
-    private var running: RoutingEngine? = null
+    private var running: SearchHandle? = null
 
     private val executor: ExecutorService =
         Executors.newSingleThreadExecutor { runnable ->
@@ -647,7 +758,7 @@ class RoutePlanner @JvmOverloads constructor(
      */
     fun explore(
         done: () -> Unit = {},
-        work: (router: Router, started: (RoutingEngine) -> Unit, cancelled: () -> Boolean) -> Unit,
+        work: (router: RouteEngine, started: (SearchHandle) -> Unit, cancelled: () -> Boolean) -> Unit,
     ) {
         val at = latest.get()
         try {
@@ -694,7 +805,7 @@ class RoutePlanner @JvmOverloads constructor(
             val naming = System.nanoTime()
             val named = if (sequence == latest.get()) {
                 try {
-                    annotate(route)
+                    annotate(request, route)
                 } catch (e: RuntimeException) {
                     route
                 }

@@ -27,8 +27,12 @@
 #   rules over the vendored BRouter jar. ROUTING_SEGMENTS=<dir holding W75_N40.rd5> adds
 #   real routes; the tile is 119 MB and not in the repository, so by default it is skipped
 #   and the summary line says so.
+# * AdaptiveZoomTest: the follow view's zoom by speed band, the waits before zooming out
+#   and in, the margin at a band's edge, the glide, that a pinch or +/- holds the zoom
+#   until recentre, that a panned map is left alone, and the settings' repair.
 # * RouteOptionsTest: Maps & routing -> Route preferences: the profile parameters each
-#   switch sends, repair, labels, the time adjustment, the stored keys, and Learn my pace
+#   switch sends, repair, labels, the time adjustment, the stored keys, Learn my pace and
+#   its pace learned across drives (kinds of road, buckets, fading, saved text),
 #   over synthetic drives. ROUTING_SEGMENTS with W100_N30.rd5 adds Austin routes (Avoid toll
 #   roads leaves SH 130, 56 against 75 mph); with it or W75_N40.rd5, that each route's
 #   switches reach BRouter even when its profile cache would have reused the last ones.
@@ -38,6 +42,23 @@
 # * StreetNamesTest: road names read from the map onto a route's maneuvers, the cluster
 #   instruction that names them, and the dashboard header's turn line. ROUTING_SEGMENTS
 #   with W75_N40.rd5 and MAP_FILE covering Lexington to Boston add a real route.
+# * ExitSignsTest: exit numbers and sign text from OsmAnd's routing section - a synthetic
+#   .obf built from the proto (rules, the box tree with a pruned child, points, point tags,
+#   the string table), an exit, a "keep left" past one, an on-ramp driven against its stored
+#   order, the card, cluster and spoken words, and the route file. No real file yet.
+# * ObfMapTilesTest: the map drawn from OsmAnd's map data - a tile's 31-bit box, a road's
+#   tags, names and pixels, an area's hole, a building kept whole, points in and out of the
+#   tile, the sea from coastlines (a coast across the tile, an island, open sea), and that
+#   with no OsmAnd map data the map falls back to the Mapsforge file. Objects built in
+#   memory; no real file, no drawing.
+# * OsmAndRoutingTest: OsmAnd's router (vendor/osmand) behind HeadLink's RouteEngine over
+#   ExitSignsTest's synthetic .obf - the exit maneuver with its number and signs, the times,
+#   a closure and a costly jam moving the route and a cheap one not, closures with no way
+#   round opened, the second alternative, a stopped search, no maps, the profile's
+#   parameters, and OsmAnd's errors stripped of coordinates. OBF_DIR with
+#   Us_texas_austin_northamerica.obf adds a 58 km route with a jam under the phone's 256 MB
+#   heap (the plain search's memory failure), and with the San Antonio map from another
+#   OsmAnd build, that the hierarchy is skipped. No phone.
 # * DestinationTest: P6.4's reading of what OsmAnd and other apps share — geo: URIs,
 #   OsmAnd's message text and links, bare pairs — its refusals, and the swapped-sign hint.
 #   Written against OsmAnd's source; only a real share on the phone confirms the strings.
@@ -69,6 +90,11 @@
 #   notification against a turn prompt, the second tap, the lead-in, one focus grant for
 #   utterances close together and always given back, no prompt in a call — its report's
 #   counts, and what a tapped notification is read as. TextToSpeech needs a phone.
+# * MicCaptureTest: voice input's microphone rules - only the car's hands-free link (SCO)
+#   is chosen and a recorder on any other microphone is refused, the 16 kHz mono clip and
+#   its 30 s cap, dBFS levels, the end of an utterance after speech and quiet, the
+#   no-speech timeout, road noise that never reads as speech, and a report of counts only.
+#   Whether a phone and car open the link, and how fast, needs both (BluetoothMic).
 # * TrafficClientTest: P9.1's live traffic client and P9.2's response parsing - no request
 #   at all while the integration is off or keyless (the injected HTTP layer is never
 #   called), exactly the two GETs with gzip, every request counted before it is sent,
@@ -175,6 +201,13 @@
 # * WirelessStandbyTest: wireless standby's rules - the start reasons, which start requests
 #   start projection, the automatic-start loop guard and the reconnect pacing. The held
 #   RFCOMM link, the truck's button and the wake lock need a phone and the truck.
+# * RecognizerTest (-Xcheck:jni): voice input's recognizer, the release Kotlin WhisperEngine
+#   over a host x86_64 build of libwhisper_jni (tools/whisper-build.sh) - a small model in
+#   whisper.cpp's real format, written by the test, that says one word; refusals of files that
+#   are not models, cut short, all-F32 or hollow; audio too short or long; prompt, cancel,
+#   close and reload; text cleaning, the CPU feature check and the report's counts.
+#   WHISPER_MODEL=<a ggml model file> adds its load time and 5 s of silence; without it the
+#   summary line says so. The model file grant and the arm64 build need a phone.
 # LabDrive.java and LabTraffic.java are compiled here but not run: they are generators run
 # by hand, the second writing the P9 lab's stand-in HERE scenarios and traffic drive
 # (tools/here-standin/, docs/verification.md).
@@ -188,11 +221,19 @@ stdlib=$(find "$GRADLE_USER_HOME/caches/modules-2" -name kotlin-stdlib-2.2.10.ja
 [ -n "$stdlib" ] || { echo "jni-host-test: kotlin-stdlib 2.2.10 not in the Gradle cache" >&2; exit 1; }
 vtm=$(find "$GRADLE_USER_HOME/caches/modules-2" -name vtm-0.25.0.jar | head -n 1)
 [ -n "$vtm" ] || { echo "jni-host-test: vtm 0.25.0 not in the Gradle cache" >&2; exit 1; }
+osmand=vendor/osmand/build/libs/osmand.jar
+[ -f "$osmand" ] || { echo "jni-host-test: $osmand missing; build the app first" >&2; exit 1; }
+# vendor/osmand's dependencies, and the two it compiles against that Android supplies.
+for jar in trove4j-3.0.3 jts-core-1.14.0 openlocationcode-1.0.4 gson-2.8.9 json-20171018 kxml2-2.1.8; do
+    found=$(find "$GRADLE_USER_HOME/caches/modules-2" -name "$jar.jar" | head -n 1)
+    [ -n "$found" ] || { echo "jni-host-test: $jar not in the Gradle cache" >&2; exit 1; }
+    osmand="$osmand:$found"
+done
 cargo build -p aap-jni --release --offline --locked
 out=target/jni-host-test
 rm -rf "$out"
 mkdir -p "$out"
-javac -encoding UTF-8 -Xlint:all -Werror -d "$out" -cp "$classes:$stdlib:$brouter:$vtm" tools/jni-host-test/*.java \
+javac -encoding UTF-8 -Xlint:all -Werror -d "$out" -cp "$classes:$stdlib:$brouter:$vtm:$osmand" tools/jni-host-test/*.java \
     tools/breezy-standin/src/org/breezyweather/standin/Scenarios.java
 java -cp "$out:$classes:$stdlib" ReportStoreTest
 java -cp "$out:$classes:$stdlib" TrustStoreTest
@@ -203,6 +244,7 @@ java -cp "$out:$classes:$stdlib" DashboardFlexTest
 java -cp "$out:$classes:$stdlib" FavoritesTest
 java -cp "$out:$classes:$stdlib" AppSettingsTest
 java -cp "$out:$classes:$stdlib:$brouter" RoutingTest "${ROUTING_SEGMENTS:-}"
+java -cp "$out:$classes:$stdlib" AdaptiveZoomTest
 java -cp "$out:$classes:$stdlib:$brouter" RouteOptionsTest "${ROUTING_SEGMENTS:-}"
 java -cp "$out:$classes:$stdlib:$brouter" RoutePreviewTest "${ROUTING_SEGMENTS:-}"
 java -cp "$out:$classes:$stdlib:$brouter" GuidanceTest "${ROUTING_SEGMENTS:-}"
@@ -217,6 +259,7 @@ java -cp "$out:$classes:$stdlib" NotificationFeedTest
 java -cp "$out:$classes:$stdlib" CallStateTest
 java -cp "$out:$classes:$stdlib" StatusTextTest
 java -cp "$out:$classes:$stdlib" SpeechQueueTest
+java -cp "$out:$classes:$stdlib" MicCaptureTest
 java -cp "$out:$classes:$stdlib:$brouter" VoicePromptsTest
 java -cp "$out" MapThemeTest
 java -cp "$out:$classes:$stdlib" TrafficClientTest
@@ -228,6 +271,9 @@ java -cp "$out:$classes:$stdlib:$brouter" TrafficFeedTest "${ROUTING_SEGMENTS:-}
 java -cp "$out:$classes:$stdlib" WeatherTest tools/breezy-standin/scenarios
 java -cp "$out:$classes:$stdlib" HomeAssistantTest
 java -cp "$out:$classes:$stdlib" ObfTest "${OBF_DIR:-}"
+java -cp "$out:$classes:$stdlib:$brouter" ExitSignsTest
+java -Xmx256m -cp "$out:$classes:$stdlib:$brouter:$osmand" OsmAndRoutingTest "${OBF_DIR:-}"
+java -cp "$out:$classes:$stdlib:$vtm:$osmand" ObfMapTilesTest
 java -cp "$out:$classes:$stdlib" AddressSearchTest "${OBF_DIR:-}"
 java -cp "$out:$classes:$stdlib:$brouter" SearchAheadTest "${ROUTING_SEGMENTS:-}" "${OBF_DIR:-}"
 java -cp "$out:$classes:$stdlib" WirelessProbeTest
@@ -235,6 +281,17 @@ java -cp "$out:$classes:$stdlib" WirelessBootstrapTest
 java -cp "$out:$classes:$stdlib" WirelessAutoStartTest
 java -cp "$out:$classes:$stdlib" WirelessKeepAwakeTest
 java -cp "$out:$classes:$stdlib" WirelessStandbyTest
+# The x86_64 libwhisper_jni.so from tools/whisper-build.sh; --add-opens reads a descriptor's
+# number as Android's ParcelFileDescriptor.getFd() gives it.
+status=0
+java -Xcheck:jni --add-opens java.base/java.io=ALL-UNNAMED -Djava.library.path=target/whisper/x86_64-linux-gnu \
+    -cp "$out:$classes:$stdlib" RecognizerTest "${WHISPER_MODEL:-}" > "$out/speech.txt" 2>&1 || status=$?
+if [ "$status" != 0 ] || grep -E 'WARNING in native method|FATAL ERROR' "$out/speech.txt"; then
+    cat "$out/speech.txt"
+    echo "jni-host-test: speech recognizer failed (exit $status)" >&2
+    exit 1
+fi
+grep '^jni-host-test:' "$out/speech.txt"
 status=0
 java -Xcheck:jni --add-opens java.base/sun.nio.ch=ALL-UNNAMED -Djava.library.path=target/release \
     -cp "$out:$classes:$stdlib" JniContractTest > "$out/output.txt" 2>&1 || status=$?

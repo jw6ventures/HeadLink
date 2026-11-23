@@ -46,7 +46,7 @@ object DropFolder {
     /** The granted folder, or null. */
     fun folder(context: Context): Uri? =
         context.contentResolver.persistedUriPermissions
-            .firstOrNull { ObfRules.isDropGrant(it.isReadPermission, it.isWritePermission) }
+            .firstOrNull { ObfRules.isDropGrant(it.isReadPermission, it.isWritePermission, DocumentsContract.isTreeUri(it.uri)) }
             ?.uri
 
     /** A readable name for the folder: the provider's own path, such as `primary:Download/HeadLink`. */
@@ -69,9 +69,9 @@ object DropFolder {
         val resolver = context.contentResolver
         val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
         val grants = resolver.persistedUriPermissions
-        if (grants.any { it.uri == tree && ObfRules.isMapsGrant(it.isReadPermission, it.isWritePermission) }) return false
+        if (grants.any { it.uri == tree && ObfRules.isMapsGrant(it.isReadPermission, it.isWritePermission, DocumentsContract.isTreeUri(it.uri)) }) return false
         grants
-            .filter { it.uri != tree && ObfRules.isDropGrant(it.isReadPermission, it.isWritePermission) }
+            .filter { it.uri != tree && ObfRules.isDropGrant(it.isReadPermission, it.isWritePermission, DocumentsContract.isTreeUri(it.uri)) }
             .forEach { resolver.releasePersistableUriPermission(it.uri, flags) }
         resolver.takePersistableUriPermission(tree, flags)
         SessionController.note("drop folder set to ${describe(tree)}")

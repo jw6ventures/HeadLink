@@ -1,0 +1,2 @@
+• HeadLink remembers where your car was when the drive ended. Walk to car on the Home screen opens OsmAnd with walking directions back to it.
+• Exit numbers and sign text are shown and spoken when leaving the highway.

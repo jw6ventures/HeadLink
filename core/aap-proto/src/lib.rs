@@ -42,6 +42,10 @@ pub mod ids {
     pub const SHUTDOWN_REQUEST: u16 = 0x000f;
     pub const SHUTDOWN_RESPONSE: u16 = 0x0010;
     pub const CHANNEL_CLOSE_NOTIFICATION: u16 = 0x0009;
+    /// A voice session start or stop. Android Auto's control-channel id for it; which side
+    /// sends it on a given head unit is what the report's `voice_session_requests` line is
+    /// there to find out (Ford SYNC 4.0's steering-wheel voice button is the question).
+    pub const VOICE_SESSION_REQUEST: u16 = 0x0011;
     /// Audio focus, on the **control channel** rather than the audio AV channel (P5.3).
     /// Audio focus is independent of video focus, which is `av::VIDEO_FOCUS_REQUEST` on
     /// the video channel.

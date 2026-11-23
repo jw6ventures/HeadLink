@@ -57,6 +57,13 @@ class MediaControl(
          * transport and Ford's limit is unknown (P5.1).
          */
         art: android.graphics.Bitmap?,
+        /**
+         * Where in the track playback is, in milliseconds, or -1 with no session. For the
+         * media pane's progress bar; the wire carries its own whole-second copy.
+         */
+        positionMs: Long,
+        /** The track's length in milliseconds, or -1 when the player does not give one. */
+        durationMs: Long,
     ) -> Unit,
 ) {
     private val audio: AudioManager? = context.getSystemService(AudioManager::class.java)
@@ -223,7 +230,9 @@ class MediaControl(
                 else -> NativeBridge.PLAYBACK_UNKNOWN
             }
         }
-        val position = if (state == null) 0 else (positionMs(state) / 1_000L).toInt()
+        val positionNow = if (state == null) -1L else positionMs(state).coerceAtLeast(0L)
+        val position = if (positionNow < 0) 0 else (positionNow / 1_000L).toInt()
+        val durationMs = metadata?.getLong(MediaMetadata.METADATA_KEY_DURATION)?.takeIf { it > 0L } ?: -1L
         val source = controller?.let { label(it.packageName) } ?: ""
         val title = metadata?.getString(MediaMetadata.METADATA_KEY_TITLE) ?: ""
         val artist = metadata?.getString(MediaMetadata.METADATA_KEY_ARTIST) ?: ""
@@ -245,7 +254,7 @@ class MediaControl(
             lastSource = source.ifEmpty { "-" }
             // Only what actually went to the session reaches the screen, so the projected
             // picture cannot claim a track the head unit was never told about.
-            onNowPlaying(access, stateName, source, title, artist, artFor(metadata, title, artist))
+            onNowPlaying(access, stateName, source, title, artist, artFor(metadata, title, artist), positionNow, durationMs)
         }
     }
 
