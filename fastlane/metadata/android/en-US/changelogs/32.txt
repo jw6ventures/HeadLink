@@ -1,0 +1,1 @@
+A route search that runs out of memory now fails that route instead of closing the app. The phone's route preview now credits OpenStreetMap. The connection ends cleanly if the head unit stops reading what the phone sends.
