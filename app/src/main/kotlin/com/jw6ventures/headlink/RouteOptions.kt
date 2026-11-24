@@ -7,12 +7,13 @@ import kotlin.math.roundToInt
  * Pure, so [OsmAndRouter], [PaceTracker] and the host tests need nothing saved; where they
  * are saved is `AppSettings`' business.
  *
- * **Roads.** Each switch becomes one of OsmAnd's car-profile parameters
- * ([OsmAndRouter.profileParameters]). Avoiding highways or tolls makes those roads much
- * more costly, not banned, so a destination that can only be reached that way is still
- * reached. Avoiding unpaved roads is a ban: OsmAnd's profile closes tracks and unpaved
- * surfaces outright, so a destination reached only over one gets no route
- * (docs/navigation.md, "Route preferences").
+ * **Roads.** Avoiding highways, tolls or unpaved roads becomes one of OsmAnd's car-profile
+ * parameters ([OsmAndRouter.profileParameters]). Avoiding highways or tolls makes those
+ * roads much more costly, not banned, so a destination that can only be reached that way
+ * is still reached. Avoiding unpaved roads is a ban: OsmAnd's profile closes tracks and
+ * unpaved surfaces outright, so a destination reached only over one gets no route
+ * (docs/navigation.md, "Route preferences"). Going round towns and allowing tracks have no
+ * counterpart in the profile, and [OsmAndRouter] applies them itself.
  *
  * **Time.** The router drives no faster than [topSpeedKmh] anywhere a road has no lower
  * limit. [etaPercent] then scales every time the route carries, for whatever the speed
@@ -23,9 +24,16 @@ data class RouteOptions(
     val avoidHighways: Boolean = false,
     val avoidTolls: Boolean = false,
     val avoidUnpaved: Boolean = false,
-    /** Go round cities and big towns where it can. OsmAnd's router does not yet apply it. */
+    /**
+     * Go round cities and towns on the way: every metre inside one's circle costs extra
+     * time ([OsmAndRouter]'s towns), so the route goes round them even at much more
+     * distance and time. The towns the trip starts and ends in are not gone round.
+     */
     val bypassTowns: Boolean = false,
-    /** Also route over tracks and roads of unknown class. OsmAnd's router does not yet apply it. */
+    /**
+     * Also route over farm and forest tracks and roads of unknown class (`highway=track`,
+     * `highway=road`), as OsmAnd's car profile itself does. Off, neither is used at all.
+     */
     val allowTracks: Boolean = false,
     /** The fastest the router may assume on roads with no lower limit, km/h: one of [TOP_SPEEDS_KMH]. */
     val topSpeedKmh: Int = DEFAULT_TOP_SPEED_KMH,

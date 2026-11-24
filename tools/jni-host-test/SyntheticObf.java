@@ -1,5 +1,6 @@
-// A synthetic OsmAnd .obf file with only a routing section, built from the vendored OBF.proto
-// and OsmAnd's BinaryMapRouteReaderAdapter, for OsmAndRoutingTest and ObfMapTilesTest.
+// A synthetic OsmAnd .obf file with a routing section, built from the vendored OBF.proto
+// and OsmAnd's BinaryMapRouteReaderAdapter, for OsmAndRoutingTest and ObfMapTilesTest; and
+// the same file with, before it, an address section whose one city record will not decode.
 //
 // Rules numbered in order, a root box whose own data block holds the roads, a child box
 // elsewhere whose shiftToData is nonsense (following it would fail, so a query near the roads
@@ -9,6 +10,10 @@
 // and Temple) with no name, a primary road across the ramp's end with a name and a ref
 // (Main Street, FM 1825), and an on-ramp from that road back onto the motorway with a blank
 // name, stored from the motorway end (destination:backward Dallas, destination:forward Nowhere).
+// Past the primary road's east end, a track straight on east to a corner, the only short way
+// there: the other is an unclassified loop 2.8 km north, across and back. And 5 km south of
+// the motorway, in a root box and data block of its own, a short residential road no other
+// road joins.
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -22,7 +27,7 @@ final class SyntheticObf {
 
     // Rules, numbered from 1 in file order.
     private static final int MOTORWAY = 1, LINK = 2, JUNCTION = 3, REF = 4, NAME = 5, DEST = 6, DEST_REF = 7, PRIMARY = 8,
-        DEST_FWD = 9, DEST_BWD = 10;
+        DEST_FWD = 9, DEST_BWD = 10, TRACK = 11, UNCLASSIFIED = 12, RESIDENTIAL = 13;
 
     static double[][] motorway() {
         double[][] p = new double[11][];
@@ -46,10 +51,51 @@ final class SyntheticObf {
         return new double[][] {{LAT + 0.010, LON}, {LAT + 0.0095, LON + 0.0005}, {LAT + 0.0085, LON + 0.004}, {LAT + 0.0075, LON + 0.008}};
     }
 
+    /** The track: from the primary road's east end, 770 m east to the corner. */
+    static double[][] track() {
+        return new double[][] {{LAT + 0.0075, LON + 0.012}, {LAT + 0.0075, LON + 0.016}, {LAT + 0.0075, LON + 0.020}};
+    }
+
+    /** The long way to the track's corner: north, east and back south, 6.3 km. */
+    static double[][] loop() {
+        return new double[][] {{LAT + 0.0075, LON + 0.012}, {LAT + 0.0325, LON + 0.012}, {LAT + 0.0325, LON + 0.020},
+            {LAT + 0.0075, LON + 0.020}};
+    }
+
+    /** The island: 290 m of residential road 5 km south of the motorway, joined to nothing. */
+    static double[][] island() {
+        return new double[][] {{LAT - 0.045, LON}, {LAT - 0.045, LON + 0.003}};
+    }
+
     /** The whole file. */
     static byte[] syntheticObf() throws IOException {
+        return file(null);
+    }
+
+    /**
+     * The whole file with an address section ahead of the routing one, holding one block of
+     * cities and towns whose one record, a town, carries a field of wire type 7, which no
+     * protobuf reader can skip. Ahead, so every route read lies past the bad record.
+     */
+    static byte[] syntheticObfWithBrokenTowns() throws IOException {
+        ByteArrayOutputStream city = new ByteArrayOutputStream();
+        tag(city, 1, 0); varint(city, 1);                      // CityIndex.city_type: town
+        tag(city, 9, 7); varint(city, 0);                      // no such wire type
+        ByteArrayOutputStream cities = new ByteArrayOutputStream();
+        tag(cities, 2, 0); varint(cities, 1);                  // CitiesIndex.type: cities and towns
+        message(cities, 5, city.toByteArray());
+        ByteArrayOutputStream address = new ByteArrayOutputStream();
+        string(address, 1, "Synthetic");
+        tag(address, 6, 6); be4(address, cities.size()); address.write(cities.toByteArray(), 0, cities.size());
+        return file(address.toByteArray());
+    }
+
+    private static byte[] file(byte[] address) throws IOException {
         ByteArrayOutputStream f = new ByteArrayOutputStream();
         tag(f, 1, 0); varint(f, 2);
+        if (address != null) {
+            tag(f, 7, 6); be4(f, address.length); f.write(address, 0, address.length);
+        }
         byte[] routing = routingSection();
         tag(f, 9, 6); be4(f, routing.length); f.write(routing, 0, routing.length);
         tag(f, 32, 0); varint(f, 2);
@@ -72,21 +118,44 @@ final class SyntheticObf {
         rule(head, "highway", "primary");
         rule(head, "destination:forward", "");
         rule(head, "destination:backward", "");
+        rule(head, "highway", "track");
+        rule(head, "highway", "unclassified");
+        rule(head, "highway", "residential");
 
-        long left = ObfTiles.INSTANCE.x31(LON - 0.01), right = ObfTiles.INSTANCE.x31(LON + 0.02);
-        long top = ObfTiles.INSTANCE.y31(LAT + 0.02), bottom = ObfTiles.INSTANCE.y31(LAT - 0.01);
+        long left = ObfTiles.INSTANCE.x31(LON - 0.01), right = ObfTiles.INSTANCE.x31(LON + 0.03);
+        long top = ObfTiles.INSTANCE.y31(LAT + 0.04), bottom = ObfTiles.INSTANCE.y31(LAT - 0.01);
+        // The island has a root box and a data block of its own, so a search near it loads
+        // only its road: OsmAnd snaps a point to any road in the blocks it loads.
+        long islandLeft = ObfTiles.INSTANCE.x31(LON - 0.001), islandRight = ObfTiles.INSTANCE.x31(LON + 0.004);
+        long islandTop = ObfTiles.INSTANCE.y31(LAT - 0.044), islandBottom = ObfTiles.INSTANCE.y31(LAT - 0.046);
         byte[] block = block(left, top);
-        // Two passes: the root box's shiftToData is fixed-width, so its length does not move.
-        byte[] root = rootBox(left, right, top, bottom, 0);
+        ByteArrayOutputStream island = new ByteArrayOutputStream();
+        message(island, 6, road(islandLeft, islandTop, island(), new int[] {RESIDENTIAL}, new int[0][], new int[0][], new int[0][], 7));
+        byte[] islandBlock = island.toByteArray();
+        // Two passes: a root box's shiftToData is fixed-width, so its length does not move.
+        byte[] root = rootBox(left, right, top, bottom, 0, true);
+        byte[] islandRoot = rootBox(islandLeft, islandRight, islandTop, islandBottom, 0, false);
         int rootBody = head.size() + 1 + 4;                    // tag(3, 6), 4-byte length
-        int blockAt = rootBody + root.length + 1;              // tag(5, 2), then the block's length varint
-        root = rootBox(left, right, top, bottom, blockAt - rootBody);
+        int islandRootBody = rootBody + root.length + 1 + 4;
+        int blockAt = islandRootBody + islandRoot.length + 1;  // tag(5, 2), then the block's length varint
+        int islandBlockAt = blockAt + varintSize(block.length) + block.length + 1;
+        root = rootBox(left, right, top, bottom, blockAt - rootBody, true);
+        islandRoot = rootBox(islandLeft, islandRight, islandTop, islandBottom, islandBlockAt - islandRootBody, false);
         ByteArrayOutputStream s = new ByteArrayOutputStream();
         s.write(head.toByteArray(), 0, head.size());
         tag(s, 3, 6); be4(s, root.length); s.write(root, 0, root.length);
+        tag(s, 3, 6); be4(s, islandRoot.length); s.write(islandRoot, 0, islandRoot.length);
         if (s.size() + 1 != blockAt) throw new AssertionError("block layout moved");
         message(s, 5, block);
+        if (s.size() + 1 != islandBlockAt) throw new AssertionError("island block layout moved");
+        message(s, 5, islandBlock);
         return s.toByteArray();
+    }
+
+    private static int varintSize(long v) {
+        int n = 1;
+        while ((v >>>= 7) != 0) n++;
+        return n;
     }
 
     private static void rule(ByteArrayOutputStream b, String tag, String value) throws IOException {
@@ -95,11 +164,12 @@ final class SyntheticObf {
         message(b, 2, r.toByteArray());
     }
 
-    private static byte[] rootBox(long left, long right, long top, long bottom, int shift) throws IOException {
+    private static byte[] rootBox(long left, long right, long top, long bottom, int shift, boolean nonsenseChild) throws IOException {
         ByteArrayOutputStream b = new ByteArrayOutputStream();
         tag(b, 1, 0); varint(b, zig((int) left)); tag(b, 2, 0); varint(b, zig((int) right));
         tag(b, 3, 0); varint(b, zig((int) top)); tag(b, 4, 0); varint(b, zig((int) bottom));
         tag(b, 5, 5); be4(b, shift);
+        if (!nonsenseChild) return b.toByteArray();
         // A child a degree east, with nonsense for its data: a query here never goes there.
         ByteArrayOutputStream c = new ByteArrayOutputStream();
         int dx = (int) (ObfTiles.INSTANCE.x31(LON + 1.0) - left);
@@ -121,6 +191,8 @@ final class SyntheticObf {
             new int[0][], 3));
         message(b, 6, road(left, top, onRampStored(), new int[] {LINK}, new int[][] {{DEST_BWD, 4}, {DEST_FWD, 5}, {NAME, 8}},
             new int[0][], new int[0][], 4));
+        message(b, 6, road(left, top, track(), new int[] {TRACK}, new int[0][], new int[0][], new int[0][], 5));
+        message(b, 6, road(left, top, loop(), new int[] {UNCLASSIFIED}, new int[0][], new int[0][], new int[0][], 6));
         ByteArrayOutputStream table = new ByteArrayOutputStream();
         for (String v : STRINGS) string(table, 1, v);
         message(b, 8, table.toByteArray());
