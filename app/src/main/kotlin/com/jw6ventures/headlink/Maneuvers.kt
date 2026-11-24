@@ -1,6 +1,5 @@
 package com.jw6ventures.headlink
 
-import btools.router.VoiceHintReader as H
 
 /**
  * One maneuver as the cluster is told it: a raw `ManeuverType` value, the roundabout exit
@@ -58,22 +57,22 @@ object Maneuvers {
 
     /** The maneuver BRouter's [command] and [exit] describe, or null when it is not one. */
     fun of(command: Int, exit: Int): Maneuver? = when (command) {
-        H.CONTINUE -> Maneuver(STRAIGHT, 0, "Continue straight")
-        H.TURN_LEFT -> Maneuver(TURN_NORMAL_LEFT, 0, "Turn left")
-        H.TURN_SLIGHT_LEFT -> Maneuver(TURN_SLIGHT_LEFT, 0, "Turn slightly left")
-        H.TURN_SHARP_LEFT -> Maneuver(TURN_SHARP_LEFT, 0, "Turn sharp left")
-        H.TURN_RIGHT -> Maneuver(TURN_NORMAL_RIGHT, 0, "Turn right")
-        H.TURN_SLIGHT_RIGHT -> Maneuver(TURN_SLIGHT_RIGHT, 0, "Turn slightly right")
-        H.TURN_SHARP_RIGHT -> Maneuver(TURN_SHARP_RIGHT, 0, "Turn sharp right")
-        H.KEEP_LEFT -> Maneuver(KEEP_LEFT, 0, "Keep left")
-        H.KEEP_RIGHT -> Maneuver(KEEP_RIGHT, 0, "Keep right")
-        H.U_TURN_LEFT, H.U_TURN_180 -> Maneuver(U_TURN_LEFT, 0, "Make a U-turn")
-        H.U_TURN_RIGHT -> Maneuver(U_TURN_RIGHT, 0, "Make a U-turn")
-        H.EXIT_LEFT -> Maneuver(OFF_RAMP_SLIGHT_LEFT, 0, "Take the exit on the left")
-        H.EXIT_RIGHT -> Maneuver(OFF_RAMP_SLIGHT_RIGHT, 0, "Take the exit on the right")
-        H.ROUNDABOUT -> roundabout(ROUNDABOUT_ENTER_AND_EXIT_CCW, exit)
-        H.ROUNDABOUT_LEFT -> roundabout(ROUNDABOUT_ENTER_AND_EXIT_CW, -exit)
-        H.END -> Maneuver(DESTINATION, 0, "Arrive at the destination")
+        TurnCommand.CONTINUE -> Maneuver(STRAIGHT, 0, "Continue straight")
+        TurnCommand.TURN_LEFT -> Maneuver(TURN_NORMAL_LEFT, 0, "Turn left")
+        TurnCommand.TURN_SLIGHT_LEFT -> Maneuver(TURN_SLIGHT_LEFT, 0, "Turn slightly left")
+        TurnCommand.TURN_SHARP_LEFT -> Maneuver(TURN_SHARP_LEFT, 0, "Turn sharp left")
+        TurnCommand.TURN_RIGHT -> Maneuver(TURN_NORMAL_RIGHT, 0, "Turn right")
+        TurnCommand.TURN_SLIGHT_RIGHT -> Maneuver(TURN_SLIGHT_RIGHT, 0, "Turn slightly right")
+        TurnCommand.TURN_SHARP_RIGHT -> Maneuver(TURN_SHARP_RIGHT, 0, "Turn sharp right")
+        TurnCommand.KEEP_LEFT -> Maneuver(KEEP_LEFT, 0, "Keep left")
+        TurnCommand.KEEP_RIGHT -> Maneuver(KEEP_RIGHT, 0, "Keep right")
+        TurnCommand.U_TURN_LEFT, TurnCommand.U_TURN_180 -> Maneuver(U_TURN_LEFT, 0, "Make a U-turn")
+        TurnCommand.U_TURN_RIGHT -> Maneuver(U_TURN_RIGHT, 0, "Make a U-turn")
+        TurnCommand.EXIT_LEFT -> Maneuver(OFF_RAMP_SLIGHT_LEFT, 0, "Take the exit on the left")
+        TurnCommand.EXIT_RIGHT -> Maneuver(OFF_RAMP_SLIGHT_RIGHT, 0, "Take the exit on the right")
+        TurnCommand.ROUNDABOUT -> roundabout(ROUNDABOUT_ENTER_AND_EXIT_CCW, exit)
+        TurnCommand.ROUNDABOUT_LEFT -> roundabout(ROUNDABOUT_ENTER_AND_EXIT_CW, -exit)
+        TurnCommand.END -> Maneuver(DESTINATION, 0, "Arrive at the destination")
         else -> null
     }
 

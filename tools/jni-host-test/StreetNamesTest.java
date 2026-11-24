@@ -5,7 +5,6 @@
 // With a directory holding W75_N40.rd5 and a Mapsforge file covering Lexington to Boston
 // as the two arguments, it also names a real cross-town route through VTM's own reader;
 // without them those checks are skipped and the line says so.
-import btools.router.VoiceHintReader;
 import java.io.File;
 import java.nio.file.Files;
 import java.time.ZoneId;
@@ -17,6 +16,7 @@ import com.jw6ventures.headlink.FollowResult;
 import com.jw6ventures.headlink.FollowState;
 import com.jw6ventures.headlink.Maneuver;
 import com.jw6ventures.headlink.Maneuvers;
+import com.jw6ventures.headlink.TurnCommand;
 import com.jw6ventures.headlink.NamedWay;
 import com.jw6ventures.headlink.Route;
 import com.jw6ventures.headlink.RouteFollower;
@@ -89,7 +89,7 @@ public final class StreetNamesTest {
             lon[6 + i] = p[1];
             seconds[6 + i] = (6 + i) * 10f;
         }
-        return new Route(lat, lon, 1200, 120, new int[] {6}, new int[1], new int[] {VoiceHintReader.TURN_LEFT}, seconds);
+        return new Route(lat, lon, 1200, 120, new int[] {6}, new int[1], new int[] {TurnCommand.TURN_LEFT}, seconds);
     }
 
     /** A straight way from [a] to [b]. */
@@ -134,16 +134,16 @@ public final class StreetNamesTest {
 
     private static void anInstructionNamesTheRoadItTurnsOnto() {
         Maneuvers m = Maneuvers.INSTANCE;
-        Maneuver right = m.of(VoiceHintReader.TURN_RIGHT, 0);
+        Maneuver right = m.of(TurnCommand.TURN_RIGHT, 0);
         check("Turn right onto Main Street".equals(m.instruction(right, "Main Street", "Elm Avenue")), "onto the new road");
         check("Turn right".equals(m.instruction(right, null, "Elm Avenue")), "no name, no claim");
-        check("Keep left to stay on I 95".equals(m.instruction(m.of(VoiceHintReader.KEEP_LEFT, 0), "I 95", "I 95")),
+        check("Keep left to stay on I 95".equals(m.instruction(m.of(TurnCommand.KEEP_LEFT, 0), "I 95", "I 95")),
             "a road that keeps its name is stayed on");
-        check("Make a U-turn".equals(m.instruction(m.of(VoiceHintReader.U_TURN_180, 0), "Elm Avenue", "Elm Avenue")),
+        check("Make a U-turn".equals(m.instruction(m.of(TurnCommand.U_TURN_180, 0), "Elm Avenue", "Elm Avenue")),
             "a U-turn back along the same road says only that");
         check("At the roundabout, take exit 2 onto Quarry Lane".equals(
-            m.instruction(m.of(VoiceHintReader.ROUNDABOUT, 2), "Quarry Lane", null)), "a roundabout names its exit road");
-        check("Arrive at the destination".equals(m.instruction(m.of(VoiceHintReader.END, 0), "Main Street", "Main Street")),
+            m.instruction(m.of(TurnCommand.ROUNDABOUT, 2), "Quarry Lane", null)), "a roundabout names its exit road");
+        check("Arrive at the destination".equals(m.instruction(m.of(TurnCommand.END, 0), "Main Street", "Main Street")),
             "the destination turns onto nothing");
     }
 

@@ -6,7 +6,6 @@
 // With a directory holding W75_N40.rd5 as the first argument it also follows a real
 // cross-town route from end to end; without one those checks are skipped and the line says
 // so.
-import btools.router.VoiceHintReader;
 import java.io.File;
 import java.nio.file.Files;
 import java.util.ArrayList;
@@ -15,6 +14,7 @@ import com.jw6ventures.headlink.FollowResult;
 import com.jw6ventures.headlink.FollowState;
 import com.jw6ventures.headlink.Maneuver;
 import com.jw6ventures.headlink.Maneuvers;
+import com.jw6ventures.headlink.TurnCommand;
 import com.jw6ventures.headlink.Nogo;
 import com.jw6ventures.headlink.Route;
 import com.jw6ventures.headlink.RouteFollower;
@@ -51,21 +51,21 @@ public final class GuidanceTest {
 
     private static void commandsReadAsManeuvers() {
         int[][] table = {
-            {VoiceHintReader.CONTINUE, Maneuvers.STRAIGHT},
-            {VoiceHintReader.TURN_LEFT, Maneuvers.TURN_NORMAL_LEFT},
-            {VoiceHintReader.TURN_SLIGHT_LEFT, Maneuvers.TURN_SLIGHT_LEFT},
-            {VoiceHintReader.TURN_SHARP_LEFT, Maneuvers.TURN_SHARP_LEFT},
-            {VoiceHintReader.TURN_RIGHT, Maneuvers.TURN_NORMAL_RIGHT},
-            {VoiceHintReader.TURN_SLIGHT_RIGHT, Maneuvers.TURN_SLIGHT_RIGHT},
-            {VoiceHintReader.TURN_SHARP_RIGHT, Maneuvers.TURN_SHARP_RIGHT},
-            {VoiceHintReader.KEEP_LEFT, Maneuvers.KEEP_LEFT},
-            {VoiceHintReader.KEEP_RIGHT, Maneuvers.KEEP_RIGHT},
-            {VoiceHintReader.U_TURN_LEFT, Maneuvers.U_TURN_LEFT},
-            {VoiceHintReader.U_TURN_180, Maneuvers.U_TURN_LEFT},
-            {VoiceHintReader.U_TURN_RIGHT, Maneuvers.U_TURN_RIGHT},
-            {VoiceHintReader.EXIT_LEFT, Maneuvers.OFF_RAMP_SLIGHT_LEFT},
-            {VoiceHintReader.EXIT_RIGHT, Maneuvers.OFF_RAMP_SLIGHT_RIGHT},
-            {VoiceHintReader.END, Maneuvers.DESTINATION},
+            {TurnCommand.CONTINUE, Maneuvers.STRAIGHT},
+            {TurnCommand.TURN_LEFT, Maneuvers.TURN_NORMAL_LEFT},
+            {TurnCommand.TURN_SLIGHT_LEFT, Maneuvers.TURN_SLIGHT_LEFT},
+            {TurnCommand.TURN_SHARP_LEFT, Maneuvers.TURN_SHARP_LEFT},
+            {TurnCommand.TURN_RIGHT, Maneuvers.TURN_NORMAL_RIGHT},
+            {TurnCommand.TURN_SLIGHT_RIGHT, Maneuvers.TURN_SLIGHT_RIGHT},
+            {TurnCommand.TURN_SHARP_RIGHT, Maneuvers.TURN_SHARP_RIGHT},
+            {TurnCommand.KEEP_LEFT, Maneuvers.KEEP_LEFT},
+            {TurnCommand.KEEP_RIGHT, Maneuvers.KEEP_RIGHT},
+            {TurnCommand.U_TURN_LEFT, Maneuvers.U_TURN_LEFT},
+            {TurnCommand.U_TURN_180, Maneuvers.U_TURN_LEFT},
+            {TurnCommand.U_TURN_RIGHT, Maneuvers.U_TURN_RIGHT},
+            {TurnCommand.EXIT_LEFT, Maneuvers.OFF_RAMP_SLIGHT_LEFT},
+            {TurnCommand.EXIT_RIGHT, Maneuvers.OFF_RAMP_SLIGHT_RIGHT},
+            {TurnCommand.END, Maneuvers.DESTINATION},
         };
         for (int[] row : table) {
             Maneuver m = Maneuvers.INSTANCE.of(row[0], 0);
@@ -73,18 +73,18 @@ public final class GuidanceTest {
             check(!m.getInstruction().isEmpty(), "command " + row[0] + " has an instruction");
         }
         // BRouter's own numbering, pinned: a re-sync that renumbers fails here, not on a drive.
-        check(VoiceHintReader.TURN_LEFT == 2 && VoiceHintReader.TURN_RIGHT == 5 && VoiceHintReader.ROUNDABOUT == 13
-            && VoiceHintReader.END == 100, "BRouter's command numbers are the pinned ones");
+        check(TurnCommand.TURN_LEFT == 2 && TurnCommand.TURN_RIGHT == 5 && TurnCommand.ROUNDABOUT == 13
+            && TurnCommand.END == 100, "BRouter's command numbers are the pinned ones");
         // Right-hand traffic goes round counter-clockwise, and says which exit.
-        Maneuver r = Maneuvers.INSTANCE.of(VoiceHintReader.ROUNDABOUT, 3);
+        Maneuver r = Maneuvers.INSTANCE.of(TurnCommand.ROUNDABOUT, 3);
         check(r.getType() == Maneuvers.ROUNDABOUT_ENTER_AND_EXIT_CCW && r.getExit() == 3, "a roundabout, third exit");
         check(r.getInstruction().contains("exit 3"), "the exit is in the instruction");
-        Maneuver l = Maneuvers.INSTANCE.of(VoiceHintReader.ROUNDABOUT_LEFT, -2);
+        Maneuver l = Maneuvers.INSTANCE.of(TurnCommand.ROUNDABOUT_LEFT, -2);
         check(l.getType() == Maneuvers.ROUNDABOUT_ENTER_AND_EXIT_CW && l.getExit() == 2, "a left-traffic roundabout");
-        check(Maneuvers.INSTANCE.of(VoiceHintReader.ROUNDABOUT, 0).getExit() == 0, "no exit number, none claimed");
+        check(Maneuvers.INSTANCE.of(TurnCommand.ROUNDABOUT, 0).getExit() == 0, "no exit number, none claimed");
         // Not things to do.
-        check(Maneuvers.INSTANCE.of(VoiceHintReader.OFF_ROUTE, 0) == null, "off-route is not a maneuver");
-        check(Maneuvers.INSTANCE.of(VoiceHintReader.BEELINE, 0) == null, "a beeline is not a maneuver");
+        check(Maneuvers.INSTANCE.of(TurnCommand.OFF_ROUTE, 0) == null, "off-route is not a maneuver");
+        check(Maneuvers.INSTANCE.of(TurnCommand.BEELINE, 0) == null, "a beeline is not a maneuver");
         check(Maneuvers.INSTANCE.of(99, 0) == null, "an unknown command is not guessed at");
     }
 
@@ -125,7 +125,7 @@ public final class GuidanceTest {
     private static FollowResult at(RouteFollower f, double[] p, long ms) { return f.update(p[0], p[1], ms); }
 
     private static void aRouteIsFollowedFromJoiningToArrival() {
-        Route route = lShape(new int[] {VoiceHintReader.TURN_LEFT, VoiceHintReader.END});
+        Route route = lShape(new int[] {TurnCommand.TURN_LEFT, TurnCommand.END});
         RouteFollower f = new RouteFollower(route, 1);
         check(Math.abs(f.getTotalM() - 1200) < 2, "the route is 1200 m long: " + f.getTotalM());
         check(f.maneuverTypes().equals(List.of(Maneuvers.TURN_NORMAL_LEFT, Maneuvers.DESTINATION)), "left, then arrive");
@@ -176,7 +176,7 @@ public final class GuidanceTest {
     }
 
     private static void oneBadFixIsNotLeavingTheRoute() {
-        RouteFollower f = new RouteFollower(lShape(new int[] {VoiceHintReader.TURN_LEFT, VoiceHintReader.END}), 1);
+        RouteFollower f = new RouteFollower(lShape(new int[] {TurnCommand.TURN_LEFT, TurnCommand.END}), 1);
         at(f, east(100), 0);
         FollowResult r = at(f, off(east(110), 150, true), 1000);
         check(r.getState() == FollowState.ON_ROUTE, "one fix 150 m off is noise");
@@ -190,7 +190,7 @@ public final class GuidanceTest {
     }
 
     private static void leavingTheRouteTakesTimeAndFixesAndCanBeUndone() {
-        RouteFollower f = new RouteFollower(lShape(new int[] {VoiceHintReader.TURN_LEFT, VoiceHintReader.END}), 1);
+        RouteFollower f = new RouteFollower(lShape(new int[] {TurnCommand.TURN_LEFT, TurnCommand.END}), 1);
         at(f, east(200), 0);
         // Missed the turn: carries straight on east past the corner, a fix a second.
         FollowResult r = null;
@@ -208,7 +208,7 @@ public final class GuidanceTest {
         check(r.getOffsetM() > 100, "and says how far: " + r.getOffsetM());
 
         // Many fixes in one bad second are still one second.
-        RouteFollower g = new RouteFollower(lShape(new int[] {VoiceHintReader.TURN_LEFT, VoiceHintReader.END}), 1);
+        RouteFollower g = new RouteFollower(lShape(new int[] {TurnCommand.TURN_LEFT, TurnCommand.END}), 1);
         at(g, east(200), 0);
         for (int i = 0; i < 20; i++) r = at(g, off(east(300), 200, true), 1000 + i * 50L);
         check(r.getState() == FollowState.ON_ROUTE, "twenty fixes in a second are not four seconds");
@@ -220,13 +220,13 @@ public final class GuidanceTest {
 
     private static void aRouteAlwaysEndsAtADestination() {
         // An off-route hint is dropped, and a route with no END still ends at one.
-        RouteFollower f = new RouteFollower(lShape(new int[] {VoiceHintReader.OFF_ROUTE, VoiceHintReader.TURN_LEFT}), 1);
+        RouteFollower f = new RouteFollower(lShape(new int[] {TurnCommand.OFF_ROUTE, TurnCommand.TURN_LEFT}), 1);
         check(f.maneuverTypes().equals(List.of(Maneuvers.TURN_NORMAL_LEFT, Maneuvers.DESTINATION)),
             "off-route skipped and a destination added: " + f.maneuverTypes());
     }
 
     private static void stepIdentitiesNeverRepeatAcrossRoutes() {
-        Route route = lShape(new int[] {VoiceHintReader.TURN_LEFT, VoiceHintReader.END});
+        Route route = lShape(new int[] {TurnCommand.TURN_LEFT, TurnCommand.END});
         long a = at(new RouteFollower(route, 1), east(0), 0).getStep().getId();
         long b = at(new RouteFollower(route, 2), east(0), 0).getStep().getId();
         check(a != b && b >= 2 * RouteFollower.STEP_ID_STRIDE, "the same turn on a second route is a new step");
@@ -245,7 +245,7 @@ public final class GuidanceTest {
             check(commands.length == route.getManeuverIndices().length, "one command per maneuver");
             // BRouter's END is internal to its hint processing and never reaches a track, so
             // the destination is the follower's to add - once.
-            for (int c : commands) check(c != VoiceHintReader.END, "no END among BRouter's hints");
+            for (int c : commands) check(c != TurnCommand.END, "no END among BRouter's hints");
             float[] seconds = route.getPointSeconds();
             check(seconds.length == n && seconds[0] == 0f, "a time for every point, from zero");
             for (int i = 1; i < n; i++) check(seconds[i] >= seconds[i - 1], "time never runs backwards at point " + i);

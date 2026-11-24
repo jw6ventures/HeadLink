@@ -1,6 +1,5 @@
 package com.jw6ventures.headlink
 
-import btools.router.VoiceHintReader
 import net.osmand.binary.BinaryMapIndexReader
 import net.osmand.binary.RouteDataObject
 import net.osmand.data.LatLon
@@ -486,25 +485,25 @@ class OsmAndRouter(
         }
 
         /**
-         * OsmAnd's [turn] as the [VoiceHintReader] command the rest of the app reads. A keep
+         * OsmAnd's [turn] as the [TurnCommand] command the rest of the app reads. A keep
          * from a motorway or trunk onto its link is the exit it is, as BRouter calls it.
          * Null for a turn that is no maneuver: OsmAnd's off-route marker.
          */
         @JvmStatic
         fun command(turn: TurnType, before: RouteSegmentResult?, segment: RouteSegmentResult): Int? = when (turn.value) {
-            TurnType.C -> VoiceHintReader.CONTINUE
-            TurnType.TL -> VoiceHintReader.TURN_LEFT
-            TurnType.TSLL -> VoiceHintReader.TURN_SLIGHT_LEFT
-            TurnType.TSHL -> VoiceHintReader.TURN_SHARP_LEFT
-            TurnType.TR -> VoiceHintReader.TURN_RIGHT
-            TurnType.TSLR -> VoiceHintReader.TURN_SLIGHT_RIGHT
-            TurnType.TSHR -> VoiceHintReader.TURN_SHARP_RIGHT
-            TurnType.KL -> if (offRamp(before, segment)) VoiceHintReader.EXIT_LEFT else VoiceHintReader.KEEP_LEFT
-            TurnType.KR -> if (offRamp(before, segment)) VoiceHintReader.EXIT_RIGHT else VoiceHintReader.KEEP_RIGHT
-            TurnType.TU -> VoiceHintReader.U_TURN_180
-            TurnType.TRU -> VoiceHintReader.U_TURN_RIGHT
-            TurnType.RNDB -> VoiceHintReader.ROUNDABOUT
-            TurnType.RNLB -> VoiceHintReader.ROUNDABOUT_LEFT
+            TurnType.C -> TurnCommand.CONTINUE
+            TurnType.TL -> TurnCommand.TURN_LEFT
+            TurnType.TSLL -> TurnCommand.TURN_SLIGHT_LEFT
+            TurnType.TSHL -> TurnCommand.TURN_SHARP_LEFT
+            TurnType.TR -> TurnCommand.TURN_RIGHT
+            TurnType.TSLR -> TurnCommand.TURN_SLIGHT_RIGHT
+            TurnType.TSHR -> TurnCommand.TURN_SHARP_RIGHT
+            TurnType.KL -> if (offRamp(before, segment)) TurnCommand.EXIT_LEFT else TurnCommand.KEEP_LEFT
+            TurnType.KR -> if (offRamp(before, segment)) TurnCommand.EXIT_RIGHT else TurnCommand.KEEP_RIGHT
+            TurnType.TU -> TurnCommand.U_TURN_180
+            TurnType.TRU -> TurnCommand.U_TURN_RIGHT
+            TurnType.RNDB -> TurnCommand.ROUNDABOUT
+            TurnType.RNLB -> TurnCommand.ROUNDABOUT_LEFT
             else -> null
         }
 

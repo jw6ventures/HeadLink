@@ -6,7 +6,6 @@
 // the app draws from. Text widths are estimated at DashboardLayout.EM_PER_CHARACTER (a
 // generous 0.62 em a character), not measured by a real font: the frames are the check of
 // the drawing itself.
-import btools.router.VoiceHintReader;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.util.ArrayList;
@@ -24,6 +23,7 @@ import com.jw6ventures.headlink.LaterStep;
 import com.jw6ventures.headlink.Maneuver;
 import com.jw6ventures.headlink.ManeuverGlyph;
 import com.jw6ventures.headlink.Maneuvers;
+import com.jw6ventures.headlink.TurnCommand;
 import com.jw6ventures.headlink.MapCamera;
 import com.jw6ventures.headlink.MapControl;
 import com.jw6ventures.headlink.MapOrientation;
@@ -215,12 +215,12 @@ public final class DashboardTripTest {
 
     private static void everyManeuverHasAGlyphOnTheRightSide() {
         int[] commands = {
-            VoiceHintReader.CONTINUE, VoiceHintReader.TURN_LEFT, VoiceHintReader.TURN_SLIGHT_LEFT,
-            VoiceHintReader.TURN_SHARP_LEFT, VoiceHintReader.TURN_RIGHT, VoiceHintReader.TURN_SLIGHT_RIGHT,
-            VoiceHintReader.TURN_SHARP_RIGHT, VoiceHintReader.KEEP_LEFT, VoiceHintReader.KEEP_RIGHT,
-            VoiceHintReader.U_TURN_LEFT, VoiceHintReader.U_TURN_180, VoiceHintReader.U_TURN_RIGHT,
-            VoiceHintReader.EXIT_LEFT, VoiceHintReader.EXIT_RIGHT, VoiceHintReader.ROUNDABOUT,
-            VoiceHintReader.ROUNDABOUT_LEFT, VoiceHintReader.END,
+            TurnCommand.CONTINUE, TurnCommand.TURN_LEFT, TurnCommand.TURN_SLIGHT_LEFT,
+            TurnCommand.TURN_SHARP_LEFT, TurnCommand.TURN_RIGHT, TurnCommand.TURN_SLIGHT_RIGHT,
+            TurnCommand.TURN_SHARP_RIGHT, TurnCommand.KEEP_LEFT, TurnCommand.KEEP_RIGHT,
+            TurnCommand.U_TURN_LEFT, TurnCommand.U_TURN_180, TurnCommand.U_TURN_RIGHT,
+            TurnCommand.EXIT_LEFT, TurnCommand.EXIT_RIGHT, TurnCommand.ROUNDABOUT,
+            TurnCommand.ROUNDABOUT_LEFT, TurnCommand.END,
         };
         for (int command : commands) {
             Maneuver maneuver = Maneuvers.INSTANCE.of(command, 3);
@@ -256,8 +256,8 @@ public final class DashboardTripTest {
 
     private static UpcomingTurn guiding(String street, double metres, int seconds) {
         List<LaterStep> later = List.of(
-            new LaterStep(Maneuvers.INSTANCE.of(VoiceHintReader.TURN_LEFT, 0), 1300.0),
-            new LaterStep(Maneuvers.INSTANCE.of(VoiceHintReader.ROUNDABOUT, 2), 2600.0));
+            new LaterStep(Maneuvers.INSTANCE.of(TurnCommand.TURN_LEFT, 0), 1300.0),
+            new LaterStep(Maneuvers.INSTANCE.of(TurnCommand.ROUNDABOUT, 2), 2600.0));
         return new UpcomingTurn(street == null ? "Turn right" : "Turn right onto " + street, 480.0,
             Maneuvers.TURN_NORMAL_RIGHT, 0, street, metres, seconds, later);
     }

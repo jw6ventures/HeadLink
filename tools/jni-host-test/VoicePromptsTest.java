@@ -3,12 +3,12 @@
 // road names. Both are pure Kotlin, so these are the classes the app runs. Nothing here
 // is speech or the truck: the thresholds in docs/audio-and-speech.md ("Turn prompts") are checked against
 // themselves, and whether they are well placed is a drive's question.
-import btools.router.VoiceHintReader;
 import java.util.ArrayList;
 import java.util.List;
 import com.jw6ventures.headlink.LaterStep;
 import com.jw6ventures.headlink.Maneuver;
 import com.jw6ventures.headlink.Maneuvers;
+import com.jw6ventures.headlink.TurnCommand;
 import com.jw6ventures.headlink.NextStep;
 import com.jw6ventures.headlink.PromptDetail;
 import com.jw6ventures.headlink.PromptStage;
@@ -127,7 +127,7 @@ public final class VoicePromptsTest {
         for (int i = 0; i < numbers.length; i++) {
             check(SpokenText.INSTANCE.ordinal(numbers[i]).equals(ordinals[i]), numbers[i] + " is " + ordinals[i]);
         }
-        Maneuver r = Maneuvers.INSTANCE.of(VoiceHintReader.ROUNDABOUT, 2);
+        Maneuver r = Maneuvers.INSTANCE.of(TurnCommand.ROUNDABOUT, 2);
         check(r.getInstruction().equals("At the roundabout, take exit 2"), "the card still says exit 2");
         check(SpokenText.INSTANCE.maneuver(r).getInstruction().equals("At the roundabout, take the 2nd exit"),
             "the voice says the 2nd exit");
@@ -136,19 +136,19 @@ public final class VoicePromptsTest {
         VoicePrompt p = vp.onStep(step, MPH30, 0L);
         check(p != null && p.getText().equals("In 500 feet, at the roundabout, take the 2nd exit onto Oak Avenue"),
             "a roundabout prompt: " + text(p));
-        Maneuver through = Maneuvers.INSTANCE.of(VoiceHintReader.ROUNDABOUT, 0);
+        Maneuver through = Maneuvers.INSTANCE.of(TurnCommand.ROUNDABOUT, 0);
         check(SpokenText.INSTANCE.maneuver(through).getInstruction().equals("Go through the roundabout"),
             "no exit number, none spoken");
     }
 
     private static void theSpokenSentenceIsTheCardsSentence() {
-        Maneuver keep = Maneuvers.INSTANCE.of(VoiceHintReader.KEEP_LEFT, 0);
+        Maneuver keep = Maneuvers.INSTANCE.of(TurnCommand.KEEP_LEFT, 0);
         NextStep stays = step(1, 0, keep, "I 35", "I 35", 100, 5, new LaterStep[0]);
         check(stays.getInstruction().equals("Keep left to stay on I 35"), "the card's sentence");
         check(SpokenText.INSTANCE.instruction(stays, true).equals("Keep left to stay on Interstate 35"),
             "the same sentence, the road said");
         check(SpokenText.INSTANCE.instruction(stays, false).equals("Keep left"), "street names off");
-        Maneuver right = Maneuvers.INSTANCE.of(VoiceHintReader.TURN_RIGHT, 0);
+        Maneuver right = Maneuvers.INSTANCE.of(TurnCommand.TURN_RIGHT, 0);
         NextStep onto = step(1, 0, right, "FM 1826", "Main Street", 100, 5, new LaterStep[0]);
         check(SpokenText.INSTANCE.instruction(onto, true).equals("Turn right onto Farm to Market 1826"), "onto a road");
         check(SpokenText.INSTANCE.instruction(onto, false).equals("Turn right"), "onto a road, names off");
@@ -183,9 +183,9 @@ public final class VoicePromptsTest {
 
     private static void aCityLegAt30() {
         Leg[] legs = {
-            leg(1000, VoiceHintReader.TURN_RIGHT, "Main Street"),
-            leg(1300, VoiceHintReader.TURN_LEFT, "Oak Avenue"),
-            leg(1810, VoiceHintReader.END, null),
+            leg(1000, TurnCommand.TURN_RIGHT, "Main Street"),
+            leg(1300, TurnCommand.TURN_LEFT, "Oak Avenue"),
+            leg(1810, TurnCommand.END, null),
         };
         List<Heard> heard = drive(new VoicePrompts(), 1, legs, MPH30, true, 0);
         expect(heard, "city leg", new Object[][] {
@@ -205,9 +205,9 @@ public final class VoicePromptsTest {
 
     private static void aHighwayExitAt70() {
         Leg[] legs = {
-            leg(5000, VoiceHintReader.EXIT_RIGHT, "FM 1826"),
-            leg(5800, VoiceHintReader.TURN_LEFT, "Main Street"),
-            leg(8000, VoiceHintReader.END, null),
+            leg(5000, TurnCommand.EXIT_RIGHT, "FM 1826"),
+            leg(5800, TurnCommand.TURN_LEFT, "Main Street"),
+            leg(8000, TurnCommand.END, null),
         };
         double early = MPH70 * 50;
         double prepare = MPH70 * 15;
@@ -227,7 +227,7 @@ public final class VoicePromptsTest {
     }
 
     private static void noSpeedUsesTheStepsOwnPace() {
-        Leg[] legs = {leg(5000, VoiceHintReader.EXIT_RIGHT, "FM 1826"), leg(8000, VoiceHintReader.END, null)};
+        Leg[] legs = {leg(5000, TurnCommand.EXIT_RIGHT, "FM 1826"), leg(8000, TurnCommand.END, null)};
         List<Heard> heard = drive(new VoicePrompts(), 1, legs, MPH70, false, 0);
         double early = MPH70 * 50;
         check(heard.get(0).stage == PromptStage.EARLY && heard.get(0).metres <= early + MPH70 / 2 + 1 && heard.get(0).metres > early - MPH70 - 1,
@@ -237,9 +237,9 @@ public final class VoicePromptsTest {
 
     private static void twoTurns100mApart() {
         Leg[] legs = {
-            leg(1000, VoiceHintReader.TURN_LEFT, "A Street"),
-            leg(1100, VoiceHintReader.TURN_RIGHT, "B Street"),
-            leg(1800, VoiceHintReader.END, null),
+            leg(1000, TurnCommand.TURN_LEFT, "A Street"),
+            leg(1100, TurnCommand.TURN_RIGHT, "B Street"),
+            leg(1800, TurnCommand.END, null),
         };
         List<Heard> full = drive(new VoicePrompts(), 1, legs, MPH30, true, 0);
         check(stages(full).equals("early,prepare,at_turn,at_turn,prepare,arrival"), "Full: the second Prepare is chained away: " + stages(full));
@@ -259,9 +259,9 @@ public final class VoicePromptsTest {
 
     private static void keepRightBeforeTheExitInFull() {
         Leg[] legs = {
-            leg(3000, VoiceHintReader.KEEP_RIGHT, "I 35"),
-            leg(4200, VoiceHintReader.EXIT_RIGHT, "US 290 W"),
-            leg(9000, VoiceHintReader.END, null),
+            leg(3000, TurnCommand.KEEP_RIGHT, "I 35"),
+            leg(4200, TurnCommand.EXIT_RIGHT, "US 290 W"),
+            leg(9000, TurnCommand.END, null),
         };
         List<Heard> full = drive(new VoicePrompts(), 1, legs, MPH70, true, 0);
         Heard prep = find(full, 1, PromptStage.PREPARE);
@@ -276,7 +276,7 @@ public final class VoicePromptsTest {
     }
 
     private static void aRouteJoinedInsidePrepare() {
-        Leg[] legs = {leg(1000, VoiceHintReader.TURN_RIGHT, "Main Street"), leg(1500, VoiceHintReader.END, null)};
+        Leg[] legs = {leg(1000, TurnCommand.TURN_RIGHT, "Main Street"), leg(1500, TurnCommand.END, null)};
         List<Heard> inside = drive(new VoicePrompts(), 1, legs, MPH30, true, 1000 - 120);
         check(inside.get(0).stage == PromptStage.PREPARE && inside.get(0).metres == 120.0, "first seen inside Prepare: Prepare at once");
         check(inside.get(1).stage == PromptStage.AT_TURN, "then At the turn, no Early");
@@ -288,10 +288,10 @@ public final class VoicePromptsTest {
     }
 
     private static void straightIsSilentUnlessTheNameChanges() {
-        Leg[] same = {leg(1000, VoiceHintReader.CONTINUE, START), leg(1500, VoiceHintReader.END, null)};
+        Leg[] same = {leg(1000, TurnCommand.CONTINUE, START), leg(1500, TurnCommand.END, null)};
         List<Heard> silent = drive(new VoicePrompts(), 1, same, MPH30, true, 0);
         check(stages(silent).equals("prepare,arrival") && silent.get(0).stepIndex == 1, "a straight on the same road says nothing");
-        Leg[] renamed = {leg(1000, VoiceHintReader.CONTINUE, "Lamar Boulevard"), leg(1500, VoiceHintReader.END, null)};
+        Leg[] renamed = {leg(1000, TurnCommand.CONTINUE, "Lamar Boulevard"), leg(1500, TurnCommand.END, null)};
         List<Heard> heard = drive(new VoicePrompts(), 1, renamed, MPH30, true, 0);
         check(heard.get(0).stage == PromptStage.PREPARE && heard.get(0).stepIndex == 0
             && heard.get(0).text.equals("In 600 feet, continue straight onto Lamar Boulevard"), "a name change, at Prepare only");
@@ -302,8 +302,8 @@ public final class VoicePromptsTest {
     }
 
     private static void aRerouteLandingOnTheSameTurn() {
-        Maneuver right = Maneuvers.INSTANCE.of(VoiceHintReader.TURN_RIGHT, 0);
-        Maneuver left = Maneuvers.INSTANCE.of(VoiceHintReader.TURN_LEFT, 0);
+        Maneuver right = Maneuvers.INSTANCE.of(TurnCommand.TURN_RIGHT, 0);
+        Maneuver left = Maneuvers.INSTANCE.of(TurnCommand.TURN_LEFT, 0);
         for (int variant = 0; variant < 3; variant++) {
             VoicePrompts vp = new VoicePrompts();
             long t = 0;
@@ -351,7 +351,7 @@ public final class VoicePromptsTest {
     }
 
     private static void arrival() {
-        Leg[] legs = {leg(1000, VoiceHintReader.END, null)};
+        Leg[] legs = {leg(1000, TurnCommand.END, null)};
         VoicePrompts vp = new VoicePrompts();
         List<Heard> heard = drive(vp, 1, legs, MPH30, true, 0);
         check(stages(heard).equals("prepare,arrival"), "a destination: Prepare, then arrival: " + stages(heard));
@@ -366,7 +366,7 @@ public final class VoicePromptsTest {
     }
 
     private static void stageToggles() {
-        Leg[] legs = {leg(2000, VoiceHintReader.TURN_RIGHT, "Main Street"), leg(3000, VoiceHintReader.END, null)};
+        Leg[] legs = {leg(2000, TurnCommand.TURN_RIGHT, "Main Street"), leg(3000, TurnCommand.END, null)};
         check(stages(drive(new VoicePrompts(settings(true, false, true, true, PromptTiming.NORMAL, PromptDetail.FULL),
             SpeedUnit.MPH), 1, legs, MPH30, true, 0)).equals("prepare,at_turn,prepare,arrival"), "Early off");
         check(stages(drive(new VoicePrompts(settings(true, true, false, true, PromptTiming.NORMAL, PromptDetail.FULL),
@@ -378,7 +378,7 @@ public final class VoicePromptsTest {
     }
 
     private static void timingFactors() {
-        Leg[] legs = {leg(5000, VoiceHintReader.EXIT_RIGHT, "FM 1826"), leg(9000, VoiceHintReader.END, null)};
+        Leg[] legs = {leg(5000, TurnCommand.EXIT_RIGHT, "FM 1826"), leg(9000, TurnCommand.END, null)};
         PromptTiming[] timings = {PromptTiming.EARLIER, PromptTiming.NORMAL, PromptTiming.LATER};
         double[] factors = {1.3, 1.0, 0.75};
         for (int i = 0; i < 3; i++) {
@@ -399,7 +399,7 @@ public final class VoicePromptsTest {
     }
 
     private static void turningGuidanceOnConfirms() {
-        Maneuver right = Maneuvers.INSTANCE.of(VoiceHintReader.TURN_RIGHT, 0);
+        Maneuver right = Maneuvers.INSTANCE.of(TurnCommand.TURN_RIGHT, 0);
         VoicePrompts vp = new VoicePrompts(settings(false, true, true, true, PromptTiming.NORMAL, PromptDetail.FULL), SpeedUnit.MPH);
         long t = 0;
         double m = 1000;

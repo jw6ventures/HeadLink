@@ -116,7 +116,7 @@ class RouteFollower(val route: Route, private val generation: Long) {
         totalM = if (count > 0) along[count - 1] else 0.0
         val found = route.maneuverIndices.indices.mapNotNull { k ->
             val index = route.maneuverIndices[k]
-            val command = route.commands.getOrElse(k) { btools.router.VoiceHintReader.CONTINUE }
+            val command = route.commands.getOrElse(k) { TurnCommand.CONTINUE }
             Maneuvers.of(command, route.exitNumbers.getOrElse(k) { 0 })?.let { Triple(index.coerceIn(0, count - 1), it, route.exitSign(k)) }
         }
         signs = found.map { it.third } + null
@@ -128,7 +128,7 @@ class RouteFollower(val route: Route, private val generation: Long) {
             if (pairs.lastOrNull()?.second?.type == Maneuvers.DESTINATION) {
                 pairs
             } else {
-                pairs + ((count - 1) to Maneuvers.of(btools.router.VoiceHintReader.END, 0)!!)
+                pairs + ((count - 1) to Maneuvers.of(TurnCommand.END, 0)!!)
             }
         }
     }

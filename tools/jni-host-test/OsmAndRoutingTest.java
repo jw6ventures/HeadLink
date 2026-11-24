@@ -29,7 +29,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
-import btools.router.VoiceHintReader;
 import com.jw6ventures.headlink.ExitSign;
 import com.jw6ventures.headlink.Nogo;
 import com.jw6ventures.headlink.ObfReaderFailures;
@@ -41,6 +40,7 @@ import com.jw6ventures.headlink.RouteOptions;
 import com.jw6ventures.headlink.RouteRequest;
 import com.jw6ventures.headlink.RoutingException;
 import com.jw6ventures.headlink.SearchHandle;
+import com.jw6ventures.headlink.TurnCommand;
 
 public final class OsmAndRoutingTest {
     private static int passed;
@@ -108,7 +108,7 @@ public final class OsmAndRoutingTest {
         check(near(route.getLatitudes()[last], route.getLongitudes()[last], TO_LAT, TO_LON, 30),
             "and ends there too");
         check(route.getManeuverIndices().length == 1, "one maneuver, the exit: " + route.getManeuverIndices().length);
-        check(route.getCommands()[0] == VoiceHintReader.EXIT_RIGHT, "a keep right off the motorway onto its link is the exit");
+        check(route.getCommands()[0] == TurnCommand.EXIT_RIGHT, "a keep right off the motorway onto its link is the exit");
         int at = route.getManeuverIndices()[0];
         check(near(route.getLatitudes()[at], route.getLongitudes()[at], LAT + 0.005, LON, 5), "at the junction");
         ExitSign sign = route.exitSign(0);

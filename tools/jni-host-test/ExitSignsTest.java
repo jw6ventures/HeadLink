@@ -19,12 +19,12 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import btools.router.VoiceHintReader;
 import com.jw6ventures.headlink.ExitSign;
 import com.jw6ventures.headlink.ExitSigns;
 import com.jw6ventures.headlink.GeoBox;
 import com.jw6ventures.headlink.Maneuver;
 import com.jw6ventures.headlink.Maneuvers;
+import com.jw6ventures.headlink.TurnCommand;
 import com.jw6ventures.headlink.NextStep;
 import com.jw6ventures.headlink.ObfFile;
 import com.jw6ventures.headlink.ObfRoadWay;
@@ -248,7 +248,7 @@ public final class ExitSignsTest {
     }
 
     private static void anExit(List<ObfSource> sources) {
-        Route r = route(join(motorway(), 0, 5, ramp(), 1, 4, false), 5, VoiceHintReader.EXIT_RIGHT);
+        Route r = route(join(motorway(), 0, 5, ramp(), 1, 4, false), 5, TurnCommand.EXIT_RIGHT);
         Route signed = ExitSigns.INSTANCE.sign(r, sources);
         ExitSign sign = signed.exitSign(0);
         check(sign != null && "23A".equals(sign.getNumber()) && "I 35 South / Waco / Temple".equals(sign.getToward()),
@@ -274,13 +274,13 @@ public final class ExitSignsTest {
     }
 
     private static void keepingLeftIsNotTheExit(List<ObfSource> sources) {
-        Route r = route(join(motorway(), 0, 10, ramp(), 0, -1, false), 5, VoiceHintReader.KEEP_LEFT);
+        Route r = route(join(motorway(), 0, 10, ramp(), 0, -1, false), 5, TurnCommand.KEEP_LEFT);
         Route signed = ExitSigns.INSTANCE.sign(r, sources);
         check(signed == r && signed.exitSign(0) == null, "keeping left on the motorway at the junction is not the exit");
     }
 
     private static void anOnRampSaysWhereItGoes(List<ObfSource> sources) {
-        Route r = route(join(primary(), 0, 1, onRampStored(), 0, 2, true), 1, VoiceHintReader.TURN_RIGHT);
+        Route r = route(join(primary(), 0, 1, onRampStored(), 0, 2, true), 1, TurnCommand.TURN_RIGHT);
         ExitSign sign = ExitSigns.INSTANCE.sign(r, sources).exitSign(0);
         check(sign != null && sign.getNumber() == null && "Dallas".equals(sign.getToward()),
             "an on-ramp driven against its stored order: destination:backward, and no number (" + sign + ")");
@@ -290,9 +290,9 @@ public final class ExitSignsTest {
     // --- the words
 
     private static void theWords() throws IOException {
-        Maneuver right = Maneuvers.INSTANCE.of(VoiceHintReader.EXIT_RIGHT, 0);
-        Maneuver left = Maneuvers.INSTANCE.of(VoiceHintReader.EXIT_LEFT, 0);
-        Maneuver keepRight = Maneuvers.INSTANCE.of(VoiceHintReader.KEEP_RIGHT, 0);
+        Maneuver right = Maneuvers.INSTANCE.of(TurnCommand.EXIT_RIGHT, 0);
+        Maneuver left = Maneuvers.INSTANCE.of(TurnCommand.EXIT_LEFT, 0);
+        Maneuver keepRight = Maneuvers.INSTANCE.of(TurnCommand.KEEP_RIGHT, 0);
         ExitSign both = new ExitSign("12", "El Paso");
         ExitSign number = new ExitSign("12", null);
         ExitSign toward = new ExitSign(null, "El Paso");
@@ -310,7 +310,7 @@ public final class ExitSignsTest {
 
         // The route file carries signs, and an unsigned maneuver stays unsigned.
         Route r = new Route(new double[] {LAT, LAT + 0.01, LAT + 0.02}, new double[] {LON, LON, LON}, 2224, 120,
-            new int[] {1, 2}, new int[] {0, 0}, new int[] {VoiceHintReader.EXIT_RIGHT, VoiceHintReader.TURN_LEFT},
+            new int[] {1, 2}, new int[] {0, 0}, new int[] {TurnCommand.EXIT_RIGHT, TurnCommand.TURN_LEFT},
             new float[] {0f, 60f, 120f}, new int[0], new String[0], 121, null, 0, false,
             new ExitSign[] {both, null});
         File dir = Files.createTempDirectory("exitsigns").toFile();

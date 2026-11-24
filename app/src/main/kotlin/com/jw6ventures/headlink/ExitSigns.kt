@@ -4,24 +4,6 @@ import kotlin.math.PI
 import kotlin.math.cos
 
 /**
- * What the sign at a highway exit says: the exit [number] ("23A") and where the ramp goes
- * ([toward], "I 35 South / Waco"). Either may be null, never both.
- */
-data class ExitSign(val number: String?, val toward: String?) {
-    init {
-        require(number != null || toward != null) { "an exit sign says something" }
-    }
-
-    /** The card's line and the cluster's road name: "Exit 23A: I 35 South / Waco", "Exit 23A", or "I 35 South / Waco". */
-    val label: String
-        get() = when {
-            number != null && toward != null -> "Exit $number: $toward"
-            number != null -> "Exit $number"
-            else -> toward!!
-        }
-}
-
-/**
  * Exit numbers and sign text for a computed [Route], read from OsmAnd's routing data.
  *
  * Neither of HeadLink's other sources has them. BRouter's `lookups.dat` keeps no
@@ -84,7 +66,7 @@ object ExitSigns {
 
     /** The sign for the maneuver at [k], or null. */
     fun signAt(route: Route, k: Int, ways: (GeoBox) -> List<ObfRoadWay>): ExitSign? {
-        val command = route.commands.getOrElse(k) { btools.router.VoiceHintReader.CONTINUE }
+        val command = route.commands.getOrElse(k) { TurnCommand.CONTINUE }
         val maneuver = Maneuvers.of(command, route.exitNumbers.getOrElse(k) { 0 }) ?: return null
         if (!signable(maneuver.type)) return null
         val index = route.maneuverIndices[k].coerceIn(0, route.points - 1)
