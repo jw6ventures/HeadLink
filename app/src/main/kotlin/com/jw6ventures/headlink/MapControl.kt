@@ -643,9 +643,9 @@ class MapControl(
         /**
          * How far the pinch may travel. VTM itself allows 2^2 to 2^20; this is the part
          * of that range a driver has any use for. The far-out end is level 4, several
-         * thousand kilometres across the pane: all of Texas with room around it. The
-         * default Mapsforge writer keeps major roads down to level 0, so this is sparse
-         * rather than empty; it was level 12, then 8, until James asked to see further.
+         * thousand kilometres across the pane: all of Texas with room around it. Major
+         * roads are kept at the far-out levels, so this is sparse rather than empty; it
+         * was level 12, then 8, until James asked to see further.
          */
         const val MIN_SCALE = 16.0
         const val MAX_SCALE = 524288.0

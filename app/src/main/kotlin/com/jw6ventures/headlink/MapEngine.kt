@@ -30,10 +30,7 @@ import org.oscim.theme.ThemeLoader
 import org.oscim.theme.internal.VtmThemes
 import org.oscim.theme.styles.LineStyle
 import org.oscim.tiling.TileSource
-import org.oscim.tiling.source.mapfile.MapFileTileSource
-import org.oscim.tiling.source.mapfile.MultiMapFileTileSource
 import org.oscim.utils.ThreadUtils
-import java.io.File
 
 /**
  * Draws an owned vector map into an off-screen texture with VTM (P5.5), for the
@@ -138,9 +135,6 @@ class MapEngine(width: Int, height: Int) {
 
     /** The base layer, whose tile manager says when a theme switch has finished loading. */
     private var baseLayer: VectorTileLayer? = null
-
-    /** Retries tiles VTM read badly; see [MapReadGuard]. Null with no map data. */
-    private var readGuard: MapReadGuard? = null
 
     /** Keeps a theme switch's loader pause from closing map files; see [MapLoaderInterrupts]. */
     private var loaderInterrupts: MapLoaderInterrupts? = null
@@ -276,7 +270,7 @@ class MapEngine(width: Int, height: Int) {
      * Builds the framebuffer, the map and its layers on the calling thread, which must
      * already have our EGL context current. Returns null on success or the reason.
      */
-    fun start(mapFiles: List<File>, night: Boolean): String? {
+    fun start(night: Boolean): String? {
         if (!MapAssets.shadersPresent()) {
             return fail("VTM shaders are not on the classpath; check the vtm dependency")
         }
@@ -315,14 +309,9 @@ class MapEngine(width: Int, height: Int) {
 
         // Absent or unreadable map data is a degraded dashboard, not a failed session:
         // the pane draws its background and the chrome around it still works. The app
-        // never fetches map data (APP10), so there is no download to fall back on
-        // and the operator has to supply the file — which they can only be told about
-        // if this keeps running and reports why.
-        val source = openTileSource(mapFiles)?.let(::MapReadGuard)
-        readGuard = source
-        // Outermost, so it sees the loader thread's interrupt status around the whole
-        // query, MapReadGuard's retry judgement included.
-        val interrupts = source?.let(::MapLoaderInterrupts)
+        // never fetches map data (APP10): the operator chooses OsmAnd's maps folder, and
+        // can only be told about a missing one if this keeps running and reports why.
+        val interrupts = openTileSource()?.let(::MapLoaderInterrupts)
         loaderInterrupts = interrupts
         val base: VectorTileLayer? = interrupts?.let { paneMap.setBaseMap(it) }
         baseLayer = base
@@ -479,8 +468,8 @@ class MapEngine(width: Int, height: Int) {
      * enough. Scene thread, after [PaneMap.prepare], which is what fires VTM's clear
      * and hands the tile manager the new visible set to watch.
      *
-     * A tile a failed read dropped (VTM clears a FAILED tile back to NONE, see
-     * [MapReadGuard]) is only queued again on the next position change, and a parked
+     * A tile a failed read dropped (VTM clears a FAILED tile back to NONE) is only
+     * queued again on the next position change, and a parked
      * vehicle makes none. So while held, a dropped tile gets the position event it is
      * waiting for, at most every [REQUEUE_INTERVAL_NS]. Without that a switch while
      * parked over a bad block would sit here until the timeout and then draw with a hole.
@@ -809,7 +798,6 @@ class MapEngine(width: Int, height: Int) {
         map?.destroy()
         map = null
         baseLayer = null
-        readGuard = null
         loaderInterrupts = null
         routeLayer = null
         routeCasing = null
@@ -853,7 +841,6 @@ class MapEngine(width: Int, height: Int) {
         "map_engine=vtm-$VTM_VERSION pane=${width}x$height resizes=$resizes theme=${theme.ifEmpty { "-" }} " +
             "data=$mapName drawn=$drawn reused=$reused moved=$moved " +
             "route_points=$routePoints route_changes=$routeChanges map_alternatives=$alternativesShown map_alternatives_max=$alternativesShownMax " +
-            "${readGuard?.report() ?: "map_reads=0"} " +
             "obf_tiles=${obfSource?.reads?.get() ?: 0} obf_tile_failures=${obfSource?.failures?.get() ?: 0} " +
             "error=${failure ?: "-"}\n" +
             "map_theme_switches=$themeSwitches map_theme_call_ms_max=$switchCallMsMax " +
@@ -877,32 +864,18 @@ class MapEngine(width: Int, height: Int) {
     }
 
     /**
-     * A tile source over every operator-supplied Mapsforge file, or null when none opens.
-     * Never throws: a corrupt file is a named degradation, and one bad file among several
-     * costs only its own region.
-     *
-     * Several files are drawn as one map ([MultiMapFileTileSource]), each only where it
-     * has data, so crossing from one region's extract into the next needs nothing to
-     * switch. Neighbouring extracts overlap along their border; de-duplication stops the
-     * roads there being drawn, and labelled, twice.
+     * The map from OsmAnd's files ([ObfMapSource]), or null when no maps folder is
+     * chosen or none of its files has map data. Never throws: the pane then draws its
+     * no-data background and the reason goes in the report.
      */
-    private fun openTileSource(mapFiles: List<File>): TileSource? {
-        obfMaps?.let { maps -> openObfSource(maps)?.let { return it } }
-        val opened = mapFiles.mapNotNull(::openMapFile)
-        if (opened.isEmpty()) return null
-        mapName = opened.joinToString(",") { it.first.name }
-        if (opened.size == 1) return opened[0].second
-        val multi = MultiMapFileTileSource()
-        multi.setDeduplicate(true)
-        opened.forEach { multi.add(it.second) }
-        return multi
+    private fun openTileSource(): TileSource? {
+        val maps = obfMaps ?: run {
+            fail("no OsmAnd maps folder chosen")
+            return null
+        }
+        return openObfSource(maps)
     }
 
-    /**
-     * The map from OsmAnd's files ([ObfMapSource]), or null to fall back to the Mapsforge
-     * files: a setting switched on with no OsmAnd map that has map data should not leave
-     * the pane empty while a `.map` file is there to draw.
-     */
     private fun openObfSource(maps: () -> List<OsmAndRouter.MapFile>): TileSource? {
         val source = ObfMapSource(maps)
         val result = source.open()
@@ -914,34 +887,6 @@ class MapEngine(width: Int, height: Int) {
         mapName = "obf:${source.files.size}"
         obfSource = source
         return source
-    }
-
-    private fun openMapFile(mapFile: File): Pair<File, MapFileTileSource>? {
-        if (!mapFile.isFile) {
-            fail("no map data at ${mapFile.absolutePath}")
-            return null
-        }
-        return try {
-            val source = MapFileTileSource()
-            if (!source.setMapFile(mapFile.absolutePath)) {
-                fail("not a readable Mapsforge file: ${mapFile.name}")
-                return null
-            }
-            val result = source.open()
-            if (!result.isSuccess) {
-                fail("map open failed: ${mapFile.name}: ${result.errorMessage}")
-                source.close()
-                return null
-            }
-            // Left open on purpose. The tile layer reads through this same source, and
-            // closing it after the header check makes every subsequent tile read fail
-            // — silently, per tile, with no error on the source and an empty pane over
-            // perfectly good data.
-            mapFile to source
-        } catch (e: RuntimeException) {
-            fail("map open threw: ${mapFile.name}: $e")
-            null
-        }
     }
 
     /**
@@ -1056,9 +1001,9 @@ class MapEngine(width: Int, height: Int) {
         const val VTM_VERSION = "0.25.0"
 
         /**
-         * Settings -> Map -> Draw map from OsmAnd files: set by the projection before the
-         * pipeline starts, while it holds OsmAnd's maps open, and cleared when it ends. Null
-         * draws from the Mapsforge files as before.
+         * OsmAnd's map files, set by the projection before the pipeline starts, while it
+         * holds the maps folder open, and cleared when it ends. Null when no maps folder
+         * is chosen: the pane has no map data and draws its no-data background.
          */
         @Volatile
         var obfMaps: (() -> List<OsmAndRouter.MapFile>)? = null

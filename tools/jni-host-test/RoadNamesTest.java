@@ -1,12 +1,15 @@
-// Street names on the guidance loop's maneuvers: which road a stretch of route lies on,
-// the instruction that names it, the road being driven, and the turn card's lines. The
-// matching runs on synthetic ways here, so it is checked against itself.
+// Road names on the guidance loop's maneuvers: the road each stretch of a route lies on, the
+// instruction that names the road turned onto, the road being driven, and the turn card's
+// lines. The names come with the route from the engine (Route.roadStarts and roadNames):
+// OsmAndRouter labels each stretch by its road's name, else its ref, and nothing for a blank
+// name, checked over SyntheticObf's roads; the follower's route here carries its own.
 //
-// With a directory holding W75_N40.rd5 and a Mapsforge file covering Lexington to Boston
-// as the two arguments, it also names a real cross-town route through VTM's own reader;
-// without them those checks are skipped and the line says so.
-import java.io.File;
+// With a directory of OsmAnd maps as the argument (OBF_DIR) holding
+// Us_massachusetts_northamerica.obf, it also routes across town from the lab receiver's
+// position to Boston Common with OsmAndRouter and checks that the route names its roads;
+// without it those checks are skipped and the line says so.
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
@@ -16,19 +19,15 @@ import com.jw6ventures.headlink.FollowResult;
 import com.jw6ventures.headlink.FollowState;
 import com.jw6ventures.headlink.Maneuver;
 import com.jw6ventures.headlink.Maneuvers;
-import com.jw6ventures.headlink.TurnCommand;
-import com.jw6ventures.headlink.NamedWay;
+import com.jw6ventures.headlink.OsmAndRouter;
 import com.jw6ventures.headlink.Route;
 import com.jw6ventures.headlink.RouteFollower;
 import com.jw6ventures.headlink.RouteRequest;
-import com.jw6ventures.headlink.Router;
-import com.jw6ventures.headlink.RoutingData;
 import com.jw6ventures.headlink.SpeedUnit;
-import com.jw6ventures.headlink.StreetNames;
+import com.jw6ventures.headlink.TurnCommand;
 import com.jw6ventures.headlink.UpcomingTurn;
-import org.oscim.core.Tag;
 
-public final class StreetNamesTest {
+public final class RoadNamesTest {
     private static int passed;
 
     private static final double LAT0 = 42.0;
@@ -36,33 +35,51 @@ public final class StreetNamesTest {
     private static final double M_PER_DEG = 6_371_000.0 * Math.PI / 180.0;
 
     public static void main(String[] args) throws Exception {
-        aWayIsLabelledByNameThenRef();
-        aStretchIsNamedAfterTheRoadItLiesOn();
+        aStretchIsOnTheRoadTheRouteNames();
         anInstructionNamesTheRoadItTurnsOnto();
         theFollowerSaysWhichRoadIsNextAndWhichIsNow();
-        theHeaderSpellsTheTurnInTheDriversUnits();
-        String segments = args.length > 0 ? args[0] : "";
-        String map = args.length > 1 ? args[1] : "";
-        if (!segments.isEmpty() && new File(segments, "W75_N40.rd5").isFile() && new File(map).isFile()) {
-            aRealRouteIsNamedFromTheMap(new File(segments), new File(map));
-            System.out.println("jni-host-test: ok " + passed + " street name checks");
+        theCardSpellsTheTurnInTheDriversUnits();
+        osmAndLabelsARoadByNameThenRef();
+        String dir = args.length > 0 ? args[0] : "";
+        Path massachusetts = dir.isEmpty() ? null : Path.of(dir, "Us_massachusetts_northamerica.obf");
+        if (massachusetts != null && Files.isRegularFile(massachusetts)) {
+            aRealRouteNamesItsRoads(massachusetts);
+            System.out.println("jni-host-test: ok " + passed + " road name checks (with a real route)");
         } else {
             System.out.println("jni-host-test: ok " + passed
-                + " street name checks (real-map checks skipped: need W75_N40.rd5 and MAP_FILE)");
+                + " road name checks (real-route checks skipped: need OBF_DIR with Us_massachusetts_northamerica.obf)");
         }
     }
 
-    private static void aWayIsLabelledByNameThenRef() {
-        StreetNames names = StreetNames.INSTANCE;
-        check("Main Street".equals(names.label(List.of(new Tag("highway", "residential"), new Tag("name", "Main Street")))),
-            "a named road is its name");
-        check("Research Boulevard".equals(names.label(List.of(new Tag("highway", "trunk"), new Tag("name", "Research Boulevard"),
-            new Tag("ref", "US 183")))), "the name wins over the number");
-        check("US 183 / TX 45".equals(names.label(List.of(new Tag("highway", "motorway"), new Tag("ref", "US 183;TX 45")))),
-            "an unnamed highway is its route numbers");
-        check(names.label(List.of(new Tag("waterway", "river"), new Tag("name", "Charles River"))) == null,
-            "a river is not a road");
-        check(names.label(List.of(new Tag("highway", "service"), new Tag("name", "  "))) == null, "a blank name is no name");
+    /**
+     * Over SyntheticObf's roads: the motorway has only a ref (I 35), the exit ramp no name,
+     * the primary road a name and a ref (Main Street, FM 1825), the on-ramp a blank name.
+     */
+    private static void osmAndLabelsARoadByNameThenRef() throws Exception {
+        Path file = Files.createTempFile("road-names", ".obf");
+        try {
+            Files.write(file, SyntheticObf.syntheticObf());
+            OsmAndRouter router = new OsmAndRouter(() -> List.of(OsmAndRouter.MapFile.of(file.toFile())));
+            try {
+                double lat = SyntheticObf.LAT, lon = SyntheticObf.LON;
+                Route exit = router.compute(new RouteRequest(lat + 0.0005, lon, lat + 0.0075, lon + 0.011), 30_000,
+                    e -> kotlin.Unit.INSTANCE);
+                String[] names = exit.getRoadNames();
+                check(names.length == 2, "the motorway and the ramp: " + java.util.Arrays.toString(names));
+                check("I 35".equals(names[0]), "a road with only a ref is its ref: " + names[0]);
+                check(names[1] == null, "a road with neither is unnamed: " + names[1]);
+                Route onRamp = router.compute(new RouteRequest(lat + 0.0075, lon + 0.011, lat + 0.0099, lon), 30_000,
+                    e -> kotlin.Unit.INSTANCE);
+                names = onRamp.getRoadNames();
+                check(names.length >= 2, "the primary road and the on-ramp: " + java.util.Arrays.toString(names));
+                check("Main Street".equals(names[0]), "the name wins over the ref: " + names[0]);
+                check(names[1] == null, "a blank name is no name: '" + names[1] + "'");
+            } finally {
+                router.close();
+            }
+        } finally {
+            Files.deleteIfExists(file);
+        }
     }
 
     // --- a synthetic route: 600 m east on Elm Avenue, then left and 600 m north on Main Street
@@ -73,7 +90,8 @@ public final class StreetNamesTest {
         return new double[] {corner[0] + m / M_PER_DEG, corner[1]};
     }
 
-    private static Route lShape() {
+    /** The L-shaped route, with [names] for its two stretches or none. */
+    private static Route lShape(String[] names) {
         double[] lat = new double[13];
         double[] lon = new double[13];
         float[] seconds = new float[13];
@@ -89,47 +107,20 @@ public final class StreetNamesTest {
             lon[6 + i] = p[1];
             seconds[6 + i] = (6 + i) * 10f;
         }
-        return new Route(lat, lon, 1200, 120, new int[] {6}, new int[1], new int[] {TurnCommand.TURN_LEFT}, seconds);
+        return new Route(lat, lon, 1200, 120, new int[] {6}, new int[1], new int[] {TurnCommand.TURN_LEFT}, seconds,
+            names == null ? new int[0] : new int[] {0, 6}, names == null ? new String[0] : names);
     }
 
-    /** A straight way from [a] to [b]. */
-    private static NamedWay way(String name, double[] a, double[] b) {
-        return new NamedWay(name, new double[] {a[0], b[0]}, new double[] {a[1], b[1]});
-    }
+    private static final String[] NAMES = {"Elm Avenue", "Main Street"};
 
-    private static final NamedWay ELM = way("Elm Avenue", east(-200), east(900));
-    private static final NamedWay MAIN = way("Main Street", north(-300), north(900));
-
-    private static void aStretchIsNamedAfterTheRoadItLiesOn() {
-        StreetNames names = StreetNames.INSTANCE;
-        Route route = lShape();
-        int[] starts = names.stretchStarts(route);
-        check(starts.length == 2 && starts[0] == 0 && starts[1] == 6, "a stretch from the start and one from the turn");
-
-        List<kotlin.Pair<Double, Double>> after = names.samples(route, 6, 12);
-        check(after.size() == 10, "every 20 m from 12 m to 200 m: " + after.size());
-        check(names.nameOf(after, (lat, lon) -> List.of(ELM, MAIN)).equals("Main Street"), "north of the turn is Main Street");
-        List<kotlin.Pair<Double, Double>> before = names.samples(route, 0, 6);
-        check(names.nameOf(before, (lat, lon) -> List.of(ELM, MAIN)).equals("Elm Avenue"), "east of it is Elm Avenue");
-
-        // A turn onto a road the map names none of: the street being left is close at the
-        // junction, and must not lend the unnamed road its name.
-        check(names.nameOf(after, (lat, lon) -> List.of(ELM)) == null, "an unnamed road is not named after the one left");
-        // A parallel road a lane's width away is not the road.
-        NamedWay beside = new NamedWay("Frontage Road", new double[] {north(-300)[0], north(900)[0]},
-            new double[] {MAIN.getLongitudes()[0] + 15 / (M_PER_DEG * Math.cos(Math.toRadians(LAT0))),
-                MAIN.getLongitudes()[1] + 15 / (M_PER_DEG * Math.cos(Math.toRadians(LAT0)))});
-        check(names.nameOf(after, (lat, lon) -> List.of(beside)) == null, "a road 15 m off is not the one driven");
-        check(names.nameOf(after, (lat, lon) -> List.of(beside, MAIN)).equals("Main Street"), "the nearer road wins");
-        check(names.offset(north(100)[0], north(100)[1], MAIN) < 0.01, "a point on the way is on it");
-        check(names.nameOf(List.of(), (lat, lon) -> List.of(MAIN)) == null, "no samples, no name");
-
-        Route named = route.withRoads(starts, new String[] {"Elm Avenue", "Main Street"});
+    private static void aStretchIsOnTheRoadTheRouteNames() {
+        Route named = lShape(NAMES);
         check("Elm Avenue".equals(named.roadAt(0)) && "Elm Avenue".equals(named.roadAt(5)), "Elm Avenue up to the turn");
         check("Main Street".equals(named.roadAt(6)) && "Main Street".equals(named.roadAt(12)), "Main Street from it");
-        check(route.roadAt(3) == null, "a route nobody named has no roads");
-        check(named.getManeuverIndices() == route.getManeuverIndices() && named.getPointSeconds() == route.getPointSeconds(),
-            "naming changes nothing else");
+        check(lShape(null).roadAt(3) == null, "a route with no names has no roads");
+        Route unnamedStretch = new Route(named.getLatitudes(), named.getLongitudes(), 1200, 120, new int[] {6}, new int[1],
+            new int[] {TurnCommand.TURN_LEFT}, named.getPointSeconds(), new int[] {0, 6}, new String[] {"Elm Avenue", null});
+        check(unnamedStretch.roadAt(8) == null, "a stretch the map names none of does not borrow the one left");
     }
 
     private static void anInstructionNamesTheRoadItTurnsOnto() {
@@ -148,9 +139,7 @@ public final class StreetNamesTest {
     }
 
     private static void theFollowerSaysWhichRoadIsNextAndWhichIsNow() {
-        Route route = lShape();
-        route = route.withRoads(StreetNames.INSTANCE.stretchStarts(route), new String[] {"Elm Avenue", "Main Street"});
-        RouteFollower f = new RouteFollower(route, 1);
+        RouteFollower f = new RouteFollower(lShape(NAMES), 1);
         // 100 m south of the start: joining, so the road under the vehicle is unknown.
         double[] start = east(0);
         FollowResult r = f.update(start[0] - 100 / M_PER_DEG, start[1], 0);
@@ -169,14 +158,14 @@ public final class StreetNamesTest {
         check(r.getStep().getOnto() == null && "Arrive at the destination".equals(r.getStep().getInstruction()),
             "the destination turns onto nothing");
 
-        // An unnamed route reads exactly as before.
-        RouteFollower plain = new RouteFollower(lShape(), 2);
+        // An unnamed route reads plainly.
+        RouteFollower plain = new RouteFollower(lShape(null), 2);
         r = plain.update(east(200)[0], east(200)[1], 0);
         check(r.getStep().getOnto() == null && r.getStep().getRoad() == null && "Turn left".equals(r.getStep().getInstruction()),
             "no names, the plain instruction");
     }
 
-    private static void theHeaderSpellsTheTurnInTheDriversUnits() {
+    private static void theCardSpellsTheTurnInTheDriversUnits() {
         check("450 ft".equals(SpeedUnit.MPH.distance(137.0)), "449 ft in steps of 50: " + SpeedUnit.MPH.distance(137.0));
         check("0.3 mi".equals(SpeedUnit.MPH.distance(480.0)), "1575 ft is 0.3 mi");
         check("12 mi".equals(SpeedUnit.MPH.distance(19_400.0)), "whole miles from ten");
@@ -210,50 +199,38 @@ public final class StreetNamesTest {
 
     // --- a real route ------------------------------------------------------------------
 
-    private static void aRealRouteIsNamedFromTheMap(File segments, File map) throws Exception {
-        File work = Files.createTempDirectory("street-names-test").toFile();
+    private static void aRealRouteNamesItsRoads(Path massachusetts) throws Exception {
+        OsmAndRouter router = new OsmAndRouter(() -> List.of(OsmAndRouter.MapFile.of(massachusetts.toFile())));
         try {
-            File profile = RoutingData.INSTANCE.installProfile(new File(work, "profiles"));
-            Route route = new Router(segments, profile, 64)
-                .compute(new RouteRequest(42.4242, -71.2121, 42.3551, -71.0656), 120_000, e -> kotlin.Unit.INSTANCE);
-            long t0 = System.nanoTime();
-            Route named = StreetNames.INSTANCE.name(route, List.of(map));
-            long ms = (System.nanoTime() - t0) / 1_000_000;
-            int stretches = named.getRoadStarts().length;
+            Route route = router.compute(new RouteRequest(42.4242, -71.2121, 42.3551, -71.0656), 120_000, e -> kotlin.Unit.INSTANCE);
+            int stretches = route.getRoadStarts().length;
             int found = 0;
             List<String> seen = new ArrayList<>();
-            for (String name : named.getRoadNames()) {
+            for (String name : route.getRoadNames()) {
                 if (name == null) continue;
                 found++;
                 if (!seen.contains(name)) seen.add(name);
             }
-            check(stretches == route.getManeuverIndices().length + 1 || stretches == route.getManeuverIndices().length,
-                "a stretch per maneuver and the start: " + stretches);
+            check(stretches == route.getManeuverIndices().length + 1 && route.getRoadNames().length == stretches,
+                "a stretch from the start and from each maneuver: " + stretches);
             // A cross-town drive in a city: nearly every stretch is on a named street.
             check(found * 10 >= stretches * 7, "most stretches named: " + found + "/" + stretches);
             check(seen.size() >= 3, "more than one or two roads: " + seen.size());
-            check(ms < 30_000, "naming takes seconds at most: " + ms + " ms");
-            check(StreetNames.INSTANCE.name(route, List.of(new File(work, "missing.map"))) == route,
-                "no map, the route as it was");
-            if (System.getenv("STREET_NAMES_VERBOSE") != null) {
-                System.out.println("street-names: " + found + "/" + stretches + " named in " + ms + " ms");
-                for (int k = 0; k < named.getRoadStarts().length; k++) {
-                    System.out.println("  " + named.getRoadStarts()[k] + " " + named.getRoadNames()[k]);
+            int at = route.getManeuverIndices()[0];
+            check(java.util.Objects.equals(route.roadAt(at), route.getRoadNames()[1]), "a road from the first maneuver on");
+            System.out.println("road-names-test: " + found + "/" + stretches + " stretches named, " + seen.size() + " roads");
+            if (System.getenv("ROAD_NAMES_VERBOSE") != null) {
+                for (int k = 0; k < stretches; k++) {
+                    System.out.println("  " + route.getRoadStarts()[k] + " " + route.getRoadNames()[k]);
                 }
             }
         } finally {
-            delete(work);
+            router.close();
         }
     }
 
-    private static void delete(File file) {
-        File[] children = file.listFiles();
-        if (children != null) for (File child : children) delete(child);
-        file.delete();
-    }
-
     private static void check(boolean condition, String what) {
-        if (!condition) throw new AssertionError("street names: " + what);
+        if (!condition) throw new AssertionError("road names: " + what);
         passed++;
     }
 }

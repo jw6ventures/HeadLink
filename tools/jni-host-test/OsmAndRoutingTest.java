@@ -1,7 +1,7 @@
 // OsmAnd's router (vendor/osmand) behind HeadLink's RouteEngine, on a desktop JVM
 // (docs/navigation.md, "Routing on OsmAnd maps").
 //
-// Over ExitSignsTest's synthetic .obf: a motorway north, an exit ramp east off it with
+// Over SyntheticObf's .obf: a motorway north, an exit ramp east off it with
 // junction 23A and its destination signs, a primary road across the ramp's end, and an
 // on-ramp from that road back onto the motorway further north. Two ways reach the primary
 // road from the motorway's south end: the exit ramp, and on up the motorway and back down
@@ -10,10 +10,13 @@
 //
 // What it shows: OsmAnd's file reader and router run on HeadLink's own synthetic file; a
 // route comes back as HeadLink's Route, with its exit maneuver, number and sign words from
-// the same data; a closure and a costly jam move it, a cheap jam does not, and closures with
-// no way round are opened rather than failing; alternative 1 avoids alternative 0's roads;
-// a handle stops a search; no maps is an error, not a crash; OsmAnd's own errors lose their
-// coordinates before they reach a report.
+// the same data, kept through scaling and traffic marking, handed by RouteFollower to the
+// card, the cluster and the voice, and carried by the route file; a closure and a costly jam
+// move it, a cheap jam does not, and closures with no way round are opened rather than
+// failing; alternative 1 avoids alternative 0's roads; a handle stops a search; no maps is
+// an error, not a crash; OsmAnd's own errors lose their coordinates before they reach a
+// report; a destination or via point no map's routing data holds is refused before any
+// search, and a dropped minus sign is told apart.
 //
 // With a directory of real OsmAnd maps as the argument (OBF_DIR), run under the phone's
 // 256 MB heap (jni-host-test.sh passes -Xmx256m), it also routes over them: Taylor to
@@ -22,6 +25,7 @@
 // on OsmAnd maps"); and, when the Austin and San Antonio maps are different OsmAnd builds,
 // that the highway hierarchy is skipped and the route still comes back. It proves nothing
 // about ART or the phone's speed.
+import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.io.UncheckedIOException;
@@ -30,16 +34,22 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import com.jw6ventures.headlink.ExitSign;
+import com.jw6ventures.headlink.Maneuver;
+import com.jw6ventures.headlink.Maneuvers;
+import com.jw6ventures.headlink.NextStep;
 import com.jw6ventures.headlink.Nogo;
 import com.jw6ventures.headlink.ObfReaderFailures;
 import com.jw6ventures.headlink.OsmAndRouter;
 import com.jw6ventures.headlink.PositionalFile;
 import com.jw6ventures.headlink.PaceRoad;
 import com.jw6ventures.headlink.Route;
+import com.jw6ventures.headlink.RouteFollower;
+import com.jw6ventures.headlink.RoutePreview;
 import com.jw6ventures.headlink.RouteOptions;
 import com.jw6ventures.headlink.RouteRequest;
 import com.jw6ventures.headlink.RoutingException;
 import com.jw6ventures.headlink.SearchHandle;
+import com.jw6ventures.headlink.SpokenText;
 import com.jw6ventures.headlink.TurnCommand;
 
 public final class OsmAndRoutingTest {
@@ -58,16 +68,19 @@ public final class OsmAndRoutingTest {
     public static void main(String[] args) throws Exception {
         Path file = Files.createTempFile("osmand-routing", ".obf");
         try {
-            Files.write(file, ExitSignsTest.syntheticObf());
+            Files.write(file, SyntheticObf.syntheticObf());
             OsmAndRouter router = new OsmAndRouter(() -> List.of(OsmAndRouter.MapFile.of(file.toFile())));
             try {
                 theExitIsAManeuverWithItsSign(router);
                 theTimesRunAlongTheRoute(router);
                 aClosureOnTheRampSendsItRoundByTheOnRamp(router);
                 aJamMovesItOnlyWhenItCostsEnough(router);
+                aDestinationOffTheMapsIsRefused(router);
                 closuresWithNoWayRoundAreOpened(router);
                 theSecondAlternativeTakesTheOtherWay(router);
                 aHandleStopsTheSearch(router);
+                stayingOnTheMotorwayIsNotTheExit(router);
+                anOnRampDrivenBackwardsSaysWhereItGoes(router);
             } finally {
                 router.close();
             }
@@ -77,6 +90,7 @@ public final class OsmAndRoutingTest {
         aFileWithOnlyADescriptorRoutes();
         noMapsIsAnError();
         theSettingsAreTheProfilesParameters();
+        theExitWords();
         osmAndErrorsLoseTheirCoordinates();
         String dir = args.length > 0 ? args[0] : "";
         Path austin = dir.isEmpty() ? null : Path.of(dir, "Us_texas_austin_northamerica.obf");
@@ -113,11 +127,110 @@ public final class OsmAndRoutingTest {
         check(near(route.getLatitudes()[at], route.getLongitudes()[at], LAT + 0.005, LON, 5), "at the junction");
         ExitSign sign = route.exitSign(0);
         check(sign != null && "23A".equals(sign.getNumber()), "with the junction's number: " + sign);
-        check("I 35 South / Waco / Temple".equals(sign.getToward()), "and the ramp's signs, worded as ExitSigns words them: " + sign);
+        check("I 35 South / Waco / Temple".equals(sign.getToward()), "and the ramp's signs, destination:ref first: " + sign);
         check(route.getRoadStarts().length == 2 && route.getRoadStarts()[0] == 0 && route.getRoadStarts()[1] == at,
             "a stretch of road from the start and from the maneuver");
         check(!route.getTrafficShaped() && !route.getClosuresOpened(), "no traffic was asked about");
         check(route.getTopSpeedKmh() == RouteOptions.DEFAULT_TOP_SPEED_KMH, "timed at the top speed asked for");
+        check(route.withTimeScale(1.2).exitSign(0) == sign && route.withNogos(3, false).exitSign(0) == sign,
+            "the sign is kept through scaling and traffic marking");
+        check(route.remainder(2).exitSign(0) == sign, "and in what is left of the route ahead of it");
+        check(route.remainder(at).getManeuverIndices().length == 1 && route.remainder(at).exitSign(0) == sign,
+            "including from the exit itself");
+
+        RouteFollower follower = new RouteFollower(route, 7);
+        NextStep step = follower.update(LAT + 0.001, LON, 0).getStep();
+        check(step != null && step.getSign() == sign, "the follower hands the sign to the step");
+        check("Take exit 23A toward I 35 South / Waco / Temple".equals(step.getInstruction()),
+            "the cluster's instruction (" + step.getInstruction() + ")");
+        check("Exit 23A: I 35 South / Waco / Temple".equals(step.getOnto()), "and its road name, which the card shows: " + step.getOnto());
+        check("Take exit 23A toward Interstate 35 South, Waco, Temple".equals(SpokenText.INSTANCE.instruction(step, true)),
+            "spoken as road names are, the slashes a pause (" + SpokenText.INSTANCE.instruction(step, true) + ")");
+        check("Take exit 23A".equals(SpokenText.INSTANCE.instruction(step, false)), "and with street names off, the number alone");
+    }
+
+    /**
+     * Keeping on the motorway past the junction is not the exit: OsmAnd does give a maneuver
+     * at the junction (the fork with the ramp), and it carries no sign.
+     */
+    private static void stayingOnTheMotorwayIsNotTheExit(OsmAndRouter router) throws Exception {
+        Route straightOn = route(router, new RouteRequest(FROM_LAT, FROM_LON, LAT + 0.0098, LON));
+        check(!passesNear(straightOn, RAMP_LAT, RAMP_LON, 10), "staying on the motorway does not take the ramp");
+        int atJunction = -1;
+        for (int k = 0; k < straightOn.getManeuverIndices().length; k++) {
+            int i = straightOn.getManeuverIndices()[k];
+            if (near(straightOn.getLatitudes()[i], straightOn.getLongitudes()[i], LAT + 0.005, LON, 5)) atJunction = k;
+        }
+        check(atJunction >= 0, "there is a maneuver at the junction to judge: commands "
+            + java.util.Arrays.toString(straightOn.getCommands()));
+        int command = straightOn.getCommands()[atJunction];
+        check(command == TurnCommand.CONTINUE || command == TurnCommand.KEEP_LEFT,
+            "it keeps to the motorway: command " + command);
+        check(straightOn.exitSign(atJunction) == null, "and carries no sign: " + straightOn.exitSign(atJunction));
+    }
+
+    /**
+     * The on-ramp is stored from the motorway end, so a route from the primary road drives it
+     * against its stored order: its sign is destination:backward ("Dallas"), never
+     * destination:forward ("Nowhere"), and it has no exit number.
+     */
+    private static void anOnRampDrivenBackwardsSaysWhereItGoes(OsmAndRouter router) throws Exception {
+        Route route = route(router, new RouteRequest(TO_LAT, TO_LON, LAT + 0.0099, LON));
+        check(passesNear(route, ON_RAMP_LAT, ON_RAMP_LON, 10), "from the primary road the on-ramp is taken");
+        int onto = -1;
+        for (int k = 0; k < route.getManeuverIndices().length; k++) {
+            int i = route.getManeuverIndices()[k];
+            if (near(route.getLatitudes()[i], route.getLongitudes()[i], LAT + 0.0075, LON + 0.008, 5)) onto = k;
+        }
+        check(onto >= 0, "a maneuver onto the on-ramp where it leaves the primary road: commands "
+            + java.util.Arrays.toString(route.getCommands()));
+        ExitSign sign = route.exitSign(onto);
+        check(sign != null && "Dallas".equals(sign.getToward()), "its destination:backward: " + sign);
+        check(sign.getNumber() == null, "and no number, as no junction is on it");
+        boolean nowhere = false;
+        for (int k = 0; k < route.getManeuverIndices().length; k++) {
+            ExitSign s = route.exitSign(k);
+            nowhere |= s != null && s.getToward() != null && s.getToward().contains("Nowhere");
+        }
+        check(!nowhere, "destination:forward is never read for it");
+    }
+
+    /** The sign's words and the route file, without a router. */
+    private static void theExitWords() throws IOException {
+        Maneuver right = Maneuvers.INSTANCE.of(TurnCommand.EXIT_RIGHT, 0);
+        Maneuver left = Maneuvers.INSTANCE.of(TurnCommand.EXIT_LEFT, 0);
+        Maneuver keepRight = Maneuvers.INSTANCE.of(TurnCommand.KEEP_RIGHT, 0);
+        ExitSign both = new ExitSign("12", "El Paso");
+        ExitSign number = new ExitSign("12", null);
+        ExitSign toward = new ExitSign(null, "El Paso");
+        check("Take exit 12 toward El Paso".equals(Maneuvers.INSTANCE.exitInstruction(right, both, both.getToward())), "number and place");
+        check("Take exit 12 on the left".equals(Maneuvers.INSTANCE.exitInstruction(left, number, null)), "a left exit says so");
+        check("Keep right toward El Paso".equals(Maneuvers.INSTANCE.exitInstruction(keepRight, toward, toward.getToward())),
+            "no number: the maneuver's words and the place");
+        check("Exit 12".equals(number.getLabel()) && "El Paso".equals(toward.getLabel()), "labels with one part");
+        check("Exit 12: El Paso".equals(both.getLabel()), "and with both");
+        try {
+            new ExitSign(null, null);
+            check(false, "an empty sign is refused");
+        } catch (IllegalArgumentException expected) {
+            check(true, "an empty sign is refused");
+        }
+
+        // The route file carries signs, and an unsigned maneuver stays unsigned.
+        Route r = new Route(new double[] {LAT, LAT + 0.01, LAT + 0.02}, new double[] {LON, LON, LON}, 2224, 120,
+            new int[] {1, 2}, new int[] {0, 0}, new int[] {TurnCommand.EXIT_RIGHT, TurnCommand.TURN_LEFT},
+            new float[] {0f, 60f, 120f}, new int[0], new String[0], 121, null, 0, false,
+            new ExitSign[] {both, null});
+        File dir = Files.createTempDirectory("exitsigns").toFile();
+        try {
+            File file = RoutePreview.INSTANCE.choiceFile(dir);
+            RoutePreview.INSTANCE.writeChoice(file, 3L, r);
+            Route back = RoutePreview.INSTANCE.readChoice(file).getSecond();
+            check(both.equals(back.exitSign(0)) && back.exitSign(1) == null, "signs cross the route file");
+        } finally {
+            for (File f : dir.listFiles()) f.delete();
+            dir.delete();
+        }
     }
 
     private static void theTimesRunAlongTheRoute(OsmAndRouter router) throws Exception {
@@ -140,9 +253,9 @@ public final class OsmAndRoutingTest {
         }
         check(highway && ramp, "the motorway and its ramp are told apart: " + java.util.Arrays.toString(kinds));
         RouteRequest slower = new RouteRequest(FROM_LAT, FROM_LON, TO_LAT, TO_LON, null,
-            new RouteOptions(false, false, false, false, false, RouteOptions.DEFAULT_TOP_SPEED_KMH, 20, true, true, true));
+            new RouteOptions(false, false, false, false, false, RouteOptions.DEFAULT_TOP_SPEED_KMH, 20, true, true));
         Route scaled = route(router, slower);
-        check(Math.abs(scaled.getSeconds() - route.getSeconds() * 1.2) <= 1.0, "the time adjustment applies as with BRouter: "
+        check(Math.abs(scaled.getSeconds() - route.getSeconds() * 1.2) <= 1.0, "the time adjustment scales OsmAnd's time: "
             + scaled.getSeconds() + " against " + route.getSeconds());
     }
 
@@ -155,13 +268,51 @@ public final class OsmAndRoutingTest {
     }
 
     private static void aJamMovesItOnlyWhenItCostsEnough(OsmAndRouter router) throws Exception {
-        // BRouter cost per metre: a few seconds' delay over the circle does not beat the
+        // Cost per metre: a few seconds' delay over the circle does not beat the
         // longer way round; an hour's does.
         Route cheap = route(router, trip(List.of(new Nogo(RAMP_LAT, RAMP_LON, 40, 1.0)), 0));
         check(passesNear(cheap, RAMP_LAT, RAMP_LON, 10), "a slight jam leaves the route on the ramp");
         Route costly = route(router, trip(List.of(new Nogo(RAMP_LAT, RAMP_LON, 40, 100_000.0)), 0));
         check(!passesNear(costly, RAMP_LAT, RAMP_LON, 10), "a bad one sends it round");
         check(costly.getNogoCount() == 1 && costly.getTrafficShaped(), "and the route says traffic shaped it");
+    }
+
+    /** The router refuses, before any search, a destination no map's routing data holds. */
+    private static void aDestinationOffTheMapsIsRefused(OsmAndRouter router) {
+        try {
+            route(router, new RouteRequest(FROM_LAT, FROM_LON, LAT + 1.0, LON - 1.0));
+            check(false, "a destination off the maps gives no route");
+        } catch (RoutingException e) {
+            check(!e.getStopped() && OsmAndRouter.NOT_COVERED.equals(e.getMessage()), "a destination off the maps: " + e.getMessage());
+        }
+        try {
+            route(router, new RouteRequest(FROM_LAT, FROM_LON, TO_LAT, -TO_LON));
+            check(false, "a mirrored destination gives no route");
+        } catch (RoutingException e) {
+            check(OsmAndRouter.MIRRORED.equals(e.getMessage()), "a dropped minus sign is told apart: " + e.getMessage());
+        }
+        try {
+            route(router, new RouteRequest(FROM_LAT, FROM_LON, TO_LAT, TO_LON, null, new RouteOptions(), 0, LAT - 1.0, LON, List.of()));
+            check(false, "a via point off the maps gives no route");
+        } catch (RoutingException e) {
+            check(OsmAndRouter.STOP_NOT_COVERED.equals(e.getMessage()), "and a via point off them, with the destination on them: " + e.getMessage());
+        }
+        // The check allows a 250 m box round each point: a destination 100 m past the routing
+        // section's box is not refused as uncovered, 1 km past it is.
+        double west = LON - 0.01 - 100 / (111_320 * Math.cos(Math.toRadians(LAT)));
+        try {
+            route(router, new RouteRequest(FROM_LAT, FROM_LON, LAT + 0.005, west));
+            check(true, "a destination 100 m off the box routes");
+        } catch (RoutingException e) {
+            check(!OsmAndRouter.NOT_COVERED.equals(e.getMessage()), "a destination 100 m off the box is not called uncovered: " + e.getMessage());
+        }
+        double farWest = LON - 0.01 - 1_000 / (111_320 * Math.cos(Math.toRadians(LAT)));
+        try {
+            route(router, new RouteRequest(FROM_LAT, FROM_LON, LAT + 0.005, farWest));
+            check(false, "a destination 1 km off the box gives no route");
+        } catch (RoutingException e) {
+            check(OsmAndRouter.NOT_COVERED.equals(e.getMessage()), "1 km off it is: " + e.getMessage());
+        }
     }
 
     private static void closuresWithNoWayRoundAreOpened(OsmAndRouter router) throws Exception {
@@ -204,7 +355,7 @@ public final class OsmAndRoutingTest {
         Path file = Files.createTempFile("osmand-descriptor", ".obf");
         FileSource[] source = new FileSource[1];
         try {
-            Files.write(file, ExitSignsTest.syntheticObf());
+            Files.write(file, SyntheticObf.syntheticObf());
             String nowhere = file + ".not-here";
             OsmAndRouter router = new OsmAndRouter(() -> List.of(new OsmAndRouter.MapFile("descriptor", "synthetic.obf", nowhere, () -> {
                 try {
@@ -227,7 +378,7 @@ public final class OsmAndRoutingTest {
                 route(refused, trip(List.of(), 0));
                 check(false, "a file that cannot be opened gives no route");
             } catch (RoutingException e) {
-                check(e.getMessage().contains("no OsmAnd maps"), "a file that cannot be opened is no map: " + e.getMessage());
+                check(OsmAndRouter.NOT_COVERED.equals(e.getMessage()), "a file that cannot be opened is no map: " + e.getMessage());
             }
             String after = ObfReaderFailures.INSTANCE.report();
             check(!after.equals(before) && after.contains("obf_reader_failure_last=FileNotFoundException")
@@ -300,7 +451,7 @@ public final class OsmAndRoutingTest {
             route(none, trip(List.of(), 0));
             check(false, "no maps, no route");
         } catch (RoutingException e) {
-            check(!e.getStopped() && e.getMessage().contains("no OsmAnd maps"), "no maps is said plainly: " + e.getMessage());
+            check(!e.getStopped() && OsmAndRouter.NOT_COVERED.equals(e.getMessage()), "no maps: the destination is outside them: " + e.getMessage());
         }
     }
 
@@ -310,7 +461,7 @@ public final class OsmAndRoutingTest {
         check(Math.abs(Double.parseDouble(plain.get("max_speed")) - RouteOptions.DEFAULT_TOP_SPEED_KMH / 3.6) < 1e-9,
             "in metres a second");
         Map<String, String> all = OsmAndRouter.profileParameters(
-            new RouteOptions(true, true, true, true, true, 105, 0, true, true, true));
+            new RouteOptions(true, true, true, true, true, 105, 0, true, true));
         check("true".equals(all.get("avoid_motorway")) && "true".equals(all.get("avoid_toll"))
             && "true".equals(all.get("avoid_unpaved")), "the three switches OsmAnd's car profile has: " + all);
         check(all.size() == 4, "and nothing for going round towns or allowing tracks, which it has not");

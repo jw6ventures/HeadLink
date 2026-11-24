@@ -1162,8 +1162,10 @@ data class TripPanel(
     val later: List<TripStep>,
     val arrived: Boolean,
     val rerouting: Boolean,
-    /** A destination with no route yet ([UpcomingTurn.FINDING], [UpcomingTurn.NO_ROUTE]): no figures, End route still shown. */
+    /** A destination with no route yet ([UpcomingTurn.FINDING], [UpcomingTurn.NO_ROUTE], [UpcomingTurn.NO_MAP]): no figures, End route still shown. */
     val searching: Boolean = false,
+    /** Of [searching], the one no map covers ([UpcomingTurn.NO_MAP]): nothing is being looked for. */
+    val noMap: Boolean = false,
     /** A finger is on End route. */
     val endPressed: Boolean,
     /** Voice guidance is on (P8.2): the speaker glyph lit, else slashed. */
@@ -2984,7 +2986,7 @@ class Dashboard @JvmOverloads constructor(
         val turn = upcomingTurn ?: return null
         return when (turn.text) {
             UpcomingTurn.WAITING -> null
-            UpcomingTurn.REROUTING, UpcomingTurn.ARRIVED, UpcomingTurn.FINDING, UpcomingTurn.NO_ROUTE ->
+            UpcomingTurn.REROUTING, UpcomingTurn.ARRIVED, UpcomingTurn.FINDING, UpcomingTurn.NO_ROUTE, UpcomingTurn.NO_MAP ->
                 TurnCard(turn.maneuver, turn.exit, null, turn.text)
             // The street on its own line, and the instruction when the map
             // names none: "Turn left" says more than an empty line under a left arrow.
@@ -2994,7 +2996,7 @@ class Dashboard @JvmOverloads constructor(
 
     /**
      * The trip panel (P7.4), or null with no route. The arrival time is [nowMillis] plus
-     * BRouter's own time to the destination from the last fix, so a parked vehicle's
+     * the router's own time to the destination from the last fix, so a parked vehicle's
      * arrival slips as the clock runs, as it should; all of it is in whole minutes and
      * rounded distances, so the chrome repaints about once a minute, not every frame.
      */
@@ -3021,6 +3023,7 @@ class Dashboard @JvmOverloads constructor(
             arrived = arrived,
             rerouting = rerouting,
             searching = searching,
+            noMap = turn.text == UpcomingTurn.NO_MAP,
             endPressed = pressedEndRoute,
             voiceOn = voiceOn,
             voiceWarning = !speechAvailable,

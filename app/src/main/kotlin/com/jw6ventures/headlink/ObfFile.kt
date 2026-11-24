@@ -34,8 +34,7 @@ class ObfToc(
 )
 
 /**
- * OsmAnd's `.obf` map file, read in place: the address and POI sections, and the routing
- * sections' roads for exit signs ([ObfRouteReader]).
+ * OsmAnd's `.obf` map file, read in place: the address and POI sections.
  *
  * Written fresh from OsmAnd's own reader (`BinaryMapIndexReader`,
  * `BinaryMapAddressReaderAdapter`, `BinaryMapPoiReaderAdapter` at OsmAnd `b75433b`) and
@@ -47,8 +46,7 @@ class ObfToc(
  *   [ObfWire], and the caches are guarded.
  * - **The table of contents is built here, in the constructor.** It reads the top-level
  *   fields, each address section's header and city-list offsets, and each POI section's
- *   name and bounds, and where each routing section is; every other section is passed
- *   over by its length, unread.
+ *   name and bounds; every other section is passed over by its length, unread.
  * - **Cities are read once and kept** ([cities]); **streets are read per city and kept in a
  *   bounded LRU** ([streets]); buildings are read per street and not kept.
  * - **The address name index is never read.** OsmAnd changed its layout in July 2026, so
@@ -65,14 +63,12 @@ class ObfFile @Throws(IOException::class) constructor(private val channel: FileC
 
     private val addressSections: List<AddressSection>
     private val poiSections: List<PoiSectionHeader>
-    private val routingSections: List<RoutingSectionHeader>
 
     init {
         val found = readToc()
         toc = found.toc
         addressSections = found.address
         poiSections = found.poi
-        routingSections = found.routing
     }
 
     override val bounds: GeoBox? = toc.sections.mapNotNull { it.bounds }.reduceOrNull { a, b ->
@@ -81,7 +77,6 @@ class ObfFile @Throws(IOException::class) constructor(private val channel: FileC
 
     private val address = ObfAddressReader(bytes, name, addressSections)
     private val poi = ObfPoiReader(bytes, name, poiSections)
-    private val route = ObfRouteReader(bytes, routingSections)
 
     @Throws(IOException::class)
     override fun cities(): List<ObfCity> = address.cities()
@@ -101,16 +96,6 @@ class ObfFile @Throws(IOException::class) constructor(private val channel: FileC
         centreLon: Double,
         nameQuery: String?,
     ): List<ObfPoi> = poi.pois(box, kinds, limit, centreLat, centreLon, nameQuery)
-
-    /** Whether the file has routing data: what [roadWays] reads. */
-    val hasRouting: Boolean get() = route.hasRouting
-
-    /**
-     * The roads in OsmAnd's routing data near [box], with their tags and their points'
-     * tags: where exit numbers and sign text are ([ExitSigns]). Empty with no routing data.
-     */
-    @Throws(IOException::class)
-    fun roadWays(box: GeoBox): List<ObfRoadWay> = route.ways(box)
 
     /** Each POI section's category keys and their subcategory keys, as the file's own table has them. */
     @Throws(IOException::class)
@@ -136,7 +121,6 @@ class ObfFile @Throws(IOException::class) constructor(private val channel: FileC
         val toc: ObfToc,
         val address: List<AddressSection>,
         val poi: List<PoiSectionHeader>,
-        val routing: List<RoutingSectionHeader>,
     )
 
     private fun readToc(): Found {
@@ -148,7 +132,6 @@ class ObfFile @Throws(IOException::class) constructor(private val channel: FileC
         val sections = ArrayList<ObfSection>()
         val address = ArrayList<AddressSection>()
         val poi = ArrayList<PoiSectionHeader>()
-        val routing = ArrayList<RoutingSectionHeader>()
         while (true) {
             val tag = wire.readTag()
             if (tag == 0) break
@@ -173,12 +156,8 @@ class ObfFile @Throws(IOException::class) constructor(private val channel: FileC
                     wire.seek(start + length)
                 }
                 F_ROUTING_INDEX -> {
-                    // Only where it is: read when exits are first asked for, and still a
-                    // section passed over here.
-                    val length = wire.readLength(tag)
-                    routing += RoutingSectionHeader(wire.position, length)
                     skipped++
-                    wire.skip(length)
+                    wire.skip(wire.readLength(tag))
                 }
                 else -> {
                     if (tag and 7 == ObfWire.WIRE_BIG_LENGTH) skipped++
@@ -187,7 +166,7 @@ class ObfFile @Throws(IOException::class) constructor(private val channel: FileC
             }
         }
         if (version < 0) throw IOException("$name: no OBF version field")
-        return Found(ObfToc(version, date, confirm == version, sections, skipped), address, poi, routing)
+        return Found(ObfToc(version, date, confirm == version, sections, skipped), address, poi)
     }
 
     private fun readAddressHeader(wire: ObfWire, start: Long, length: Long): AddressSection {

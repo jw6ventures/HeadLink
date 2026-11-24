@@ -217,28 +217,24 @@ public final class StatusTextTest {
         check(clamped.getMetres() == 0.0 && clamped.getSeconds() == 0 && clamped.getArrivalMillis() == now, "never negative");
     }
 
-    private static List<SetupItem> items(int maps, Set<String> tiles, String here, boolean wanted, boolean access,
-            boolean location, int pins, boolean notifications) {
-        return SETUP.items(maps, tiles, here, wanted, access, location, pins, notifications);
+    private static List<SetupItem> items(boolean folder, boolean wanted, boolean access, boolean location, int pins,
+            boolean notifications) {
+        return SETUP.items(folder, wanted, access, location, pins, notifications);
     }
 
     /** Everything else in place, and P10's two weather parameters as given. */
     private static List<SetupItem> weather(boolean location, boolean on, boolean permission) {
-        return SETUP.items(1, Set.of("W100_N30.rd5"), null, true, true, location, 1, true, on, permission);
+        return SETUP.items(true, true, true, location, 1, true, on, permission);
     }
 
     private static void setupChecklist() {
-        Set<String> tiles = Set.of("W100_N30.rd5");
-        check(items(1, tiles, "W100_N30.rd5", true, true, true, 1, true).isEmpty(), "everything in place is Ready");
-        check(items(0, Set.of(), null, true, false, false, 0, false).equals(List.of(
-                SetupItem.NO_PINS, SetupItem.NO_MAP, SetupItem.NO_ROUTING, SetupItem.NOTIFICATION_ACCESS,
+        check(items(true, true, true, true, 1, true).isEmpty(), "everything in place is Ready");
+        check(items(false, true, false, false, 0, false).equals(List.of(
+                SetupItem.NO_PINS, SetupItem.NO_OSMAND_MAPS, SetupItem.NOTIFICATION_ACCESS,
                 SetupItem.LOCATION, SetupItem.SESSION_NOTIFICATIONS)), "everything missing: trust first, optional last");
-        check(items(1, tiles, "W75_N40.rd5", true, true, true, 1, true).equals(List.of(SetupItem.NO_ROUTING_HERE)),
-                "tiles, but none for where the phone is");
-        check(items(1, tiles, null, true, true, true, 1, true).isEmpty(), "no position: nothing to say about it");
-        check(items(1, Set.of(), "W100_N30.rd5", true, true, true, 1, true).equals(List.of(SetupItem.NO_ROUTING)),
-                "no tiles at all is the one item, not two");
-        check(items(1, tiles, null, false, false, true, 1, true).isEmpty(), "access is only missing when something wants it");
+        check(items(false, true, true, true, 1, true).equals(List.of(SetupItem.NO_OSMAND_MAPS)),
+                "no maps folder is the one item: the map and routes read nothing else");
+        check(items(true, false, false, true, 1, true).isEmpty(), "access is only missing when something wants it");
         // P10 (docs/dashboard.md, "Weather"): only while Show weather is on, after location.
         check(weather(true, true, false).equals(List.of(SetupItem.WEATHER_PERMISSION)),
                 "weather on without Breezy's permission is the one item");
@@ -247,30 +243,16 @@ public final class StatusTextTest {
         check(weather(true, false, true).isEmpty(), "weather off with the permission adds nothing either");
         check(weather(false, true, false).equals(List.of(SetupItem.WEATHER_PERMISSION, SetupItem.LOCATION)),
                 "it comes before the optional location");
-        check(SETUP.items(0, Set.of(), null, true, false, false, 0, false, true, false).equals(List.of(
-                SetupItem.NO_PINS, SetupItem.NO_MAP, SetupItem.NO_ROUTING, SetupItem.NOTIFICATION_ACCESS,
+        check(SETUP.items(false, true, false, false, 0, false, true, false).equals(List.of(
+                SetupItem.NO_PINS, SetupItem.NO_OSMAND_MAPS, SetupItem.NOTIFICATION_ACCESS,
                 SetupItem.WEATHER_PERMISSION, SetupItem.LOCATION, SetupItem.SESSION_NOTIFICATIONS)),
                 "everything missing with weather on, in order");
-        // 0.9: OsmAnd's maps by default. With a folder, no .map or .rd5 is asked for.
-        Set<String> none = Set.of();
-        check(SETUP.items(0, none, "W100_N30.rd5", true, true, true, 1, true, false, true, true, true, true).isEmpty(),
-                "both set to OsmAnd with a folder chosen is Ready with no .map or .rd5");
-        check(SETUP.items(0, none, null, true, true, true, 1, true, false, true, true, true, false)
-                .equals(List.of(SetupItem.NO_OSMAND_MAPS)), "without a folder, it is the one item, not three");
-        check(SETUP.items(1, tiles, null, true, true, true, 1, true, false, true, true, true, false).isEmpty(),
-                "without a folder but with the old files to fall back on, nothing is missing");
-        check(SETUP.items(1, tiles, "W75_N40.rd5", true, true, true, 1, true, false, true, true, true, true).isEmpty(),
-                "routing from OsmAnd's maps asks for no tile where the phone is");
-        check(SETUP.items(0, none, null, true, true, true, 1, true, false, true, true, false, true)
-                .equals(List.of(SetupItem.NO_ROUTING)), "routing switched to BRouter still wants its tiles");
-        check(SETUP.items(0, none, null, true, true, true, 1, true, false, true, false, true, true)
-                .equals(List.of(SetupItem.NO_MAP)), "and the map switched to Mapsforge its file");
         // Declining location or the session notification still leaves Setup Ready.
         for (SetupItem item : SetupItem.values()) {
             boolean optional = item == SetupItem.LOCATION || item == SetupItem.SESSION_NOTIFICATIONS;
             check(item.getOptional() == optional, item + (optional ? " is optional" : " is required"));
         }
-        List<SetupItem> declined = items(1, tiles, null, true, true, false, 1, false);
+        List<SetupItem> declined = items(true, true, true, false, 1, false);
         check(declined.size() == 2 && declined.stream().allMatch(SetupItem::getOptional),
                 "only optional items left");
         check(SetupItem.WEATHER_PERMISSION.getTitle().equals("Weather permission not granted")

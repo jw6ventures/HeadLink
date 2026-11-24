@@ -117,15 +117,12 @@ object ObfRules {
     private fun maps(n: Int): String = if (n == 1) "1 map" else "$n maps"
 
     /**
-     * Which persisted grant is which: the drop folder's reads and writes, the
-     * maps folder's only reads. Each folder's choice gives up only earlier grants of its
-     * own kind, so choosing one never drops the other. Both are folder (tree) grants; the
-     * speech model's read grant is on a single file ([isSpeechModelGrant]), so neither
-     * folder's choice touches it.
+     * The maps folder's persisted grant: a folder (tree) grant to read only. A folder grant
+     * that also writes is not one this app takes: [LegacyData] releases any an older
+     * version left, and [ObfLibrary.choose] drops the write from the folder it chooses. The
+     * speech model's read grant is on a single file ([isSpeechModelGrant]), so choosing a
+     * maps folder never touches it.
      */
-    @JvmOverloads
-    fun isDropGrant(read: Boolean, write: Boolean, tree: Boolean = true): Boolean = tree && read && write
-
     @JvmOverloads
     fun isMapsGrant(read: Boolean, write: Boolean, tree: Boolean = true): Boolean = tree && read && !write
 
@@ -138,8 +135,8 @@ object ObfRules {
 
 /**
  * The read-only maps folder (docs/navigation.md, P11.1): OsmAnd's `.obf` files, read in
- * place through a persisted **read-only** grant, kept apart from [DropFolder]'s read+write
- * one. Opens each file through [ParcelFileDescriptor] as a [FileChannel] for positional
+ * place through a persisted **read-only** grant. Opens each file through
+ * [ParcelFileDescriptor] as a [FileChannel] for positional
  * reads, and keeps it open while a projection is attached or the connection screen is in
  * front ([hold]); closes everything otherwise.
  *
@@ -238,20 +235,22 @@ object ObfLibrary {
 
     /**
      * Makes [tree] the maps folder: takes a persisted read-only grant on it, lets go of
-     * any earlier read-only grant (never the drop folder's read+write one), and reads it.
-     * False, changing nothing, when [tree] is already the drop folder: its read+write
-     * grant would hide the read-only one. Main thread; throws [SecurityException] when
-     * the grant cannot be kept.
+     * any earlier one, and reads it. Android keeps one persisted entry per URI and adds
+     * modes to it, so a folder that already holds a write (an older version's drop folder)
+     * has the write released, leaving the read-only grant [ObfRules.isMapsGrant] finds.
+     * Main thread; throws [SecurityException] when the grant cannot be kept.
      */
-    fun choose(context: Context, tree: Uri): Boolean {
+    fun choose(context: Context, tree: Uri) {
         val app = context.applicationContext
         val resolver = app.contentResolver
         val grants = resolver.persistedUriPermissions
-        if (grants.any { it.uri == tree && ObfRules.isDropGrant(it.isReadPermission, it.isWritePermission, DocumentsContract.isTreeUri(it.uri)) }) return false
         grants
             .filter { it.uri != tree && ObfRules.isMapsGrant(it.isReadPermission, it.isWritePermission, DocumentsContract.isTreeUri(it.uri)) }
             .forEach { resolver.releasePersistableUriPermission(it.uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
         resolver.takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        if (grants.any { it.uri == tree && it.isWritePermission }) {
+            resolver.releasePersistableUriPermission(tree, Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+        }
         SessionController.note("maps folder chosen")
         // Everything open came from the old folder; the listing after it opens the new one.
         // One task, so a refresh queued before the choice cannot list the old folder
@@ -260,7 +259,11 @@ object ObfLibrary {
             close()
             relist(app)
         }
-        return true
+        // The last listing is the old folder's: a route asked for before the relist above
+        // runs must list again on the routing thread rather than refuse from it. Then a
+        // destination refused for want of a map is asked for again against the new maps.
+        synchronized(lock) { listedAt = 0L }
+        Navigation.mapsChanged(app)
     }
 
     /**

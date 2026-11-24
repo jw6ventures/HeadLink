@@ -98,7 +98,7 @@ object SessionReport {
             appendLine(SessionController.projectionReport.ifEmpty { "projection=-" }.trimEnd())
             appendLine()
             appendLine("[routing]")
-            appendLine(Routing.report(context).trimEnd())
+            appendLine(Routing.report().trimEnd())
             appendLine()
             // P9: counts, minutes and booleans; never a box, a road, a reason or the key.
             appendLine("[traffic]")

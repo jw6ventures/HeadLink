@@ -81,8 +81,8 @@
     <m e="way">
 
         <!--###### PASS 1: AREAS ######-->
-        <!-- Sea and the land on it, from OsmAnd's coastlines (ObfMapTiles.coast) or a
-             Mapsforge file's sea polygons: first, so everything else draws over them. -->
+        <!-- Sea and the land on it, from OsmAnd's coastlines (ObfMapTiles.coast): first,
+             so everything else draws over them. -->
         <m k="natural" v="sea">
             <area fill="#aac6dc" />
         </m>
@@ -147,15 +147,13 @@
                 <line use="casing-arterial" />
             </m>
             <m v="motorway|motorway_link|trunk|trunk_link" zoom-min="8">
-                <!-- The Mapsforge writer stores toll=yes and toll=true as `tl_yes`, so
-                     both values are matched, and the second rule is the exact complement
-                     of the first (`-` is an absent key or any unlisted value). Without
-                     `tl_yes` every toll road draws no line at all; see the Texas drive
-                     note in dashboard-dark.xml. -->
-                <m k="toll" v="tl_yes|yes|true">
+                <!-- The second rule is the exact complement of the first (`-` is an
+                     absent key or any unlisted value), so no toll value draws no line at
+                     all; see the Texas drive note in dashboard-dark.xml. -->
+                <m k="toll" v="yes|true">
                     <line use="casing-toll" />
                 </m>
-                <m k="toll" v="-|tl_yes|yes|true">
+                <m k="toll" v="-|yes|true">
                     <line use="casing-motorway" />
                 </m>
             </m>
@@ -176,18 +174,18 @@
                 <line use="arterial" />
             </m>
             <m v="motorway|trunk" zoom-min="8">
-                <m k="toll" v="tl_yes|yes|true">
+                <m k="toll" v="yes|true">
                     <line use="toll" />
                 </m>
-                <m k="toll" v="-|tl_yes|yes|true">
+                <m k="toll" v="-|yes|true">
                     <line use="motorway" />
                 </m>
             </m>
             <m v="motorway_link|trunk_link" zoom-min="10">
-                <m k="toll" v="tl_yes|yes|true">
+                <m k="toll" v="yes|true">
                     <line use="toll-link" />
                 </m>
-                <m k="toll" v="-|tl_yes|yes|true">
+                <m k="toll" v="-|yes|true">
                     <line use="motorway-link" />
                 </m>
             </m>

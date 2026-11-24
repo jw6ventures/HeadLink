@@ -124,8 +124,6 @@ data class AttemptSettings(
      * reports metres per second, so nothing about this reaches the native session.
      */
     val speedUnit: SpeedUnit = SpeedUnit.MPH,
-    /** Mapsforge file to render, or null to take the newest one the app has installed. */
-    val mapFile: String? = null,
     /**
      * Lab transport instead of the USB accessory: an abstract local socket name. Debug
      * builds only, set by an explicit intent extra for the emulator lab run; never used

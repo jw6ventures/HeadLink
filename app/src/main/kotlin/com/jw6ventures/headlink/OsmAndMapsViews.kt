@@ -92,7 +92,7 @@ class SearchSuggestions(
 }
 
 /**
- * Settings → OsmAnd maps (P11.1, docs/navigation.md, "OsmAnd maps: search and places"): the folder, its status,
+ * Maps → OsmAnd maps (P11.1, docs/navigation.md, "OsmAnd maps: search and places"): the folder, its status,
  * where OsmAnd's own setting is, and the marker and search-ahead choices ([PoiSettings]).
  * Distances are stored in miles and shown in the dashboard's speed unit.
  */

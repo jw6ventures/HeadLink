@@ -30,7 +30,7 @@ class PreviewRequest @JvmOverloads constructor(
     val route: Route,
     val nogos: List<Nogo> = emptyList(),
 ) {
-    /** The request for BRouter's alternative [index] over the same trip. */
+    /** The request for the engine's own alternative [index] over the same trip. */
     fun alternative(index: Int): RouteRequest =
         RouteRequest(fromLat, fromLon, toLat, toLon, startBearing, options, index, nogos = nogos)
 
@@ -41,27 +41,26 @@ class PreviewRequest @JvmOverloads constructor(
 
 /**
  * The preview's alternatives: routes that leave the route on show where they have to and
- * rejoin it where that is best, rather than BRouter's own alternatives, which avoid every
- * road the best route uses.
+ * rejoin it where that is best, rather than the engine's own alternatives, which avoid
+ * every road the best route uses.
  *
- * BRouter finds its alternative *k* by searching again with each road an earlier route
- * used costing its length over again. That penalty is fixed in the engine (`OsmPath`, in
- * the `final` kinematic path), and it is strong: around Austin its alternatives shared
- * under a tenth of the best route's points and ran 30 to 100 minutes longer. Austin to
- * Temple offered 91 and 101 minutes against 65; a driver would rather leave I 35 for a
- * stretch and come back to it.
+ * The engine finds its alternative *k* by searching again with each road an earlier route
+ * used costing its time over again ([RouteRequest.alternative]), and that is strong: with
+ * the engine before OsmAnd's, around Austin its alternatives shared under a tenth of the
+ * best route's points and ran 30 to 100 minutes longer. Austin to Temple offered 91 and
+ * 101 minutes against 65; a driver would rather leave I 35 for a stretch and come back to it.
  *
- * So each of BRouter's alternatives is used only to find **a different corridor**: a few
- * of its points ([FRACTIONS] of the way along) that are at least [minimumDeviation] from
- * the route on show become candidate via points, and the ordinary best route through each
- * one is computed. The fastest that is not a U-turn at its via point and not a
+ * So each of the engine's alternatives is used only to find **a different corridor**: a
+ * few of its points ([FRACTIONS] of the way along) that are at least [minimumDeviation]
+ * from the route on show become candidate via points, and the ordinary best route through
+ * each one is computed. The fastest that is not a U-turn at its via point and not a
  * [RoutePreview.duplicate] of a route already offered is the alternative. When none is,
- * BRouter's own alternative is offered instead, if it is not a duplicate itself. Around
+ * the engine's own alternative is offered instead, if it is not a duplicate itself. Around
  * Austin this gave Temple 71 minutes sharing 55% with the best route, College Station 134
  * against 131 sharing 58%, and Dallas 204 against 176 sharing 70%.
  *
- * Costly: BRouter's alternative *k* is *k*+1 searches, and each candidate is another. Each
- * alternative is handed to [find]'s callback as soon as it is chosen.
+ * Costly: the engine's alternative *k* is *k*+1 searches, and each candidate is another.
+ * Each alternative is handed to [find]'s callback as soon as it is chosen.
  */
 class AlternativeFinder(
     private val router: RouteEngine,
@@ -117,7 +116,7 @@ class AlternativeFinder(
     }
 
     companion object {
-        /** Where along BRouter's alternative a via point is tried. */
+        /** Where along the engine's alternative a via point is tried. */
         val FRACTIONS = listOf(0.3, 0.5, 0.7)
 
         /**
@@ -183,12 +182,12 @@ class AlternativeFinder(
  * a file left by another build is refused rather than misread.
  */
 object RoutePreview {
-    /** How many of BRouter's alternatives the preview asks for, beyond the route itself. */
+    /** How many of the engine's alternatives the preview asks for, beyond the route itself. */
     const val ALTERNATIVES = 2
 
     /**
      * An alternative sharing more than this fraction of its points with a route already
-     * on offer is dropped as the same route. BRouter prices the roads earlier searches
+     * on offer is dropped as the same route. The engine prices the roads earlier searches
      * used, so on the Texas trips measured they shared under a fifth.
      */
     const val DUPLICATE_SHARE = 0.8
@@ -208,7 +207,7 @@ object RoutePreview {
         out.writeDouble(request.toLon)
         out.writeDouble(request.startBearing ?: Double.NaN)
         val o = request.options
-        for (flag in listOf(o.avoidHighways, o.avoidTolls, o.avoidUnpaved, o.bypassTowns, o.allowTracks, o.learnPace, o.showAlternatives, o.osmAndRouting)) {
+        for (flag in listOf(o.avoidHighways, o.avoidTolls, o.avoidUnpaved, o.bypassTowns, o.allowTracks, o.learnPace, o.showAlternatives)) {
             out.writeBoolean(flag)
         }
         out.writeInt(o.topSpeedKmh)
@@ -218,13 +217,17 @@ object RoutePreview {
 
     @Throws(IOException::class)
     fun readRequest(file: File): PreviewRequest = read(file) { input ->
+        // A request is only ever read by the build that wrote it, a moment before; one
+        // left by another build is refused rather than read with the wrong flags.
+        val version = (input as VersionedInput).version
+        if (version != VERSION) throw IOException("preview request version $version, expected $VERSION")
         val token = input.readLong()
         val fromLat = input.readDouble()
         val fromLon = input.readDouble()
         val toLat = input.readDouble()
         val toLon = input.readDouble()
         val bearing = input.readDouble().takeUnless { it.isNaN() }
-        val flags = BooleanArray(8) { input.readBoolean() }
+        val flags = BooleanArray(7) { input.readBoolean() }
         val options = RouteOptions(
             avoidHighways = flags[0],
             avoidTolls = flags[1],
@@ -233,7 +236,6 @@ object RoutePreview {
             allowTracks = flags[4],
             learnPace = flags[5],
             showAlternatives = flags[6],
-            osmAndRouting = flags[7],
             topSpeedKmh = input.readInt(),
             etaPercent = input.readInt(),
         ).repaired()
@@ -438,7 +440,7 @@ object RoutePreview {
         return metres.takeIf { it.isNotEmpty() }
     }
 
-    /** The share of [candidate]'s points that are also points of [other]: BRouter reuses node positions exactly. */
+    /** The share of [candidate]'s points that are also points of [other]: routes over one road share its points exactly. */
     fun shared(candidate: Route, other: Route): Double {
         val points = HashSet<Long>(other.points * 2)
         for (i in 0 until other.points) points += key(other.latitudes[i], other.longitudes[i])
@@ -470,8 +472,12 @@ object RoutePreview {
     private fun key(lat: Double, lon: Double): Long =
         (Math.round(lat * 1e6) shl 32) xor (Math.round(lon * 1e6) and 0xFFFFFFFFL)
 
-    /** 2: routes carry their via point. 3: and whether traffic shaped them (P9). 4: and their exit signs. */
-    private const val VERSION = 5
+    /**
+     * 2: routes carry their via point. 3: and whether traffic shaped them (P9). 4: and their
+     * exit signs. 5: and their pace classes and time scale. 6: a preview request carries
+     * one flag fewer; routes are as at 5.
+     */
+    private const val VERSION = 6
     /** The oldest still read: 2, written before P9, as when 3 was current. */
     private const val OLDEST_VERSION = 2
 

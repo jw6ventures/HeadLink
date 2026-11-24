@@ -20,16 +20,16 @@ import java.util.logging.Level
 import java.util.logging.Logger
 
 /**
- * The map pane's tiles from OsmAnd's `.obf` maps instead of a Mapsforge `.map` file
- * (docs/navigation.md, "Drawing the map from OsmAnd maps"), behind Settings -> Map ->
- * Draw map from OsmAnd files. Pure JVM, so the host tests run it.
+ * The map pane's tiles from OsmAnd's `.obf` maps in the chosen maps folder
+ * (docs/navigation.md, "Drawing the map from OsmAnd maps"). Pure JVM, so the host tests
+ * run it.
  *
  * **Readers.** Each of VTM's tile loader threads gets its own [Reader], and each opens its
  * own [BinaryMapIndexReader] per file: OsmAnd's reader keeps a stream position and fills
  * shared index structures lazily, so readers are never shared between threads. A reader
  * per thread costs one table-of-contents read per file, once.
  *
- * Above [overZoom] tiles are cut from the tile one level up, as VTM does for Mapsforge.
+ * Above [overZoom] tiles are cut from the tile one level up, as VTM does for its own sources.
  */
 class ObfMapSource(
     private val maps: () -> List<OsmAndRouter.MapFile>,

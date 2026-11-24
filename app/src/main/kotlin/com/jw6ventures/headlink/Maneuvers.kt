@@ -14,27 +14,29 @@ class Maneuver(
 )
 
 /**
- * BRouter's turn commands, read as the cluster's maneuvers (P6.5).
+ * The routing engine's turn commands ([TurnCommand]), read as the cluster's maneuvers (P6.5).
  *
- * **The mapping is a reading of two schemas, not an observation.** BRouter's side is its
- * own source; the cluster's is `ManeuverTypeEnum.proto`, which upstream marks
- * `confidence: unverified` and says maps 1:1 onto Android's `Maneuver.TYPE_*`. Nothing
- * branches on the names, the report carries the raw values, and whether Ford draws the
- * icon these values ask for is an open P6 question a drive answers.
+ * **The mapping is a reading of two schemas, not an observation.** The command side is
+ * [OsmAndRouter.command]'s reading of OsmAnd's turn types; the cluster's is
+ * `ManeuverTypeEnum.proto`, which upstream marks `confidence: unverified` and says maps 1:1
+ * onto Android's `Maneuver.TYPE_*`. Nothing branches on the names, the report carries the
+ * raw values, and whether Ford draws the icon these values ask for is an open P6 question
+ * a drive answers.
  *
  * Choices worth stating:
  *
- * - **Roundabouts are counter-clockwise.** BRouter's `RNDB` carries a positive exit number
- *   and is the right-hand-traffic roundabout, which turns counter-clockwise seen from
- *   above; `RNLB` is the left-hand-traffic one. The vehicle is a US truck. (P6.2's script
- *   used the clockwise value; it was a demonstration and drove nowhere.)
+ * - **Roundabouts are counter-clockwise.** [TurnCommand.ROUNDABOUT] carries a positive exit
+ *   number and is the right-hand-traffic roundabout, which turns counter-clockwise seen
+ *   from above; [TurnCommand.ROUNDABOUT_LEFT] is the left-hand-traffic one. The vehicle is
+ *   a US truck. (P6.2's script used the clockwise value; it was a demonstration and drove
+ *   nowhere.)
  * - **A 180° U-turn is a left one**, for the same right-hand-traffic reason.
- * - **BRouter's `EL`/`ER` are motorway exits**, so they are the slight off-ramps.
- * - **`OFFR` and `BL` are not maneuvers.** Off-route is a hint for a client that is
- *   already lost, and beeline hints appear only in turn-instruction modes this app does not
- *   use; both are skipped rather than put on a cluster as something to do.
- * - **The instruction here names no road**, because BRouter's data carries no names;
- *   [instruction] adds the one [StreetNames] read from the map, when there is one.
+ * - **[TurnCommand.EXIT_LEFT]/[TurnCommand.EXIT_RIGHT] are motorway exits**, so they are
+ *   the slight off-ramps.
+ * - **[TurnCommand.OFF_ROUTE] and [TurnCommand.BEELINE] are not maneuvers**, and are
+ *   skipped rather than put on a cluster as something to do.
+ * - **The maneuver names no road**: [instruction] adds the one the route's own road
+ *   names give, when there is one.
  */
 object Maneuvers {
     const val UNKNOWN = 0
@@ -55,7 +57,7 @@ object Maneuvers {
     const val STRAIGHT = 36
     const val DESTINATION = 39
 
-    /** The maneuver BRouter's [command] and [exit] describe, or null when it is not one. */
+    /** The maneuver the engine's [command] and [exit] describe, or null when it is not one. */
     fun of(command: Int, exit: Int): Maneuver? = when (command) {
         TurnCommand.CONTINUE -> Maneuver(STRAIGHT, 0, "Continue straight")
         TurnCommand.TURN_LEFT -> Maneuver(TURN_NORMAL_LEFT, 0, "Turn left")
@@ -138,7 +140,7 @@ object Maneuvers {
         OFF_RAMP_SLIGHT_RIGHT -> ManeuverGlyph(GlyphShape.RAMP, 45, 0)
         U_TURN_LEFT -> ManeuverGlyph(GlyphShape.U_TURN, -180, 0)
         U_TURN_RIGHT -> ManeuverGlyph(GlyphShape.U_TURN, 180, 0)
-        // The exit is the one thing about a roundabout this source knows: BRouter gives
+        // The exit is the one thing about a roundabout this source knows: the command gives
         // no angle for it (and the wire leaves `roundabout_turn_angle` absent for the same
         // reason), so the glyph is the ring, its direction of travel, and the number.
         ROUNDABOUT_ENTER_AND_EXIT_CCW -> ManeuverGlyph(GlyphShape.ROUNDABOUT, -1, exit)

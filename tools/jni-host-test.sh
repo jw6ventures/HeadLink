@@ -23,56 +23,71 @@
 #   both call routes, the pop-up keypad and its tones, the answer and decline colours in
 #   both palettes, and that no report, note or printed snapshot carries a caller, a
 #   notification or a keypad digit.
-# * RoutingTest: P6.3's tile naming, profile copy, checked .rd5 import and routing-thread
-#   rules over the vendored BRouter jar. ROUTING_SEGMENTS=<dir holding W75_N40.rd5> adds
-#   real routes; the tile is 119 MB and not in the repository, so by default it is skipped
-#   and the summary line says so.
+# * RoutePlannerTest: the routing thread over a stand-in RouteEngine - a typed request read
+#   as two points or nothing, a newer request superseding one in progress and stopping its
+#   search through the handle, an engine's refusal, a crash or running out of memory failing
+#   the route and not the thread, and the engine only ever built on the routing thread.
+#   OBF_DIR with Us_massachusetts_northamerica.obf adds OsmAnd routes through the planner
+#   (across town to Boston Common, the same answer twice, a long search stopped by a second
+#   destination) under -Xmx256m, and with the Austin and Waco maps Austin to Waco over two
+#   files; without them the summary line says what was skipped.
 # * AdaptiveZoomTest: the follow view's zoom by speed band, the waits before zooming out
 #   and in, the margin at a band's edge, the glide, that a pinch or +/- holds the zoom
 #   until recentre, that a panned map is left alone, and the settings' repair.
-# * RouteOptionsTest: Maps & routing -> Route preferences: the profile parameters each
-#   switch sends, repair, labels, the time adjustment, the stored keys, Learn my pace and
-#   its pace learned across drives (kinds of road, buckets, fading, saved text),
-#   over synthetic drives. ROUTING_SEGMENTS with W100_N30.rd5 adds Austin routes (Avoid toll
-#   roads leaves SH 130, 56 against 75 mph); with it or W75_N40.rd5, that each route's
-#   switches reach BRouter even when its profile cache would have reused the last ones.
-# * RoutePreviewTest: the route preview's request and choice files (round trip and
-#   refusals), each option's main road, duplicate alternatives and the box the map fits.
-#   ROUTING_SEGMENTS with W100_N30.rd5 adds BRouter's real alternatives around Austin.
-# * StreetNamesTest: road names read from the map onto a route's maneuvers, the cluster
-#   instruction that names them, and the dashboard header's turn line. ROUTING_SEGMENTS
-#   with W75_N40.rd5 and MAP_FILE covering Lexington to Boston add a real route.
-# * ExitSignsTest: exit numbers and sign text from OsmAnd's routing section - a synthetic
-#   .obf built from the proto (rules, the box tree with a pruned child, points, point tags,
-#   the string table), an exit, a "keep left" past one, an on-ramp driven against its stored
-#   order, the card, cluster and spoken words, and the route file. No real file yet.
+# * RouteOptionsTest: Maps & routing -> Route preferences: repair, labels, the time
+#   adjustment, the stored keys, Learn my pace and its pace learned across drives (kinds of
+#   road, buckets, fading, saved text), over synthetic drives. OBF_DIR with
+#   Us_texas_austin_northamerica.obf (and the San Antonio map if present) adds OsmAndRouter
+#   routes from Pflugerville to Mustang Ridge: SH 130 by default, Avoid toll roads staying
+#   west of it and slower, 56 mph timing it over 10% longer, +20% as 20%, and avoid-tolls
+#   right after avoid-highways still avoiding tolls. The profile's parameters are
+#   OsmAndRoutingTest's.
+# * RoutePreviewTest: the route preview's request and choice files (round trip, request
+#   format 6 with 7 flags, a version 5 request refused), each option's main road, duplicate
+#   alternatives, the box the map fits, alternatives by number, the via point, the saved
+#   route, its remainder and the live alternatives' labels. OBF_DIR with the Austin map adds
+#   OsmAndRouter's alternatives 1 and 2 to Round Rock (other roads, none faster than the
+#   best); with Us_texas_waco_northamerica.obf too, AlternativeFinder's Austin to Temple
+#   alternatives (sharing part of the best, no slower than the router's own first, never
+#   repeated).
+# * GuidanceTest: turn commands as cluster maneuvers (the pinned numbering), and
+#   RouteFollower joining, leaving and arriving. OBF_DIR with
+#   Us_massachusetts_northamerica.obf adds OsmAndRouter's Lexington to Boston route followed
+#   end to end (one destination, times never going back) and a re-route, given a heading,
+#   from where lab-receiver/drives/lexington.csv leaves it.
+# * RoadNamesTest: the road each stretch of a route lies on, OsmAndRouter's label for it over
+#   SyntheticObf's roads (name over ref, ref alone, nothing for a blank name), the cluster
+#   instruction that names the road turned onto, the road being driven, and the turn card's
+#   lines and units. OBF_DIR with Us_massachusetts_northamerica.obf adds OsmAnd's names on a
+#   real cross-town route in Lexington to Boston.
 # * ObfMapTilesTest: the map drawn from OsmAnd's map data - a tile's 31-bit box, a road's
 #   tags, names and pixels, an area's hole, a building kept whole, points in and out of the
 #   tile, the sea from coastlines (a coast across the tile, an island, open sea), and that
-#   with no OsmAnd map data the map falls back to the Mapsforge file. Objects built in
-#   memory; no real file, no drawing.
+#   with no OsmAnd map data, or only routing data, no source opens and the pane shows its
+#   no-data ground. Objects built in memory; no real file, no drawing.
 # * OsmAndRoutingTest: OsmAnd's router (vendor/osmand) behind HeadLink's RouteEngine over
-#   ExitSignsTest's synthetic .obf - the exit maneuver with its number and signs, the times,
-#   a closure and a costly jam moving the route and a cheap one not, closures with no way
-#   round opened, the second alternative, a stopped search, no maps, the profile's
-#   parameters, and OsmAnd's errors stripped of coordinates. OBF_DIR with
+#   SyntheticObf's .obf (rules, the box tree with a pruned child, points, point tags, the
+#   string table) - the exit maneuver with its number and signs, no sign on the maneuver at
+#   the junction when the route stays on the motorway, an on-ramp driven against its stored
+#   order signed by destination:backward, the sign through the follower to the card, cluster and voice and
+#   through the route file, the times, a closure and a costly jam moving the route and a
+#   cheap one not, a destination, via point or dropped minus sign outside the maps refused,
+#   closures with no way round opened, the second alternative, a stopped search, no maps,
+#   the profile's parameters, and OsmAnd's errors stripped of coordinates. OBF_DIR with
 #   Us_texas_austin_northamerica.obf adds a 58 km route with a jam under the phone's 256 MB
 #   heap (the plain search's memory failure), and with the San Antonio map from another
 #   OsmAnd build, that the hierarchy is skipped. No phone.
 # * DestinationTest: P6.4's reading of what OsmAnd and other apps share — geo: URIs,
 #   OsmAnd's message text and links, bare pairs — its refusals, and the swapped-sign hint.
 #   Written against OsmAnd's source; only a real share on the phone confirms the strings.
-# * DropFolderTest: which dropped files are taken, waited for or left, and the map
-#   import's refusal of a file cut short. The document API itself needs a device.
 # * ObfLibraryTest: P11.1's maps folder - which files are opened (no .obf.download, contour,
 #   Wikipedia or basemap), a replaced file's new key, regions from OsmAnd's names, which
-#   persisted grant each folder keeps, the card's status lines, and Settings -> OsmAnd maps'
-#   defaults, repair and stored keys. The grants and the document API need a device.
-# * MapReadGuardTest: the map's retry of tiles VTM read badly and reported as loaded.
-#   MAP_FILE=<Mapsforge file covering 42.42,-71.21> adds a pass through VTM's own reader;
-#   without it the summary line says that pass was skipped.
+#   persisted grant is the maps folder and which the speech model, the card's status lines,
+#   and Settings -> OsmAnd maps' defaults, repair and stored keys. The grants and the
+#   document API need a device.
 # * MapThemeTest: P7.6's day map theme has the night theme's rules in the same order,
-#   every style it uses, tl_yes toll matching, no route cyan, and legible labels.
+#   every style it uses, toll rules on the toll=yes/true values OsmAnd's maps carry and no
+#   other, no route cyan, and legible labels.
 # * AppSettingsTest: P7.1's saved settings — that a first launch builds the attempt the
 #   screen built before, the stage conditions, the stored form and its repair — the marker
 #   colours and day/night cycle, and every branch of the plug-in auto-start rule; since
@@ -108,16 +123,17 @@
 #   stretches laid on a route (same carriageway, the other one 30 m off and reversed, a
 #   frontage road, an overpass, subSegments, a no-data gap, closures), the delay, and the
 #   nogos' placement (8 m, 30 m end margin, 150 m spacing, hard vs weighted, short closures,
-#   crossings, the cap). ROUTING_SEGMENTS with W100_N30.rd5 adds BRouter's route up I-35E in
-#   Dallas; without it the summary line says so.
-# * NogoRoutingTest: P9.5's traffic no-go points through RouteRequest and Router into the
-#   vendored BRouter, and TrafficCost's delay-to-cost conversion (car-vario's pw/cost0 and
-#   the link factor). ROUTING_SEGMENTS with W100_N30.rd5 adds real routes on I-35 in Austin
-#   and roads in Dallas and rural Texas: points reach BRouter, a closure blocks, a jam weighs
-#   about its delay, a vehicle on a closed road still gets out, nothing leaks into the next
-#   request, a jam cannot open a closure on the same link, the overpass and
-#   frontage-road cases, and relative timings with 50/200/400 points; with W105_N30.rd5 as
-#   well, that the top-speed step-down keeps the points.
+#   crossings, the cap). OBF_DIR with Us_texas_dallas_northamerica.obf adds the same on
+#   OsmAndRouter's route up I-35E (Stemmons Freeway) in Dallas; without it the summary line
+#   says so.
+# * NogoRoutingTest: P9.5's traffic no-go points - RouteRequest's validation, TrafficCost's
+#   delay-to-cost prices and the route's traffic marks. OBF_DIR with the Austin map adds I-35
+#   through OsmAndRouter: a heavy jam moves the route and a light one leaves it, a closure is
+#   driven round, jams at 0.3x and 3x the way round stay or leave on I-35 and RM 2222, a
+#   vehicle or destination on a closed stretch is still routed, a jam beside a closure does
+#   not open it, the overpass and frontage road are not charged, timings with 0/50/200/400
+#   points, and nothing carried to the next request; with the Victoria map, US 290 east of
+#   Bastrop, and with the Dallas map, US 75.
 # * DashboardTrafficTest: P9.3, P9.4 and P9.6 on the dashboard - which traffic runs colour
 #   the route line ahead (slow amber, queuing red, closed dashed dark red; none and free
 #   left to the route's own colour), merged and capped, cut at the vehicle in 50 m steps and
@@ -132,15 +148,16 @@
 #   without a followed route, with traffic off or keyless (the HTTP layer never called);
 #   the first fetch, the refresh cadence, retries, the monthly cap; one fetch after a
 #   re-route only when the last box no longer covers it, debounced; a response replaced
-#   whole, dropped when stale, off, keyless or at the route's end; the time as paced
-#   BRouter plus the delay ahead, free flow adding nothing and the pace never counting the
+#   whole, dropped when stale, off, keyless or at the route's end; the time as the route's
+#   paced time plus the delay ahead, free flow adding nothing and the pace never counting the
 #   delay; no-go points on every request, alternatives search and via route, with closures
 #   and jams laid on the route's own line; a closure ahead re-routing once and never on a
 #   route that opened closures; the offer at 3 minutes, Keep's suppression until 3 more,
 #   withdrawal past the split or when the saving goes, Take; Home's "+N min traffic"; and no
-#   place, road, reason or key in the report or event log. ROUTING_SEGMENTS with
-#   W100_N30.rd5 adds BRouter's I-35E route in Dallas: a closure laid on it is re-routed
-#   round, and a queue brings an offer.
+#   place, road, reason or key in the report or event log. OBF_DIR with
+#   Us_texas_dallas_northamerica.obf adds OsmAndRouter's I-35E route in Dallas: a closure
+#   laid on it is re-routed round once without opening it, and a queue brings an offer whose
+#   way round misses it.
 # * WeatherTest: P10's weather from Breezy - the provider's gzipped JSON read (every field,
 #   every optional one missing, unknown fields, not gzip, the wrong shape), the location
 #   chosen, the stale and far labels at their limits, alerts filtered and ordered, the
@@ -183,8 +200,9 @@
 #   per place), the corridor's query boxes ending at the destination, A and B 2 km either side
 #   and clamped, the detour's two short routes and arithmetic, the best-stop rule, the words in
 #   miles and km with and without a name or a stop, the via point's release, and a report of
-#   counts only. ROUTING_SEGMENTS with W100_N30.rd5 and OBF_DIR with the Austin file add a real
-#   search north on I-35 toward Round Rock: gas in the corridor, BRouter's detours, timings.
+#   counts only. OBF_DIR with Us_texas_austin_northamerica.obf adds a real search north on
+#   I-35 from downtown Austin toward Round Rock: OsmAndRouter's route, gas in the corridor,
+#   the detours to the nearest five, timings.
 # * WirelessProbeTest: W0's wireless probe - the verdict for each way an SDP query can end,
 #   the UUID labels, and a report with no name or address that ends complete. The query,
 #   its broadcast and the Nearby devices prompt need a phone.
@@ -209,14 +227,13 @@
 #   WHISPER_MODEL=<a ggml model file> adds its load time and 5 s of silence; without it the
 #   summary line says so. The model file grant and the arm64 build need a phone.
 # LabDrive.java and LabTraffic.java are compiled here but not run: they are generators run
-# by hand, the second writing the P9 lab's stand-in HERE scenarios and traffic drive
+# by hand over an OBF_DIR holding Us_massachusetts_northamerica.obf, routing with
+# OsmAndRouter, the second writing the P9 lab's stand-in HERE scenarios and traffic drive
 # (tools/here-standin/, docs/verification.md).
 # See each test for scope; neither proves anything about ART or Android storage.
 set -eu
 classes=app/build/intermediates/built_in_kotlinc/release/compileReleaseKotlin/classes
 [ -f "$classes/com/jw6ventures/headlink/NativeBridge.class" ] || { echo "jni-host-test: build the app first" >&2; exit 1; }
-brouter=vendor/brouter/build/libs/brouter.jar
-[ -f "$brouter" ] || { echo "jni-host-test: $brouter missing; build the app first" >&2; exit 1; }
 stdlib=$(find "$GRADLE_USER_HOME/caches/modules-2" -name kotlin-stdlib-2.2.10.jar | head -n 1)
 [ -n "$stdlib" ] || { echo "jni-host-test: kotlin-stdlib 2.2.10 not in the Gradle cache" >&2; exit 1; }
 vtm=$(find "$GRADLE_USER_HOME/caches/modules-2" -name vtm-0.25.0.jar | head -n 1)
@@ -233,26 +250,24 @@ cargo build -p aap-jni --release --offline --locked
 out=target/jni-host-test
 rm -rf "$out"
 mkdir -p "$out"
-javac -encoding UTF-8 -Xlint:all -Werror -d "$out" -cp "$classes:$stdlib:$brouter:$vtm:$osmand" tools/jni-host-test/*.java \
+javac -encoding UTF-8 -Xlint:all -Werror -d "$out" -cp "$classes:$stdlib:$vtm:$osmand" tools/jni-host-test/*.java \
     tools/breezy-standin/src/org/breezyweather/standin/Scenarios.java
 java -cp "$out:$classes:$stdlib" ReportStoreTest
 java -cp "$out:$classes:$stdlib" TrustStoreTest
 java -cp "$out:$classes:$stdlib" DemoSceneTest
 java -cp "$out:$classes:$stdlib" DashboardTest
-java -cp "$out:$classes:$stdlib:$brouter" DashboardTripTest
+java -cp "$out:$classes:$stdlib" DashboardTripTest
 java -cp "$out:$classes:$stdlib" DashboardFlexTest
 java -cp "$out:$classes:$stdlib" FavoritesTest
 java -cp "$out:$classes:$stdlib" AppSettingsTest
-java -cp "$out:$classes:$stdlib:$brouter" RoutingTest "${ROUTING_SEGMENTS:-}"
+java -Xmx256m -cp "$out:$classes:$stdlib:$osmand" RoutePlannerTest "${OBF_DIR:-}"
 java -cp "$out:$classes:$stdlib" AdaptiveZoomTest
-java -cp "$out:$classes:$stdlib:$brouter" RouteOptionsTest "${ROUTING_SEGMENTS:-}"
-java -cp "$out:$classes:$stdlib:$brouter" RoutePreviewTest "${ROUTING_SEGMENTS:-}"
-java -cp "$out:$classes:$stdlib:$brouter" GuidanceTest "${ROUTING_SEGMENTS:-}"
-java -cp "$out:$classes:$stdlib:$brouter:$vtm" StreetNamesTest "${ROUTING_SEGMENTS:-}" "${MAP_FILE:-}"
-java -cp "$out:$classes:$stdlib:$brouter" DropFolderTest
+java -Xmx256m -cp "$out:$classes:$stdlib:$vtm:$osmand" RouteOptionsTest "${OBF_DIR:-}"
+java -Xmx256m -cp "$out:$classes:$stdlib:$vtm:$osmand" RoutePreviewTest "${OBF_DIR:-}"
+java -Xmx256m -cp "$out:$classes:$stdlib:$vtm:$osmand" GuidanceTest "${OBF_DIR:-}"
+java -Xmx256m -cp "$out:$classes:$stdlib:$osmand" RoadNamesTest "${OBF_DIR:-}"
 java -cp "$out:$classes:$stdlib" ObfLibraryTest
-java -cp "$out:$classes:$stdlib:$brouter" DestinationTest
-java -cp "$out:$classes:$stdlib:$vtm" MapReadGuardTest "${MAP_FILE:-}"
+java -cp "$out:$classes:$stdlib" DestinationTest
 java -cp "$out:$classes:$stdlib" SimSignalTest
 java -cp "$out:$classes:$stdlib" PlayersTest
 java -cp "$out:$classes:$stdlib" NotificationFeedTest
@@ -260,22 +275,21 @@ java -cp "$out:$classes:$stdlib" CallStateTest
 java -cp "$out:$classes:$stdlib" StatusTextTest
 java -cp "$out:$classes:$stdlib" SpeechQueueTest
 java -cp "$out:$classes:$stdlib" MicCaptureTest
-java -cp "$out:$classes:$stdlib:$brouter" VoicePromptsTest
+java -cp "$out:$classes:$stdlib" VoicePromptsTest
 java -cp "$out" MapThemeTest
 java -cp "$out:$classes:$stdlib" TrafficClientTest
-java -cp "$out:$classes:$stdlib:$brouter" TrafficMatchTest "${ROUTING_SEGMENTS:-}"
-java -cp "$out:$classes:$stdlib:$brouter" NogoRoutingTest "${ROUTING_SEGMENTS:-}"
-java -cp "$out:$classes:$stdlib:$brouter:$vtm" DashboardTrafficTest
+java -Xmx256m -cp "$out:$classes:$stdlib:$vtm:$osmand" TrafficMatchTest "${OBF_DIR:-}"
+java -Xmx256m -cp "$out:$classes:$stdlib:$vtm:$osmand" NogoRoutingTest "${OBF_DIR:-}"
+java -cp "$out:$classes:$stdlib:$vtm" DashboardTrafficTest
 java -cp "$out:$classes:$stdlib" DashboardPoiTest
-java -cp "$out:$classes:$stdlib:$brouter" TrafficFeedTest "${ROUTING_SEGMENTS:-}"
+java -Xmx256m -cp "$out:$classes:$stdlib:$vtm:$osmand" TrafficFeedTest "${OBF_DIR:-}"
 java -cp "$out:$classes:$stdlib" WeatherTest tools/breezy-standin/scenarios
 java -cp "$out:$classes:$stdlib" HomeAssistantTest
 java -cp "$out:$classes:$stdlib" ObfTest "${OBF_DIR:-}"
-java -cp "$out:$classes:$stdlib:$brouter" ExitSignsTest
-java -Xmx256m -cp "$out:$classes:$stdlib:$brouter:$osmand" OsmAndRoutingTest "${OBF_DIR:-}"
+java -Xmx256m -cp "$out:$classes:$stdlib:$osmand" OsmAndRoutingTest "${OBF_DIR:-}"
 java -cp "$out:$classes:$stdlib:$vtm:$osmand" ObfMapTilesTest
 java -cp "$out:$classes:$stdlib" AddressSearchTest "${OBF_DIR:-}"
-java -cp "$out:$classes:$stdlib:$brouter" SearchAheadTest "${ROUTING_SEGMENTS:-}" "${OBF_DIR:-}"
+java -Xmx256m -cp "$out:$classes:$stdlib:$vtm:$osmand" SearchAheadTest "${OBF_DIR:-}"
 java -cp "$out:$classes:$stdlib" WirelessProbeTest
 java -cp "$out:$classes:$stdlib" WirelessBootstrapTest
 java -cp "$out:$classes:$stdlib" WirelessAutoStartTest

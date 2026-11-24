@@ -1,7 +1,7 @@
 // OsmAnd's router and .obf reader, vendored. See README.md in this directory for the pin,
 // what was taken, the files HeadLink replaces, and why this is vendored source.
 //
-// A plain `java-library`, for the same reasons as vendor/brouter: an Android API creeping
+// A plain `java-library`, not an Android library: an Android API creeping
 // into this tree fails the build here rather than on a device, and the routing and reading
 // code runs in tools/jni-host-test on a desktop JVM.
 plugins {
@@ -35,7 +35,8 @@ dependencies {
 }
 
 tasks.withType<JavaCompile>().configureEach {
-    // Third-party source held unmodified: see vendor/brouter/build.gradle.kts.
+    // Third-party source held unmodified: its warnings are not ours to fix, and would
+    // only bury HeadLink's own.
     options.compilerArgs.add("-nowarn")
     options.isDeprecation = false
     options.encoding = "UTF-8"

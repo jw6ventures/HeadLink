@@ -12,7 +12,6 @@ import android.opengl.EGLSurface
 import android.opengl.GLES20
 import android.opengl.GLUtils
 import android.view.Surface
-import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
@@ -34,7 +33,6 @@ import java.nio.ByteOrder
 class DashboardRenderer(
     private val width: Int,
     private val height: Int,
-    private val mapFiles: List<File>,
 ) {
     private var display: EGLDisplay = EGL14.EGL_NO_DISPLAY
     private var context: EGLContext = EGL14.EGL_NO_CONTEXT
@@ -143,7 +141,7 @@ class DashboardRenderer(
         // reads back from MapEngine.failure. Failing the whole scene here would take
         // the clock, the sensors and the media controls down with it, and there is no
         // download to retry with (APP10).
-        map.start(mapFiles, night)
+        map.start(night)
         engine = map
         GLES20.glViewport(0, 0, width, height)
         return null

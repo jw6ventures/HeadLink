@@ -32,9 +32,9 @@ import kotlin.math.roundToInt
  * heard. The speed each fix came with is for that timing only and is never reported.
  *
  * **Live traffic (P9.4, P9.5).** Every route followed and every fix placed goes to
- * [Traffic] too. The time to the destination, everywhere it is shown, is BRouter's time
+ * [Traffic] too. The time to the destination, everywhere it is shown, is the router's time
  * ahead with the pace, plus the traffic delay ahead ([ArrivalTime]); the pace keeps
- * learning from BRouter's own estimate only. A closure on the route ahead re-routes as
+ * learning from the router's own estimate only. A closure on the route ahead re-routes as
  * leaving the route does ([rerouteForClosure]).
  */
 object Guide {
@@ -131,7 +131,7 @@ object Guide {
     /**
      * The drive's pace against the route's estimate (Routing → Learn my pace), put on the
      * time to the destination everywhere it is shown: the cluster, the trip panel and
-     * Home. The time to the next maneuver is left as BRouter gave it; the prompts time
+     * Home. The time to the next maneuver is left as the router gave it; the prompts time
      * themselves from the vehicle's speed.
      */
     private val pace = PaceTracker()
@@ -293,7 +293,7 @@ object Guide {
     }
 
     /**
-     * [seconds] of BRouter's estimate to the destination, as shown: with the pace learned, if
+     * [seconds] of the router's estimate to the destination, as shown: with the pace learned, if
      * asked for, and the traffic delay ahead on the followed route (P9.4, [ArrivalTime]).
      */
     private fun shown(seconds: Int): Int =
@@ -321,6 +321,13 @@ object Guide {
      */
     fun onRouteFailed() {
         if (rerouting) rerouteFailures++
+        if (Navigation.uncovered) {
+            // No map covers the trip: no re-route is coming, so the card stops saying one is.
+            rerouting = false
+            closureRerouting = false
+            publish()
+            return
+        }
         if (closureRerouting) {
             closureRerouting = false
             rerouting = false
@@ -350,7 +357,7 @@ object Guide {
      * destination. [Traffic] makes sure it is asked once a closure.
      */
     fun rerouteForClosure(context: Context): Boolean {
-        if (follower == null || rerouting || Navigation.destination == null) return false
+        if (follower == null || rerouting || Navigation.destination == null || Navigation.uncovered) return false
         rerouting = true
         closureRerouting = true
         rerouteAt = SystemClock.elapsedRealtime()
@@ -452,7 +459,7 @@ object Guide {
         val result = follower.update(latitude, longitude, now)
         last = result
         // Learned whether or not it is shown, so turning it on mid-drive has a pace to use.
-        // BRouter's own seconds, never the shown ones with traffic in: the pace and the
+        // The router's own seconds, never the shown ones with traffic in: the pace and the
         // delay must not count the same jam twice (P9.4).
         // The drive's own pace is measured against the learned one, so it says how today
         // differs from the usual; the book learns from the route's own times.
@@ -551,6 +558,8 @@ object Guide {
 
     private fun reroute(context: Context, result: FollowResult, now: Long) {
         if (rerouting && now - rerouteAt < REROUTE_RETRY_MS) return
+        // No map covers the trip: a re-route would fail the same way until the maps change.
+        if (Navigation.uncovered) return
         if (Navigation.destination == null) return
         rerouting = true
         rerouteAt = now
@@ -695,7 +704,7 @@ class UpcomingTurn @JvmOverloads constructor(
     val street: String? = null,
     val destinationMetres: Double? = null,
     /**
-     * Time to the destination from here: BRouter's, with the Routing screen's adjustment
+     * Time to the destination from here: the router's, with the Routing screen's adjustment
      * and, when Learn my pace is on, the drive's pace, plus live traffic's delay ahead (P9.4).
      * The arrival clock is now plus this.
      */
@@ -713,8 +722,11 @@ class UpcomingTurn @JvmOverloads constructor(
         /** A destination whose last request found no route (a start off road); asked again as the vehicle moves. */
         const val NO_ROUTE = "No route yet, retrying…"
 
+        /** A destination no OsmAnd map covers ([Navigation.uncovered], [Routing.coverageText]); not asked again. */
+        const val NO_MAP = "No map covers this place"
+
         /** Whether [text] says there is a destination and no route to it yet. */
-        fun searching(text: String): Boolean = text == FINDING || text == NO_ROUTE
+        fun searching(text: String): Boolean = text == FINDING || text == NO_ROUTE || text == NO_MAP
 
         /** A route with no fix on it yet. Blank: the card draws nothing for it. */
         const val WAITING = ""

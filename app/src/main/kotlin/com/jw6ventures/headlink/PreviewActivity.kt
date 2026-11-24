@@ -27,8 +27,6 @@ import org.oscim.theme.StreamRenderTheme
 import org.oscim.theme.ThemeLoader
 import org.oscim.theme.internal.VtmThemes
 import org.oscim.tiling.TileSource
-import org.oscim.tiling.source.mapfile.MapFileTileSource
-import org.oscim.tiling.source.mapfile.MultiMapFileTileSource
 import java.io.IOException
 import java.util.Locale
 import java.util.concurrent.Executors
@@ -48,8 +46,8 @@ import kotlin.math.roundToInt
  * only if the route it was chosen against is still the one on show.
  *
  * The alternatives are computed here, on a thread of this process, so a re-route in the
- * main process never waits behind them. They cost more than the route did: BRouter's
- * second route searches twice and its third three times.
+ * main process never waits behind them. They cost more than the route did: the second
+ * route searches twice and the third three times.
  */
 class PreviewActivity : Activity() {
     private val main = Handler(Looper.getMainLooper())
@@ -192,14 +190,14 @@ class PreviewActivity : Activity() {
     }
 
     /**
-     * The map under the app's own theme, day or night as the phone is: from OsmAnd's files
-     * when Draw map from OsmAnd files is on and a folder is chosen, else the Mapsforge
-     * files. OsmAnd's are opened on [worker], since that reads the folder, and the map is
-     * shown when they are; a folder with no map data falls back to the Mapsforge files.
+     * The map under the app's own theme, day or night as the phone is, from OsmAnd's files
+     * when a maps folder is chosen. They are opened on [worker], since that reads the
+     * folder, and the map is shown when they are; with no folder, or none of its files
+     * with map data, the routes are drawn on a plain background under a note saying so.
      */
     private fun startMap() {
-        if (!AppSettings.load(this).osmAndMap || !ObfLibrary.chosen(this)) {
-            showMap(tileSource())
+        if (!ObfLibrary.chosen(this)) {
+            showMap(null)
             return
         }
         val app = applicationContext
@@ -214,7 +212,7 @@ class PreviewActivity : Activity() {
             }
             main.post {
                 if (closed) return@post
-                showMap(if (opened) source else tileSource())
+                showMap(if (opened) source else null)
                 // The routes were drawn before the map was there; put them back under its labels.
                 drawRoutes()
             }
@@ -242,18 +240,6 @@ class PreviewActivity : Activity() {
         val labels = LabelLayer(map, base)
         map.layers().add(labels)
         labelLayer = labels
-    }
-
-    private fun tileSource(): TileSource? {
-        val opened = MapData.installed(this).mapNotNull { file ->
-            val source = MapFileTileSource()
-            if (source.setMapFile(file.absolutePath) && source.open().isSuccess) source else null
-        }
-        if (opened.size <= 1) return opened.firstOrNull()
-        return MultiMapFileTileSource().apply {
-            setDeduplicate(true)
-            opened.forEach { add(it) }
-        }
     }
 
     /**
@@ -357,38 +343,20 @@ class PreviewActivity : Activity() {
      * numbered in the order found, and each row says how much longer it is.
      */
     private fun findAlternatives() {
-        val osmand = request.options.osmAndRouting
-        if (!osmand && RoutingData.installed(RoutingData.segments(RoutingData.root(filesDir))).isEmpty()) return
+        if (!ObfLibrary.chosen(this)) return
         statusText.setText(R.string.preview_finding)
         val app = applicationContext
         worker.execute {
-            val root = RoutingData.root(app.filesDir)
             // OsmAnd's router reads the maps folder, which this process opens for itself
             // while it searches and lets go of after.
-            if (osmand) ObfLibrary.hold(MAPS_HOLDER, true)
-            val osmandRouter = if (osmand) OsmAndRouter { ObfLibrary.routingMaps(app) } else null
-            val router = try {
-                osmandRouter ?: Router(RoutingData.segments(root), RoutingData.installProfile(RoutingData.profiles(root)))
-            } catch (e: IOException) {
-                main.post { if (!closed) statusText.text = getString(R.string.preview_failed, e.message ?: e.toString()) }
-                return@execute
-            }
+            ObfLibrary.hold(MAPS_HOLDER, true)
+            val router = OsmAndRouter { ObfLibrary.routingMaps(app) }
             val finder = AlternativeFinder(router, request, started = { running = it }, cancelled = { closed })
             val failure = try {
                 finder.find { found ->
-                    // OsmAnd's routes come named from the same maps.
-                    val named = if (osmand) {
-                        found
-                    } else {
-                        try {
-                            StreetNames.name(found, MapData.installed(app))
-                        } catch (e: RuntimeException) {
-                            found
-                        }
-                    }
                     main.post {
-                        if (closed || RoutePreview.duplicate(named, options.map { it.second })) return@post
-                        options += options.size to named
+                        if (closed || RoutePreview.duplicate(found, options.map { it.second })) return@post
+                        options += options.size to found
                         drawRoutes()
                         renderOptions()
                     }
@@ -397,8 +365,8 @@ class PreviewActivity : Activity() {
                 e.toString()
             } finally {
                 running = null
-                osmandRouter?.close()
-                if (osmand) ObfLibrary.hold(MAPS_HOLDER, false)
+                router.close()
+                ObfLibrary.hold(MAPS_HOLDER, false)
             }
             if (closed) return@execute
             main.post {

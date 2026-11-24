@@ -4,7 +4,7 @@
 // a route is followed with traffic on and a key saved; the first fetch, the cadence, the
 // retry, the one fetch after a re-route and its debounce; a response replaced whole, never
 // kept, and dropped when stale, off, keyless or at the route's end; the time as paced
-// BRouter plus the delay ahead, with free-flowing runs adding nothing and the pace never
+// router time plus the delay ahead, with free-flowing runs adding nothing and the pace never
 // counting the delay; the no-go points on every request, including points on the route's
 // own line for a closure HERE draws 12 m off it; a closure ahead re-routing once, and never
 // on a route that had to open closures; the offer at 3 minutes, Keep's suppression and the
@@ -12,9 +12,10 @@
 // and a report and event log with no place, road, reason or key in them.
 //
 // Every HERE response is hand-written in HERE's JSON shape and laid along a route: never a
-// real one (HERE's terms, 6.4 h). With a directory holding W100_N30.rd5 as the first
-// argument it also drives BRouter's real route up I-35E in Dallas with a closure laid on it,
-// which must re-route round it, and a queue laid on it, which must bring an offer.
+// real one (HERE's terms, 6.4 h). With a directory of OsmAnd maps (OBF_DIR) holding
+// Us_texas_dallas_northamerica.obf as the first argument it also drives OsmAndRouter's real
+// route up I-35E in Dallas with a closure laid on it, which must re-route round it, and a
+// queue laid on it, which must bring an offer.
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
@@ -38,6 +39,7 @@ import com.jw6ventures.headlink.LiveAlternative;
 import com.jw6ventures.headlink.MemoryTrafficLedger;
 import com.jw6ventures.headlink.NextStep;
 import com.jw6ventures.headlink.Nogo;
+import com.jw6ventures.headlink.OsmAndRouter;
 import com.jw6ventures.headlink.PaceTracker;
 import com.jw6ventures.headlink.PreviewRequest;
 import com.jw6ventures.headlink.Route;
@@ -47,8 +49,6 @@ import com.jw6ventures.headlink.RouteOptions;
 import com.jw6ventures.headlink.RoutePlanner;
 import com.jw6ventures.headlink.RouteRequest;
 import com.jw6ventures.headlink.RouteTraffic;
-import com.jw6ventures.headlink.Router;
-import com.jw6ventures.headlink.RoutingData;
 import com.jw6ventures.headlink.SpeedUnit;
 import com.jw6ventures.headlink.StatusText;
 import com.jw6ventures.headlink.TrafficArea;
@@ -79,15 +79,15 @@ public final class TrafficFeedTest {
         theFirstFetchTheCadenceAndRetries();
         aReRouteFetchesOnlyWhenTheBoxNoLongerCoversAndNotInABurst();
         aResponseIsReplacedNeverKeptAndDroppedWhenItShouldBe();
-        theTimeIsPacedBRouterPlusTheDelayAhead();
+        theTimeIsPacedRouterTimePlusTheDelayAhead();
         thePointsReachEveryRequest();
         aClosureAheadReRoutesOnce();
         theOffer();
         theReportSaysNothingOfWhere();
         homesRouteLineSaysTheDelay();
         reviewFixes();
-        String real = "real routes skipped (no W100_N30.rd5)";
-        if (args.length > 0 && !args[0].isEmpty() && new File(args[0], "W100_N30.rd5").isFile()) {
+        String real = "real routes skipped (need OBF_DIR with Us_texas_dallas_northamerica.obf)";
+        if (args.length > 0 && !args[0].isEmpty() && new File(args[0], "Us_texas_dallas_northamerica.obf").isFile()) {
             real = realRoutes(new File(args[0]));
         }
         System.out.println("jni-host-test: ok " + passed + " traffic feed checks; " + real);
@@ -403,11 +403,11 @@ public final class TrafficFeedTest {
 
     // ---- the time --------------------------------------------------------
 
-    private static void theTimeIsPacedBRouterPlusTheDelayAhead() {
+    private static void theTimeIsPacedRouterTimePlusTheDelayAhead() {
         Route route = northbound(40_000.0, "I-35E");
         Host host = new Host(settings(true, KEY));
-        // A queue from 10 to 13 km at 5 m/s where BRouter drives 30; free flow at 20 m/s from
-        // 20 to 25 km, slower than BRouter but free-flowing, which is no delay.
+        // A queue from 10 to 13 km at 5 m/s where the router drives 30; free flow at 20 m/s from
+        // 20 to 25 km, slower than the router but free-flowing, which is no delay.
         host.http.flow = flowJson(List.of(jam(route, 10_000.0, 13_000.0, 2.0, 5.0, 9.5, "x"),
                 span(route, 20_000.0, 25_000.0, 2.0, 20.0, 20.0, 1.0, "open", "y")));
         TrafficFeed feed = new TrafficFeed(host);
@@ -426,7 +426,7 @@ public final class TrafficFeedTest {
                 "and only for the followed route");
         check(host.changed > 0, "guidance is told to publish again when a response lands with no fix to carry it");
 
-        // Drive it: through the queue at 5 m/s, elsewhere at BRouter's 30 m/s.
+        // Drive it: through the queue at 5 m/s, elsewhere at the router's 30 m/s.
         RouteFollower follower = new RouteFollower(route, 1L);
         PaceTracker pace = new PaceTracker();
         PaceTracker plain = new PaceTracker();
@@ -441,13 +441,13 @@ public final class TrafficFeedTest {
             feed.onPosition(route, result);
             host.drain();
             NextStep step = result.getStep();
-            int brouter = step.getDestinationSeconds();
-            // Guide gives the pace BRouter's own seconds, never the shown ones.
-            pace.onFix(1L, brouter, t);
-            plain.onFix(1L, brouter, t);
-            int shown = ArrivalTime.INSTANCE.shown(brouter, pace, true, feed.getDelaySeconds());
-            if (shown != pace.apply(brouter) + feed.getDelaySeconds()) {
-                check(false, "shown is paced BRouter plus the delay, at " + m);
+            int estimate = step.getDestinationSeconds();
+            // Guide gives the pace the router's own seconds, never the shown ones.
+            pace.onFix(1L, estimate, t);
+            plain.onFix(1L, estimate, t);
+            int shown = ArrivalTime.INSTANCE.shown(estimate, pace, true, feed.getDelaySeconds());
+            if (shown != pace.apply(estimate) + feed.getDelaySeconds()) {
+                check(false, "shown is the paced router time plus the delay, at " + m);
             }
             if (m == 0.0) shownBefore = shown;
             double speed = m >= 10_000.0 && m < 13_000.0 ? 5.0 : 30.0;
@@ -455,11 +455,11 @@ public final class TrafficFeedTest {
             t += 1000L;
         }
         passed++;
-        check(Math.abs(shownBefore - (route.getSeconds() + expected)) <= 12.0, "before moving: BRouter's time plus the queue's delay: " + shownBefore);
+        check(Math.abs(shownBefore - (route.getSeconds() + expected)) <= 12.0, "before moving: the router's time plus the queue's delay: " + shownBefore);
         check(feed.getDelaySeconds() == 0, "past the queue the delay is gone");
         check(pace.factor() == plain.factor() && pace.factor() > 1.0,
-                "the pace learned the queue from BRouter's estimate alone, and it is now in the pace, not the delay: " + pace.factor());
-        check(ArrivalTime.INSTANCE.shown(600, pace, false, 90) == 690, "Learn my pace off: BRouter's plus the delay");
+                "the pace learned the queue from the router's estimate alone, and it is now in the pace, not the delay: " + pace.factor());
+        check(ArrivalTime.INSTANCE.shown(600, pace, false, 90) == 690, "Learn my pace off: the router's plus the delay");
 
         // A response of free flow alone: no delay, nothing to credit.
         Host quiet = new Host(settings(true, KEY));
@@ -469,7 +469,7 @@ public final class TrafficFeedTest {
         calm.onPosition(route, on(0.0));
         quiet.drain();
         check(calm.getDelaySeconds() == 0 && !calm.getDisplay().getAttributed(),
-                "free flow slower than BRouter's model adds nothing, and owes no credit (an orchestrator's change to the time rule)");
+                "free flow slower than the router's model adds nothing, and owes no credit (an orchestrator's change to the time rule)");
     }
 
     // ---- the points ------------------------------------------------------
@@ -505,14 +505,8 @@ public final class TrafficFeedTest {
         check(hardOnLine >= 2, "the closure matched to the route is blocked on the route's own line: " + hardOnLine);
         check(hardOff >= 1, "as well as on HERE's shape 12 m off: " + hardOff);
         check(jamOnLine >= 15 && jamNearOff == 0, "the queue's points are on the route's line, in place of HERE's 2 m off: " + jamOnLine + "/" + jamNearOff);
-        boolean hardLast = true;
-        boolean seenHard = false;
-        for (Nogo nogo : nogos) {
-            if (nogo.getHard()) seenHard = true; else if (seenHard) hardLast = false;
-        }
-        check(hardLast, "hard points after weighted, as Router keeps them");
         // Priced at the request's own top speed.
-        RouteOptions slow = options.copy(false, false, false, false, false, 90, options.getEtaPercent(), options.getLearnPace(), options.getShowAlternatives(), options.getOsmAndRouting());
+        RouteOptions slow = options.copy(false, false, false, false, false, 90, options.getEtaPercent(), options.getLearnPace(), options.getShowAlternatives());
         List<Nogo> cheaper = feed.nogos(slow);
         double scale = TrafficCost.INSTANCE.secondPrice(90) / TrafficCost.INSTANCE.secondPrice(RouteOptions.DEFAULT_TOP_SPEED_KMH);
         boolean scaled = cheaper.size() == nogos.size();
@@ -525,7 +519,7 @@ public final class TrafficFeedTest {
         // The alternatives search: every request it makes carries them.
         PreviewRequest trip = new PreviewRequest(1L, 32.71, -96.80, 33.0, -96.80, null, options, route, feed.nogos(options));
         check(trip.alternative(1).getNogos().equals(nogos) && trip.through(32.8, -96.79).getNogos().equals(nogos)
-                && trip.alternative(0).getNogos().equals(nogos), "BRouter's alternatives and every via route get them too");
+                && trip.alternative(0).getNogos().equals(nogos), "the router's alternatives and every via route get them too");
         check(feed.getDisplay().getRouteShaped() == route.getTrafficShaped(), "the display credits HERE for a route traffic shaped");
         Route shaped = route.withNogos(nogos.size(), false);
         feed.onRoute(shaped);
@@ -556,7 +550,7 @@ public final class TrafficFeedTest {
         feed.onPosition(again, on(0.0));
         host.drain();
         check(host.rerouteCalls == 1, "the same closure on the new route does not re-route again");
-        // A route BRouter found only by opening closures: never, even for a closure not yet seen.
+        // A route the router found only by opening closures: never, even for a closure not yet seen.
         Host opened = new Host(settings(true, KEY));
         opened.http.incidents = incidentsJson(List.<double[][]>of(closure(route, 20_000.0, 20_400.0, 3.0)));
         TrafficFeed through = new TrafficFeed(opened);
@@ -603,7 +597,7 @@ public final class TrafficFeedTest {
         check(delay > 1_500, "a heavy queue: " + delay);
 
         Look look = new Look(route, 0.0);
-        // One saving 170 s (BRouter +x less the queue): not enough.
+        // One saving 170 s (the router's +x less the queue): not enough.
         Route short1 = aside(look, 10_000.0, look.ahead.getSeconds() + delay - 170);
         Assessed a = look.assess(feed, host, List.of(short1));
         check(a.offered == null && feed.getDisplay().getOffer() == null, "under 3 minutes saved is no offer");
@@ -668,7 +662,7 @@ public final class TrafficFeedTest {
         third.onPosition(route, on(0.0));
         host.drain();
         check(third.getDisplay().getOffer() == null && host.looks == looks, "the queue cleared: withdrawn at once, no search");
-        // A route merely BRouter-faster, with no traffic on the followed one: never "faster for traffic".
+        // A route merely faster by the router's times, with no traffic on the followed one: never "faster for traffic".
         Route quicker = aside(third1, 12_000.0, third1.ahead.getSeconds() - 600);
         Assessed none = third1.assess(third, host, List.of(quicker));
         check(none.offered == null && third.getDisplay().getOffer() == null, "no traffic on the route, no traffic offer");
@@ -711,7 +705,7 @@ public final class TrafficFeedTest {
         check(host.http.urls.size() == 4 && feed.getDelaySeconds() >= 0, "two fetches in all: " + host.http.urls.size());
 
         // Fix 7: only a way round faster because of traffic is offered. 100 s of
-        // queue ahead and a way round BRouter makes 400 s quicker saves 500 s, but only 100 s
+        // queue ahead and a way round the router makes 400 s quicker saves 500 s, but only 100 s
         // of it is traffic's: not an offer. With 300 s of queue, it is.
         Host light = new Host(settings(true, KEY));
         light.http.flow = flowJson(List.of(jam(route, 15_000.0, 16_000.0, 2.0, 7.5, 9.5, "x")));
@@ -723,7 +717,7 @@ public final class TrafficFeedTest {
         check(Math.abs(delay - 100) <= 3, "a 100 s queue: " + delay);
         Look look = new Look(route, 0.0);
         Assessed a = look.assess(small, light, List.of(aside(look, 10_000.0, look.ahead.getSeconds() - 400)));
-        check(a.offered == null && small.getDisplay().getOffer() == null, "BRouter-faster with a little traffic is left to the bubbles");
+        check(a.offered == null && small.getDisplay().getOffer() == null, "router-faster with a little traffic is left to the bubbles");
         Host heavy = new Host(settings(true, KEY));
         heavy.http.flow = flowJson(List.of(jam(route, 15_000.0, 16_000.0, 2.0, 3.0, 9.5, "x")));
         TrafficFeed big = new TrafficFeed(heavy);
@@ -815,15 +809,27 @@ public final class TrafficFeedTest {
 
     // ---- real roads: Dallas, I-35E ------------------------------------------------------------
 
-    private static String realRoutes(File segments) throws Exception {
-        File work = Files.createTempDirectory("traffic-feed-test").toFile();
-        Router router = new Router(segments, RoutingData.INSTANCE.installProfile(new File(work, "profiles")), 64);
-        double toLat = 32.8450;
-        double toLon = -96.8850;
+    private static String realRoutes(File dir) throws Exception {
+        File dallas = new File(dir, "Us_texas_dallas_northamerica.obf");
+        OsmAndRouter router = new OsmAndRouter(() -> List.of(OsmAndRouter.MapFile.of(dallas)));
+        try {
+            return realRoutes(router);
+        } finally {
+            router.close();
+        }
+    }
+
+    private static String realRoutes(OsmAndRouter router) throws Exception {
         RouteOptions options = new RouteOptions();
+        // Toward Love Field; the destination is then the route's own end, on the road: the
+        // point asked for lies 455 m from any road OsmAnd routes on, and a route ending that
+        // far off counts as cut off by its closures (OsmAndRouter.END_SNAP_M).
+        Route asked = router.compute(new RouteRequest(32.7800, -96.8050, 32.8450, -96.8850, null, options), RoutePlanner.MAX_RUNNING_MS, e -> Unit.INSTANCE);
+        double toLat = asked.getLatitudes()[asked.getPoints() - 1];
+        double toLon = asked.getLongitudes()[asked.getPoints() - 1];
         Route route = router.compute(new RouteRequest(32.7800, -96.8050, toLat, toLon, null, options), RoutePlanner.MAX_RUNNING_MS, e -> Unit.INSTANCE);
         double[] along = TrafficArea.INSTANCE.metres(route);
-        // The first 3 km BRouter drives at freeway speed, at least 2 km in (past the lead point).
+        // The first 3 km the router drives at freeway speed, at least 2 km in (past the lead point).
         double c = -1.0;
         for (double m = 2_000.0; m + 3_000.0 < along[along.length - 1]; m += 100.0) {
             if (3_000.0 / (seconds(route, along, m + 3_000.0) - seconds(route, along, m)) > 22.0) {
@@ -848,7 +854,11 @@ public final class TrafficFeedTest {
                 rerouteMs[0] = (System.nanoTime() - begun) / 1_000_000L;
                 check(request.getNogos().size() > 0, "the re-route carries the points");
                 check(!next.getClosuresOpened() && next.getTrafficShaped(), "a way round was found without opening the closure");
-                check(Router.Companion.closuresCrossed(next, request, request.getNogos()).isEmpty(), "and it passes through no closure point");
+                double nearestClosure = Double.MAX_VALUE;
+                for (Nogo nogo : request.getNogos()) {
+                    if (nogo.getHard()) nearestClosure = Math.min(nearestClosure, fromRoute(next, nogo.getLatitude(), nogo.getLongitude()));
+                }
+                check(nearestClosure > TrafficNogos.RADIUS_M, "and it passes through no closure point: nearest " + nearestClosure + " m");
                 check(fromRoute(next, closed[0], closed[1]) > TrafficNogos.RADIUS_M, "it keeps off the closed road: " + fromRoute(next, closed[0], closed[1]));
                 followed[0] = next;
             } catch (Exception e) {
@@ -898,7 +908,7 @@ public final class TrafficFeedTest {
                 + "delay_s=%d nogos=%d look_ms=%d found=%d saving_s=%d offer_delay_s=%d offer_via=%b", route.getDistanceM(), Math.round(c), rerouteMs[0],
                 queue.getDelaySeconds(), queue.nogos(options).size(), lookMs[0], found.size(), offer == null ? -1 : offer.getSavingSeconds(),
                 Math.round(itsDelay), offer != null && offer.getRoute().getVia() != null));
-        return "real routes over W100_N30 (Dallas, I-35E: a closure re-routed round, a queue offered a way round)";
+        return "real routes over the Dallas map (I-35E: a closure re-routed round, a queue offered a way round)";
     }
 
     // ---- fakes ------------------------------------------------------------------------------
@@ -1151,7 +1161,7 @@ public final class TrafficFeedTest {
 
     /**
      * A way round: [look]'s route ahead up to [splitM] metres along the followed route, then a
-     * line 1 km east of it to near its end, then its last point; [seconds] as BRouter's total.
+     * line 1 km east of it to near its end, then its last point; [seconds] as the router's total.
      */
     private static Route aside(Look look, double splitM, int seconds) {
         Route ahead = look.ahead;

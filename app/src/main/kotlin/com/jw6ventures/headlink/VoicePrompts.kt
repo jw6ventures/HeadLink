@@ -64,7 +64,7 @@ data class VoicePrompt(val text: String, val stage: PromptStage)
  * This also runs while voice guidance is off, so turning it on mid-step does not release a
  * backlog; [confirm] says the one prompt that fits.
  *
- * **Speed.** The speed given, else the step's own pace (metres over BRouter's seconds to
+ * **Speed.** The speed given, else the step's own pace (metres over the router's seconds to
  * it), else the last pace this step had (its seconds round to 0 in the last metres), else
  * standing still, which leaves every threshold at its minimum distance.
  *

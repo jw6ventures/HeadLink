@@ -60,8 +60,9 @@ enum class Refusal(val label: String) {
     NO_LOCATION("no-location"),
 
     /**
-     * A coordinate no installed routing tile covers. BRouter would only fail on it after
-     * spinning up, and the phone can say which tile to import instead.
+     * A coordinate no OsmAnd map with routing data covers, or no maps folder is chosen.
+     * OsmAnd's router would only fail on it after spinning up, and the phone can say to
+     * get the map for that place instead.
      */
     NO_ROUTING_DATA("no-routing-data"),
 }
@@ -231,17 +232,14 @@ object DestinationParser {
         if (Regex(NUMBER).matches(this)) toDoubleOrNull() else null
 
     /**
-     * The longitude to suggest when [lon] lands in no installed routing tile but its
-     * mirror does, or null.
+     * The longitude to suggest when [lon] is not [covered] but its mirror is, or null.
+     * [covered] says whether there is routing data at a point: OsmAnd's maps' routing
+     * bounds, for the app.
      *
      * A dropped minus sign is the commonest typing mistake with western coordinates, and
      * it puts Austin in a Chinese desert where there is no routing data; the P6.3a lab run
      * made exactly this mistake. Only a suggestion: the operator decides.
      */
-    fun mirroredLongitude(lat: Double, lon: Double, installedTiles: Set<String>): Double? =
-        mirroredLongitude(lat, lon) { a, b -> RoutingData.tileFor(a, b) in installedTiles }
-
-    /** [mirroredLongitude] over any coverage: OsmAnd's maps' bounds as well as BRouter's tiles. */
     fun mirroredLongitude(lat: Double, lon: Double, covered: (Double, Double) -> Boolean): Double? {
         if (lon == 0.0 || covered(lat, lon)) return null
         return if (covered(lat, -lon)) -lon else null

@@ -231,7 +231,7 @@ public final class VoicePromptsTest {
         List<Heard> heard = drive(new VoicePrompts(), 1, legs, MPH70, false, 0);
         double early = MPH70 * 50;
         check(heard.get(0).stage == PromptStage.EARLY && heard.get(0).metres <= early + MPH70 / 2 + 1 && heard.get(0).metres > early - MPH70 - 1,
-            "no speed: Early from BRouter's pace, at " + (int) heard.get(0).metres + " m");
+            "no speed: Early from the route's own pace, at " + (int) heard.get(0).metres + " m");
         check(heard.get(2).stage == PromptStage.AT_TURN, "At the turn still fires as seconds round to 0");
     }
 
@@ -476,7 +476,7 @@ public final class VoicePromptsTest {
     /**
      * One fix a second at [speed] from [start] metres along, as RouteFollower would count
      * down: the next leg is the first strictly ahead, arrival within 30 m of the end. With
-     * [giveSpeed] false only BRouter's seconds (at the same pace) say how fast.
+     * [giveSpeed] false only the route's seconds (at the same pace) say how fast.
      */
     private static List<Heard> drive(VoicePrompts vp, long generation, Leg[] legs, double speed, boolean giveSpeed, double start) {
         List<Heard> heard = new ArrayList<>();

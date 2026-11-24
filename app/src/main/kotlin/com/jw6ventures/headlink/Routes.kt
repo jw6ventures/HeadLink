@@ -28,33 +28,28 @@ data class ExitSign(val number: String?, val toward: String?) {
  * Two points to route between, in degrees.
  *
  * A route is from somewhere to somewhere and nothing more: via points, no-go areas and
- * round trips are all things BRouter can do and none of them was in P6.3. One via point
- * came with the route preview, and no-go points with live traffic (P9.5).
+ * round trips were none of them in P6.3. One via point came with the route preview, and
+ * no-go points with live traffic (P9.5).
  *
  * [startBearing] (P6.5) is the way the vehicle is already travelling, degrees clockwise
- * from north. A re-route sets it, because BRouter otherwise has no idea which way the
- * vehicle faces. On its own it is a weak hint with `car-vario`: turning round at the start
- * costs a flat 40 s, so in the P6.5 lab drive the first re-route after the missed turn
- * still began by going back, and a second re-route followed six seconds later. So
- * [Router] also prices the road just behind the vehicle ([Router.behind]), which makes
- * turning back cost about three and a half minutes in all.
+ * from north. A re-route sets it, because the engine otherwise has no idea which way the
+ * vehicle faces; OsmAnd's car profile then charges for setting off the other way.
  *
  * [options] are the Routing settings in force when the request was made, so a re-route
  * takes whatever the screen says now.
  *
- * [alternative] asks for BRouter's alternative route of that number, 0 being the best.
- * BRouter finds alternative k by searching k+1 times, each search pricing the roads the
+ * [alternative] asks for the engine's alternative route of that number, 0 being the best.
+ * Alternative k is found by searching k+1 times, each search pricing the roads the
  * earlier ones used, so the second costs about twice the first and the third three times.
  * Only the route preview asks for one.
  *
  * [viaLat] and [viaLon], both or neither, put one point the route must pass through
  * between the two ends. The preview's own alternatives are made this way ([AlternativeFinder]).
  *
- * [nogos] (P9.5) are live traffic's closures and jams as BRouter no-go points
- * ([TrafficNogos]): a hard one is a circle the route may not enter, a weighted one charges
- * the metres of road inside it times its weight. The weights are BRouter cost at [options]'
- * top speed ([TrafficCost]); [Router.compute] rescales them if it has to time the route
- * slower. Empty, the default, is a route exactly as before P9.
+ * [nogos] (P9.5) are live traffic's closures and jams as no-go points ([TrafficNogos]): a
+ * hard one is a circle the route may not enter, a weighted one charges the metres of road
+ * inside it times its weight. The weights are priced at [options]' top speed
+ * ([TrafficCost]). Empty, the default, is a route exactly as before P9.
  */
 class RouteRequest @JvmOverloads constructor(
     val fromLat: Double,
@@ -82,13 +77,16 @@ class RouteRequest @JvmOverloads constructor(
         RouteRequest(fromLat, fromLon, toLat, toLon, startBearing, options, alternative, viaLat, viaLon, nogos)
 
     companion object {
-        /** BRouter's own limit: `RoutingContext.getAlternativeIdx(0, 3)`. */
+        /**
+         * Each alternative costs one more full search ([alternative]), so past the third
+         * the preview would wait longer than the choice is worth.
+         */
         const val MAX_ALTERNATIVE = 3
 
         private fun valid(lat: Double, lon: Double): Boolean =
             lat.isFinite() && lon.isFinite() && lat in -90.0..90.0 && lon in -180.0..180.0
 
-        /** Whether [nogo] is one BRouter can be given: on the globe, a finite radius, a finite weight or none. */
+        /** Whether [nogo] is one the engine can be given: on the globe, a finite radius, a finite weight or none. */
         fun valid(nogo: Nogo): Boolean =
             valid(nogo.latitude, nogo.longitude) && nogo.radiusM.isFinite() && nogo.radiusM > 0.0 &&
                 (nogo.weight == null || (nogo.weight.isFinite() && nogo.weight >= 0.0))
@@ -115,27 +113,27 @@ class RouteRequest @JvmOverloads constructor(
 }
 
 /**
- * A computed route: the geometry, BRouter's own totals and timings, and the maneuvers it
- * derived along the geometry.
+ * A computed route: the geometry, the routing engine's own totals and timings, and the
+ * maneuvers it derived along the geometry.
  *
  * What each maneuver *is* comes from the engine's turn command, a [TurnCommand]. Nothing here
- * guesses a turn from the geometry: BRouter already weighed the roads it did not take.
+ * guesses a turn from the geometry: the engine already weighed the roads it did not take.
  */
 class Route @JvmOverloads constructor(
     val latitudes: DoubleArray,
     val longitudes: DoubleArray,
-    /** BRouter's track length, metres. */
+    /** The engine's track length, metres. */
     val distanceM: Int,
-    /** BRouter's own travel-time estimate from the profile's speed model, seconds. */
+    /** The engine's own travel-time estimate from the profile's speed model, seconds. */
     val seconds: Int,
-    /** Index into the geometry of each maneuver BRouter derived, ascending. */
+    /** Index into the geometry of each maneuver the engine derived, ascending. */
     val maneuverIndices: IntArray,
     /** Roundabout exit for the maneuver at the same position, or 0 when it is not one. */
     val exitNumbers: IntArray,
     /**
      * The turn command for the maneuver at the same position — a [TurnCommand]
      * constant. [Maneuvers] says what it means. There is no destination among them:
-     * BRouter's `END` never survives its own post-processing, so [RouteFollower] adds one.
+     * OsmAnd marks none, so [RouteFollower] adds one.
      */
     val commands: IntArray = IntArray(maneuverIndices.size) { TurnCommand.CONTINUE },
     /**
@@ -146,15 +144,12 @@ class Route @JvmOverloads constructor(
     val pointSeconds: FloatArray = FloatArray(0),
     /**
      * Point index where each named stretch of road begins, ascending: the start and every
-     * maneuver. Empty until [StreetNames] has read the map; BRouter's data has no names.
+     * maneuver. Empty when not known.
      */
     val roadStarts: IntArray = IntArray(0),
     /** The road each stretch in [roadStarts] drives, or null where the map names none. */
     val roadNames: Array<String?> = emptyArray(),
-    /**
-     * The top speed the route was timed at, km/h: the one asked for, or lower when BRouter
-     * could not finish at it ([Router.compute]). 0 when not known.
-     */
+    /** The top speed the route was timed at, km/h: the one [RouteRequest.options] asked for. 0 when not known. */
     val topSpeedKmh: Int = 0,
     /**
      * The point the route was made to pass through, [latitude, longitude], or null: set on
@@ -163,7 +158,7 @@ class Route @JvmOverloads constructor(
      */
     val via: DoubleArray? = null,
     /**
-     * How many traffic no-go points BRouter was given for this route (P9.5), 0 when none.
+     * How many traffic no-go points the engine was given for this route (P9.5), 0 when none.
      * Above 0, HERE's data helped choose it, so "Traffic © HERE" is owed while it is shown
      * (HERE's Platform Terms, 6.4a): whether the points actually moved it cannot be known
      * without a second search, and the attribution does not wait for one.
@@ -171,21 +166,21 @@ class Route @JvmOverloads constructor(
     val nogoCount: Int = 0,
     /**
      * No route existed that kept out of every closure, so the closures were made passable
-     * at a high price and this one goes through at least one ([Router.compute]): the
+     * at a high price and this one goes through at least one ([OsmAndRouter]): the
      * vehicle is on a closed road, or the destination is. A closure ahead on this route is
      * then not a reason to re-route again, which would only find it again.
      */
     val closuresOpened: Boolean = false,
     /**
      * The exit sign for the maneuver at the same position in [maneuverIndices], or null
-     * where there is none or none is known. Empty until [ExitSigns] has read OsmAnd's
-     * routing data; BRouter's has no exit numbers or destinations.
+     * where there is none or none is known. Empty when not known: routes saved before
+     * exit signs were.
      */
     val exitSigns: Array<ExitSign?> = emptyArray(),
     /**
      * The road class and surroundings of the stretch from each point to the next, a
      * [PaceRoad] code, for the learned pace ([PaceBook]); one per point, the last unused.
-     * Empty when not known: BRouter's routes and routes saved before 0.11.
+     * Empty when not known: routes saved before 0.11.
      */
     val paceClasses: ByteArray = ByteArray(0),
     /**
@@ -216,24 +211,6 @@ class Route @JvmOverloads constructor(
             latitudes, longitudes, distanceM, (seconds * factor).roundToInt(), maneuverIndices, exitNumbers, commands,
             FloatArray(pointSeconds.size) { (pointSeconds[it] * factor).toFloat() }, roadStarts, roadNames, topSpeedKmh, via,
             nogoCount, closuresOpened, exitSigns, paceClasses, timeScale * factor,
-        )
-    }
-
-    /** This route with the road names [StreetNames] found. */
-    fun withRoads(starts: IntArray, names: Array<String?>): Route {
-        require(starts.size == names.size) { "one name per stretch" }
-        return Route(
-            latitudes, longitudes, distanceM, seconds, maneuverIndices, exitNumbers, commands,
-            pointSeconds, starts, names, topSpeedKmh, via, nogoCount, closuresOpened, exitSigns, paceClasses, timeScale,
-        )
-    }
-
-    /** This route with the exit signs [ExitSigns] found, one per maneuver. */
-    fun withExitSigns(signs: Array<ExitSign?>): Route {
-        require(signs.size == maneuverIndices.size) { "one sign per maneuver" }
-        return Route(
-            latitudes, longitudes, distanceM, seconds, maneuverIndices, exitNumbers, commands,
-            pointSeconds, roadStarts, roadNames, topSpeedKmh, via, nogoCount, closuresOpened, signs, paceClasses, timeScale,
         )
     }
 
@@ -296,8 +273,6 @@ class RouteResult(
     val thread: String,
     /** A newer request arrived first, so this one was abandoned or never started. */
     val superseded: Boolean,
-    /** Wall time of the street-name pass after the search, within [computeMs]. */
-    val namingMs: Long = 0,
 )
 
 /**
@@ -312,8 +287,8 @@ fun interface SearchHandle {
 }
 
 /**
- * Something that computes a [Route]: BRouter over `.rd5` tiles ([Router]) or OsmAnd's router
- * over `.obf` maps ([OsmAndRouter]). Blocking, and used from one thread at a time.
+ * Something that computes a [Route]: OsmAnd's router over `.obf` maps ([OsmAndRouter]), or
+ * a stand-in in a test. Blocking, and used from one thread at a time.
  */
 interface RouteEngine {
     /**
@@ -340,13 +315,6 @@ class RoutePlanner @JvmOverloads constructor(
     private val maxRunningMs: Long = MAX_RUNNING_MS,
     /** Runs first on the routing thread; the app lowers its scheduling priority here. */
     threadSetup: () -> Unit = {},
-    /**
-     * Runs on the routing thread on every route found, before [RoutePlanner.request]'s
-     * callback, with the request that made it: the app names its streets here
-     * ([StreetNames]). What it throws is dropped with the route kept as found, because a
-     * name is never worth losing a route over.
-     */
-    private val annotate: (RouteRequest, Route) -> Route = { _, route -> route },
 ) : AutoCloseable {
     private val latest = AtomicLong()
 
@@ -398,8 +366,8 @@ class RoutePlanner @JvmOverloads constructor(
                     )
                 } catch (e: Exception) {
                     // The alternatives are extras; a failure here costs them and nothing else.
-                    // Exception, not RuntimeException: router() throws RoutingException for a
-                    // profile it cannot install, and nothing may escape onto this thread.
+                    // Exception, not RuntimeException: an engine may throw RoutingException
+                    // before its first search, and nothing may escape onto this thread.
                 } catch (e: OutOfMemoryError) {
                     // As for a route: the searches' memory is released once this unwinds.
                 } finally {
@@ -425,22 +393,12 @@ class RoutePlanner @JvmOverloads constructor(
                 // A newer request may have arrived between the check above and now.
                 if (sequence != latest.get()) engine.terminate()
             }
-            val naming = System.nanoTime()
-            val named = if (sequence == latest.get()) {
-                try {
-                    annotate(request, route)
-                } catch (e: RuntimeException) {
-                    route
-                }
-            } else {
-                route
-            }
-            RouteResult(sequence, named, null, elapsedMs(start), thread, sequence != latest.get(), elapsedMs(naming))
+            RouteResult(sequence, route, null, elapsedMs(start), thread, sequence != latest.get())
         } catch (e: RoutingException) {
             RouteResult(sequence, null, e.message ?: "routing failed", elapsedMs(start), thread, sequence != latest.get())
         } catch (e: RuntimeException) {
-            // BRouter reports most failures as a message, but a malformed profile throws
-            // from the engine's constructor; either way the app keeps running.
+            // An engine reports most failures as RoutingException, but a bug or bad map data
+            // can throw anything; either way the app keeps running.
             RouteResult(sequence, null, e.toString(), elapsedMs(start), thread, sequence != latest.get())
         } catch (e: OutOfMemoryError) {
             // A search over a long trip can outgrow the heap. Its graph is garbage once
@@ -464,10 +422,10 @@ class RoutePlanner @JvmOverloads constructor(
         const val THREAD = "aap-route"
 
         /**
-         * Five times BRouter's own 60 s service default. Austin to Denver — 1,460 km over
-         * four tiles — takes 15 s on a desktop JVM and 21 s held to one core, and a phone
-         * core is slower than either, so 60 s would fail exactly the long trips worth
-         * planning. It is a ceiling, not a wait: a newer request still stops the search.
+         * Five times the 60 s that BRouter, the engine before OsmAnd's, used as its service
+         * default. Austin to Denver — 1,460 km — took 15 s on a desktop JVM and 21 s held to
+         * one core, and a phone core is slower than either, so 60 s would fail exactly the
+         * long trips worth planning. It is a ceiling, not a wait: a newer request still stops the search.
          */
         const val MAX_RUNNING_MS = 300_000L
 

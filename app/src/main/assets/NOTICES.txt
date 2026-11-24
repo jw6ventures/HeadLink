@@ -52,10 +52,6 @@ application includes the components below; their license texts follow.
      the GPL-3.0 text it builds on follow below.
    androidsvg 1.4                                Apache License 2.0
      Copyright 2013-2018 Paul LeBeau, Cave Rock Software Ltd.
-   BRouter 1.7.10, vendored unmodified           MIT
-     Copyright (c) 2019 BRouter contributors
-     Includes BRouter's lookups.dat and car-vario.brf profile data, unchanged,
-     under the same license. Source: https://github.com/abrensch/brouter
    whisper.cpp 1.8.3 with ggml 0.9.5 (speech recognition, libwhisper_jni.so)  MIT
      Copyright (c) 2023-2024 The ggml authors
      Built unmodified from the whisper.cpp source published in the whisper-rs-sys

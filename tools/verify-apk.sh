@@ -215,7 +215,7 @@ printf '%s\n' "$filter" | grep -q 'model="Android Auto"' || fail "accessory filt
 notices=$(unzip -p "$apk" assets/NOTICES.txt)
 printf '%s\n' "$notices" | grep -q '^   OpenSSL 3.5.8' || fail "third-party notices asset"
 # Every component's license text must travel with the APK, not only its name.
-for heading in '^   BRouter ' '^MIT License' '^Apache License 2.0' '^SGI Free Software License B 2.0' \
+for heading in '^MIT License' '^Apache License 2.0' '^SGI Free Software License B 2.0' \
     '^GNU Lesser General Public License 3.0' '^GNU General Public License 3.0' \
     '^   OsmAnd-java ' '^   whisper.cpp 1.8.3 ' '^GNU Lesser General Public License 2.1' 'Version 2.1, February 1999' \
     'GNU LESSER GENERAL PUBLIC LICENSE' 'END OF TERMS AND CONDITIONS'; do

@@ -87,13 +87,9 @@ dependencies {
     implementation(libs.vtm.android)
     implementation(libs.vtm.themes)
     runtimeOnly(variantOf(libs.vtm.android) { classifier("natives-arm64-v8a") })
-    // P6.3's offline routing engine. Vendored source, not a resolved artifact: BRouter
-    // publishes nothing to Maven Central, so there is no checksummed coordinate for
-    // verification-metadata.xml to pin. Pure Java, no native library, no new ABI.
-    implementation(project(":vendor:brouter"))
-    // OsmAnd's router and .obf reader (vendor/osmand/README.md), behind Settings ->
-    // Route preferences -> Route with OsmAnd maps. Vendored source for the same reason:
-    // OsmAnd publishes no checksummed artifact. Pure Java, no native library.
+    // OsmAnd's router and .obf reader (vendor/osmand/README.md): P6.3's offline routing
+    // engine and the map data. Vendored source, not a resolved artifact: OsmAnd publishes
+    // no checksummed artifact. Pure Java, no native library.
     implementation(project(":vendor:osmand"))
     // Already in the APK through vendor/osmand; named here because ObfTiles' coastline
     // joining uses OsmAnd's own long lists and MapAlgorithms takes them.

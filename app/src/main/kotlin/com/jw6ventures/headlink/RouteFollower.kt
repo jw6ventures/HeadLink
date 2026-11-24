@@ -73,7 +73,7 @@ class FollowResult(
  * routing thread and belongs with the rest of routing ([Guide]).
  *
  * **Why these thresholds.** A fix is on the route within [ON_ROUTE_M]: consumer GPS is good
- * to 5–15 m in the open and worse between buildings, and BRouter's geometry is the OSM
+ * to 5–15 m in the open and worse between buildings, and the route's geometry is the OSM
  * centreline, which on a four-lane road is 10 m from the kerb lane. Leaving the route needs
  * [OFF_ROUTE_MS] **and** [OFF_ROUTE_FIXES] beyond it, so neither one bad fix nor a burst
  * of fast fixes from one bad second re-routes the drive; at 13 m/s that is about 50 m of
@@ -90,7 +90,7 @@ class RouteFollower(val route: Route, private val generation: Long) {
     /** Point index and maneuver of each step, in route order, with non-maneuvers dropped. */
     private val steps: List<Pair<Int, Maneuver>>
 
-    /** The exit sign of each of [steps], or null: what [ExitSigns] read for that maneuver. */
+    /** The exit sign of each of [steps], or null: what the route carries for that maneuver. */
     private val signs: List<ExitSign?>
 
     var state = FollowState.JOINING
@@ -121,10 +121,9 @@ class RouteFollower(val route: Route, private val generation: Long) {
         }
         signs = found.map { it.third } + null
         steps = found.map { it.first to it.second }.let { pairs ->
-            // The destination is a step of its own at the last point. BRouter does not
-            // supply it: its END marker is internal to voice-hint processing and never
-            // survives into the hints a track carries (measured on two Massachusetts
-            // routes, P6.5). If a future BRouter does supply one, it is not doubled.
+            // The destination is a step of its own at the last point. OsmAnd's router
+            // marks none ([OsmAndRouter.command] has no turn type for it); a route that
+            // does end in one is not given a second.
             if (pairs.lastOrNull()?.second?.type == Maneuvers.DESTINATION) {
                 pairs
             } else {
@@ -205,7 +204,7 @@ class RouteFollower(val route: Route, private val generation: Long) {
         )
     }
 
-    /** BRouter's own time at [metres] along, interpolated between the two points around it. */
+    /** The router's own time at [metres] along, interpolated between the two points around it. */
     private fun secondsAt(metres: Double): Double = secondsAt(metres, route.pointSeconds, route.seconds.toDouble())
 
     /**

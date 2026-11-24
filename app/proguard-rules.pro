@@ -5,15 +5,6 @@
 # Each rule names a lookup by string. Anything reached only by name has to stay under
 # that name, and R8 cannot see the reference.
 
-# BRouter's path model: RoutingContext.setModel instantiates the class a .brf profile
-# names ("---model:btools.router.KinematicModel" in car-vario.brf) with Class.forName and
-# its no-argument constructor. Renamed or removed, routing fails at the first route with
-# "Cannot create path-model". Kept for every model, not just the one car-vario names, so
-# a different profile cannot reintroduce the failure.
--keep class * extends btools.router.OsmPathModel {
-    <init>();
-}
-
 # libaap_jni finds NativeBridge by class name and registers its natives by method name
 # and signature (core/aap-jni/src/lib.rs, BRIDGE_CLASS and RegisterNatives). A renamed
 # native fails RegisterNatives, and the library then refuses to load.

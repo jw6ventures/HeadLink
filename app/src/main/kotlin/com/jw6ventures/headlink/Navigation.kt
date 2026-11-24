@@ -39,7 +39,7 @@ object Navigation {
      * The point the chosen route passes through, [latitude, longitude], when an
      * alternative was chosen (the preview or the dashboard): every route to [destination]
      * goes through it, re-routes included, until the vehicle has passed it ([viaPassed]).
-     * Null for BRouter's own best route. Never reported: it is a place.
+     * Null for the engine's own best route. Never reported: it is a place.
      */
     var via: DoubleArray? = null
         private set
@@ -70,12 +70,24 @@ object Navigation {
      * Requests for a route to [destination] that came back with none, and nothing to
      * follow meanwhile: a start off any road the car profile can use (a field, a long
      * private drive, a lot whose aisles are not mapped as roads) is the usual cause, since
-     * BRouter only places a start within a few hundred metres of one. Held at zero from a
+     * OsmAnd's router only places a start within a few hundred metres of one. Held at zero from a
      * new destination until a route arrives. While above it the destination is asked for
      * again as the vehicle moves ([retry]), so the route appears once a road is in reach.
      */
     var failures = 0
         private set
+
+    /**
+     * The last request for [destination] failed because no OsmAnd map with routing data
+     * covers its destination or its stop ([OsmAndRouter.coverage]). While set, neither
+     * [retry] nor [Guide]'s re-routes ask again: moving the vehicle cannot change the maps.
+     * Cleared by a route, a new destination, or new maps ([mapsChanged]).
+     */
+    var uncovered = false
+        private set
+
+    /** [Refusal.NO_ROUTING_DATA] was counted for [destination]: once per destination held. */
+    private var refusalCounted = false
 
     /** Requests made by [retry]: for the report. */
     var retries = 0
@@ -96,35 +108,8 @@ object Navigation {
      * shown: a driver who picks a second place does not want the first. Returns what the
      * phone should say; that text may name the place, the report never does.
      */
-    fun set(context: Context, destination: Destination, source: DestinationSource): String {
-        if (Routing.options(context).osmAndRouting) {
-            // OsmAnd's router needs no tile: its maps cover what they cover. A destination
-            // outside every open map whose mirror is inside one is the dropped minus sign
-            // the tile check below catches for BRouter; anything else is routed, and one
-            // outside the maps comes back as a route that failed, with the reason reported.
-            val boxes = ObfLibrary.sources(context).mapNotNull { it.bounds }
-            val mirrored = DestinationParser.mirroredLongitude(destination.latitude, destination.longitude) { lat, lon ->
-                boxes.any { it.contains(lat, lon) }
-            }
-            if (mirrored != null) {
-                refuse(Refusal.NO_ROUTING_DATA, source)
-                return context.getString(R.string.destination_mirrored, describe(destination), coordinates(destination.latitude, mirrored))
-            }
-            return begin(destination, source, context)
-        }
-        val tiles = Routing.installed(context).map { it.name }.toSet()
-        val needed = RoutingData.tileFor(destination.latitude, destination.longitude)
-        if (needed !in tiles) {
-            refuse(Refusal.NO_ROUTING_DATA, source)
-            val mirrored = DestinationParser.mirroredLongitude(destination.latitude, destination.longitude, tiles)
-            return if (mirrored != null) {
-                context.getString(R.string.destination_mirrored, describe(destination), coordinates(destination.latitude, mirrored))
-            } else {
-                context.getString(R.string.destination_no_tile, describe(destination), needed)
-            }
-        }
-        return begin(destination, source, context)
-    }
+    fun set(context: Context, destination: Destination, source: DestinationSource): String =
+        begin(destination, source, context)
 
     /** Holds [destination] as the new trip and routes to it. */
     private fun begin(destination: Destination, source: DestinationSource, context: Context): String {
@@ -133,6 +118,8 @@ object Navigation {
         via = null
         arrived = false
         failures = 0
+        uncovered = false
+        refusalCounted = false
         // A new trip: a way round the driver kept away from on the last one may be right now.
         Traffic.newTrip()
         return route(context)
@@ -178,9 +165,9 @@ object Navigation {
         attemptFrom = point
         attemptAt = SystemClock.elapsedRealtime()
         // A closure ahead (P9.5): the chosen route's via point may lie beyond it, on the closed
-        // road, and a route kept to it could only go through the closure, which BRouter would
+        // road, and a route kept to it could only go through the closure, which the engine would
         // then open and this route could never leave again. The way round the closure is
-        // BRouter's own; the chosen alternative no longer holds.
+        // the engine's own; the chosen alternative no longer holds.
         if (closure && via != null) {
             via = null
             SessionController.note("closure ahead: the chosen route's via point dropped")
@@ -204,6 +191,7 @@ object Navigation {
                 else -> source.label
             },
             from,
+            trip = true,
         )
         // With no route to follow yet, the dashboard says one is being looked for rather
         // than showing nothing (a route already followed keeps its card until replaced).
@@ -214,12 +202,42 @@ object Navigation {
     /** [Routing] has a route to [destination]: nothing left to retry. */
     fun routed() {
         failures = 0
+        uncovered = false
     }
 
-    /** [Routing]'s request for [destination] found no route, and there is none to follow. */
-    fun routeFailed() {
+    /**
+     * [Routing]'s request for [destination] found no route, and there is none to follow;
+     * [error] is its reason. No map covering the trip is the explicit refusal: the maps
+     * are only certainly read on the routing thread, so it is known only here.
+     */
+    fun routeFailed(error: String?) {
         if (destination == null || arrived) return
         failures++
+        coverage(error)
+    }
+
+    /**
+     * Notes [error], the reason a request for [destination] failed, whether or not a route
+     * is still followed: a coverage failure stops asking again ([uncovered]) and is counted
+     * as a refusal once per destination.
+     */
+    fun coverage(error: String?) {
+        if (destination == null || arrived) return
+        uncovered = OsmAndRouter.coverage(error)
+        if (uncovered && !refusalCounted) {
+            refusalCounted = true
+            refuse(Refusal.NO_ROUTING_DATA, source ?: DestinationSource.TYPED)
+        }
+    }
+
+    /**
+     * The maps folder changed: a destination no map covered may be covered now, so it is
+     * asked for again at once rather than waiting for a new destination.
+     */
+    fun mapsChanged(context: Context) {
+        if (!uncovered) return
+        uncovered = false
+        if (destination != null && !arrived && Routing.pending == 0L) route(context)
     }
 
     /**
@@ -229,6 +247,7 @@ object Navigation {
      */
     fun searching(): String? = when {
         destination == null || arrived -> null
+        uncovered && !waiting && Routing.pending == 0L -> UpcomingTurn.NO_MAP
         failures > 0 && !waiting -> UpcomingTurn.NO_ROUTE
         else -> UpcomingTurn.FINDING
     }
@@ -239,9 +258,11 @@ object Navigation {
      * where that request started, or after [RETRY_PARKED_MS] wherever it is. So a drive
      * that started off road is routed within seconds of reaching one, and a parked vehicle
      * asks once a minute rather than with every fix. [bearing] is the way it is travelling.
+     * Never for a destination no map covers ([uncovered]): only a new destination or a
+     * re-send after the maps change can help that.
      */
     fun retry(context: Context, latitude: Double, longitude: Double, bearing: Double?) {
-        if (failures == 0 || destination == null || arrived || waiting || Routing.pending != 0L) return
+        if (failures == 0 || uncovered || destination == null || arrived || waiting || Routing.pending != 0L) return
         val since = SystemClock.elapsedRealtime() - attemptAt
         if (since < RETRY_MS) return
         val moved = attemptFrom?.let { RouteFollower.distance(it.first, it.second, latitude, longitude) } ?: Double.MAX_VALUE
@@ -278,6 +299,8 @@ object Navigation {
         waiting = false
         arrived = false
         failures = 0
+        uncovered = false
+        refusalCounted = false
         Routing.clear()
         Guide.clear()
         NavigationStore.changed()
@@ -346,13 +369,15 @@ object Navigation {
         this.via = via
         arrived = false
         failures = 0
+        uncovered = false
+        refusalCounted = false
     }
 
     /** What the phone calls the destination: its label, else its coordinates. */
     fun describe(destination: Destination): String =
         destination.label ?: coordinates(destination.latitude, destination.longitude)
 
-    private fun coordinates(lat: Double, lon: Double): String =
+    fun coordinates(lat: Double, lon: Double): String =
         String.format(Locale.ROOT, "%.5f, %.5f", lat, lon)
 
     /**

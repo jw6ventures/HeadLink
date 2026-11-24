@@ -8,10 +8,10 @@
 // response (HERE's Platform Terms, 6.4h). The scenario - the same carriageway a few metres
 // off, the other carriageway 30 m away and reversed, a frontage road 25 m away, a cross
 // street on an overpass, a stretch with subSegments, a no-data gap, a closure - runs on a curving
-// synthetic route always, and with a directory holding W100_N30.rd5 as the first argument
-// also on BRouter's route along I-35E (Stemmons Freeway) in Dallas.
+// synthetic route always, and with a directory of OsmAnd maps (OBF_DIR) holding
+// Us_texas_dallas_northamerica.obf as the first argument also on OsmAndRouter's route along
+// I-35E (Stemmons Freeway) in Dallas.
 import java.io.File;
-import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -22,14 +22,13 @@ import com.jw6ventures.headlink.Congestion;
 import com.jw6ventures.headlink.FlowSpan;
 import com.jw6ventures.headlink.FlowStretch;
 import com.jw6ventures.headlink.Nogo;
+import com.jw6ventures.headlink.OsmAndRouter;
 import com.jw6ventures.headlink.Route;
 import com.jw6ventures.headlink.RouteFollower;
 import com.jw6ventures.headlink.RouteOptions;
 import com.jw6ventures.headlink.RoutePlanner;
 import com.jw6ventures.headlink.RouteRequest;
 import com.jw6ventures.headlink.RouteTraffic;
-import com.jw6ventures.headlink.Router;
-import com.jw6ventures.headlink.RoutingData;
 import com.jw6ventures.headlink.TrafficArea;
 import com.jw6ventures.headlink.TrafficBox;
 import com.jw6ventures.headlink.TrafficCost;
@@ -55,7 +54,7 @@ public final class TrafficMatchTest {
         coveringTheRouteAhead();
         scenario(synthetic(), 3_000.0, "synthetic");
         aRouteWithNoTrafficHasNoRuns();
-        aFreeRunSlowerThanBRouterIsNoDelay();
+        aFreeRunSlowerThanTheRouterIsNoDelay();
         matchingIsQuickEnough();
         pointsAreSpacedAndKeptFromTheEnds();
         theWeightSumsToTheDelay();
@@ -67,8 +66,8 @@ public final class TrafficMatchTest {
         withTheRouteTheJamOnItIsKept();
         reviewReversibleLanesAndShortClosures();
         reviewAStoppedQueueIsADelay();
-        String real = "real route skipped (no W100_N30.rd5)";
-        if (args.length > 0 && !args[0].isEmpty() && new File(args[0], "W100_N30.rd5").isFile()) {
+        String real = "real route skipped (need OBF_DIR with Us_texas_dallas_northamerica.obf)";
+        if (args.length > 0 && !args[0].isEmpty() && new File(args[0], "Us_texas_dallas_northamerica.obf").isFile()) {
             real = realRoute(new File(args[0]));
         }
         System.out.println("jni-host-test: ok " + passed + " traffic match checks; " + real);
@@ -205,16 +204,16 @@ public final class TrafficMatchTest {
         for (int i = 1; i < runs.size(); i++) check(runs.get(i).getFromM() >= runs.get(i - 1).getToM() - 1e-6, what + ": runs do not overlap");
         check(nothingFrom(runs, c + 1_250.0, c + 1_450.0), what + ": the gap has no run, frontage road beside it or not (no data, not free)");
 
-        // Delay: HERE's time less BRouter's, positive only; closures none.
+        // Delay: HERE's time less the router's, positive only; closures none.
         TrafficRun free = runs.get(0);
-        check(free.getDelaySeconds() == 0.0 && Math.abs(free.getSpeedMps() - 40.0) < 1e-6, what + ": faster than BRouter is no delay, never negative");
+        check(free.getDelaySeconds() == 0.0 && Math.abs(free.getSpeedMps() - 40.0) < 1e-6, what + ": faster than the router is no delay, never negative");
         double total = 0.0;
         for (int i = 1; i < runs.size(); i++) {
             TrafficRun run = runs.get(i);
             if (run.getCongestion() == Congestion.CLOSED) continue;
             double speed = i <= 2 ? (i == 1 ? 2.0 : 10.0) : 12.0;
             double expected = Math.max(0.0, (run.getToM() - run.getFromM()) / speed - (seconds(route, along, run.getToM()) - seconds(route, along, run.getFromM())));
-            check(Math.abs(run.getDelaySeconds() - expected) < 0.01 && expected > 0.0, what + ": delay is length at HERE's speed less BRouter's time: "
+            check(Math.abs(run.getDelaySeconds() - expected) < 0.01 && expected > 0.0, what + ": delay is length at HERE's speed less the router's time: "
                     + run.getDelaySeconds() + " against " + expected);
             total += run.getDelaySeconds();
         }
@@ -269,11 +268,11 @@ public final class TrafficMatchTest {
     /**
      * The orchestrator's change to the traffic design (docs/navigation.md, "Live traffic (HERE)"):
      * HERE's free
-     * flow a little under BRouter's model is not traffic. On P9.0's real Dallas routes that alone
+     * flow a little under the router's model is not traffic. On P9.0's real Dallas routes that alone
      * made 17 and 36 s, a "+1 min traffic" on empty roads. Only slow and queuing runs carry delay.
      */
-    private static void aFreeRunSlowerThanBRouterIsNoDelay() {
-        // BRouter drives it at 30 m/s; HERE says 20 m/s everywhere, free-flowing then slow.
+    private static void aFreeRunSlowerThanTheRouterIsNoDelay() {
+        // The router drives it at 30 m/s; HERE says 20 m/s everywhere, free-flowing then slow.
         Route route = line(32.9, -96.9, 0.0, 3_000.0, 50.0, 30.0);
         double[] along = AREA.metres(route);
         double[][] a = laid(route, along, 0.0, 1_000.0, 2.0, false);
@@ -287,7 +286,7 @@ public final class TrafficMatchTest {
                 "a free run then a slow one: " + describe(runs, 0.0));
         if (runs.size() != 2) return;
         check(runs.get(0).getDelaySeconds() == 0.0 && Math.abs(runs.get(0).getSpeedMps() - 20.0) < 0.5,
-                "free flow slower than BRouter's model is no delay: " + runs.get(0).getDelaySeconds());
+                "free flow slower than the router's model is no delay: " + runs.get(0).getDelaySeconds());
         double slow = runs.get(1).getToM() - runs.get(1).getFromM();
         check(Math.abs(runs.get(1).getDelaySeconds() - (slow / 20.0 - slow / 30.0)) < 0.5,
                 "the same speed on a slow run is: " + runs.get(1).getDelaySeconds());
@@ -507,13 +506,20 @@ public final class TrafficMatchTest {
 
     // ---- The real route ----
 
-    private static String realRoute(File segments) throws Exception {
-        File work = Files.createTempDirectory("traffic-match-test").toFile();
-        Router router = new Router(segments, RoutingData.INSTANCE.installProfile(new File(work, "profiles")), 64);
+    private static String realRoute(File dir) throws Exception {
+        OsmAndRouter router = new OsmAndRouter(() -> List.of(OsmAndRouter.MapFile.of(new File(dir, "Us_texas_dallas_northamerica.obf"))));
+        try {
+            return realRoute(router);
+        } finally {
+            router.close();
+        }
+    }
+
+    private static String realRoute(OsmAndRouter router) throws Exception {
         // Downtown Dallas north-west up Stemmons Freeway (I-35E) toward Love Field.
         Route route = router.compute(new RouteRequest(32.7800, -96.8050, 32.8450, -96.8850), RoutePlanner.MAX_RUNNING_MS, e -> kotlin.Unit.INSTANCE);
         double[] along = AREA.metres(route);
-        // The scenario goes on the first 3 km BRouter drives at freeway speed.
+        // The scenario goes on the first 3 km the router drives at freeway speed.
         double c = -1.0;
         for (double m = 500.0; m + 3_000.0 < along[along.length - 1]; m += 100.0) {
             if (3_000.0 / (seconds(route, along, m + 3_000.0) - seconds(route, along, m)) > 22.0) {
@@ -527,7 +533,7 @@ public final class TrafficMatchTest {
         check(boxes.size() == 1 && AREA.acceptable(boxes.get(0)), "its 30 km is one box HERE takes: " + boxes.get(0).query());
         System.out.println("traffic-match-test: real route points=" + route.getPoints() + " distance_m=" + route.getDistanceM()
                 + " seconds=" + route.getSeconds() + " scenario_from_m=" + Math.round(c));
-        return "real route over W100_N30 (Dallas, I-35E)";
+        return "real route over the Dallas map (I-35E)";
     }
 
 
@@ -646,7 +652,7 @@ public final class TrafficMatchTest {
 
     /**
      * A curving route near Dallas: 400 points 25 to 300 m apart, turning 0.8 deg at each, as
-     * BRouter's are uneven (long straight freeway segments, short ones on curves).
+     * a router's are uneven (long straight freeway segments, short ones on curves).
      */
     private static Route synthetic() {
         double[] steps = {25.0, 60.0, 140.0, 300.0, 90.0};

@@ -27,12 +27,12 @@ import kotlin.math.sqrt
 
 /**
  * OsmAnd's own router (vendor/osmand) over OsmAnd's `.obf` maps: the same maps address
- * search and exit signs already read, so a route needs no `.rd5` tiles. Pure JVM, like
- * [Router], so the host tests run this same class.
+ * search reads, and the app's one routing engine (P6.3). Pure JVM, so the host tests run
+ * this same class.
  *
- * **What it gives that BRouter does not.** OsmAnd's data keeps road names, refs, exit
- * numbers, `destination` signs and turn lanes, and its router derives its turns from them,
- * so a route arrives already named and signed ([toRoute]).
+ * **Names and signs.** OsmAnd's data keeps road names, refs, exit numbers, `destination`
+ * signs and turn lanes, and its router derives its turns from them, so a route arrives
+ * already named and signed ([toRoute]).
  *
  * **Search.** With nothing to steer round, the maps' precomputed highway hierarchy (HH)
  * does the long-distance work, which is what lets a phone route across a state in seconds;
@@ -43,22 +43,21 @@ import kotlin.math.sqrt
  *
  * **Traffic** ([RouteRequest.nogos]). A hard point closes every step of road inside its
  * circle. A weighted one adds time to each step in proportion to the metres of it inside
- * the circle: its weight is BRouter cost per metre at the request's top speed
- * ([TrafficCost]), turned into seconds by [TrafficCost.secondPrice]. OsmAnd adds every
- * step's time, so overlapping circles add up, and none of BRouter's one-point-per-link
- * workarounds in [Router] is needed. A request that finds no route with its closures
- * closed is tried once more with each closure passable at a high price, as [Router] does,
- * so a vehicle already on a closed road still gets its way out.
+ * the circle: its weight is cost per metre at the request's top speed ([TrafficCost]),
+ * turned into seconds by [TrafficCost.secondPrice]. OsmAnd adds every step's time, so
+ * overlapping circles add up. A request that finds no route with its closures closed is
+ * tried once more with each closure passable at a high price, so a vehicle already on a
+ * closed road still gets its way out.
  *
  * **Direction.** [RouteRequest.startBearing] goes to OsmAnd as the initial direction, and
- * the car profile charges 300 s for setting off the other way, which is what [Router]'s
- * point behind the vehicle approximates for BRouter.
+ * the car profile charges 300 s for setting off the other way, so a re-route does not
+ * begin by turning back.
  *
- * **Alternatives** ([RouteRequest.alternative]) are found the way BRouter finds them:
- * alternative *k* is searched with every road the routes before it used costing its time
- * over again, so it looks for a different corridor.
+ * **Alternatives** ([RouteRequest.alternative]): alternative *k* is searched with every
+ * road the routes before it used costing its time over again, so it looks for a different
+ * corridor.
  *
- * Not thread-safe: one routing thread, as for [Router]. Readers stay open between requests
+ * Not thread-safe: one routing thread ([RoutePlanner]). Readers stay open between requests
  * and are closed once their file drops out of [maps].
  */
 class OsmAndRouter(
@@ -97,9 +96,41 @@ class OsmAndRouter(
     @Throws(RoutingException::class)
     override fun compute(request: RouteRequest, maxRunningMs: Long, started: (SearchHandle) -> Unit): Route {
         val readers = readers()
-        if (readers.isEmpty()) throw RoutingException("no OsmAnd maps open")
+        uncovered(request, readers)?.let { throw RoutingException(it) }
         if (request.alternative > 0) return alternative(request, readers, maxRunningMs, started)
         return withTraffic(request, readers, maxRunningMs, started, used = null)
+    }
+
+    /**
+     * Why no map's routing data holds the request's ends, or null when they are held:
+     * [NOT_COVERED] or [MIRRORED] for the destination, [STOP_NOT_COVERED] for a via point
+     * when the destination itself is held. Checked before any search: OsmAnd would
+     * otherwise end the route on whatever road it reaches nearest, or search to its time
+     * limit for nothing. Only the files with routing data are open here ([readers]), so a
+     * basemap whose bounds span the planet never counts.
+     *
+     * Conservative: a point counts as held when the box [END_SNAP_M] round it meets any
+     * top-level routing box, so a pin just outside a map's edge that OsmAnd would snap
+     * onto a road inside it is routed, not refused. A miss here is certain; a hit can still
+     * fail the search.
+     */
+    private fun uncovered(request: RouteRequest, readers: List<BinaryMapIndexReader>): String? {
+        val boxes = readers.flatMap { reader -> reader.routingIndexes.flatMap { it.subregions.orEmpty() } }
+        fun covered(lat: Double, lon: Double): Boolean {
+            val dLat = END_SNAP_M / METRES_PER_DEGREE
+            val dLon = dLat / max(cos(Math.toRadians(lat)), 0.01)
+            val left = MapUtils.get31TileNumberX(max(lon - dLon, -180.0))
+            val right = MapUtils.get31TileNumberX(min(lon + dLon, 180.0))
+            val top = MapUtils.get31TileNumberY(min(lat + dLat, 85.0))
+            val bottom = MapUtils.get31TileNumberY(max(lat - dLat, -85.0))
+            return boxes.any { it.left <= right && it.right >= left && it.top <= bottom && it.bottom >= top }
+        }
+        if (!covered(request.toLat, request.toLon)) {
+            val mirrored = DestinationParser.mirroredLongitude(request.toLat, request.toLon, ::covered)
+            return if (mirrored != null) MIRRORED else NOT_COVERED
+        }
+        val viaLat = request.viaLat ?: return null
+        return if (covered(viaLat, request.viaLon!!)) null else STOP_NOT_COVERED
     }
 
     /** Closes every open map. */
@@ -170,7 +201,7 @@ class OsmAndRouter(
     }
 
     /**
-     * BRouter's alternative *k*: routes 0 to *k* in turn, each searched with the roads of
+     * Alternative *k*: routes 0 to *k* in turn, each searched with the roads of
      * the ones before it costing their time twice over ([UsedRoads]).
      */
     private fun alternative(
@@ -249,8 +280,26 @@ class OsmAndRouter(
         private const val PROFILE = "car"
 
         /**
+         * The failure for a destination no open map's routing data holds, no maps open at
+         * all included. Place-free, as every route error is: it reaches the report.
+         * [Routing.coverageText] tells the driver which map is missing.
+         */
+        const val NOT_COVERED = "destination outside the OsmAnd maps"
+
+        /** [NOT_COVERED], with the destination's mirrored longitude inside one: a dropped minus sign. */
+        const val MIRRORED = "destination outside the OsmAnd maps, its mirror inside"
+
+        /** The destination is held, but the route's stop (its via point) is outside every map. */
+        const val STOP_NOT_COVERED = "stop outside the OsmAnd maps"
+
+        /** Whether [error] is one of the coverage failures above: no search was made. */
+        fun coverage(error: String?): Boolean = error == NOT_COVERED || error == MIRRORED || error == STOP_NOT_COVERED
+
+        private const val METRES_PER_DEGREE = 111_320.0
+
+        /**
          * How far from the destination a route with closures may end and still count as
-         * reaching it, metres: about how far BRouter will look for a road from a waypoint.
+         * reaching it, metres: about how far a waypoint may lie from the road it is snapped to.
          */
         const val END_SNAP_M = 250.0
 
@@ -486,7 +535,7 @@ class OsmAndRouter(
 
         /**
          * OsmAnd's [turn] as the [TurnCommand] command the rest of the app reads. A keep
-         * from a motorway or trunk onto its link is the exit it is, as BRouter calls it.
+         * from a motorway or trunk onto its link is the exit it is.
          * Null for a turn that is no maneuver: OsmAnd's off-route marker.
          */
         @JvmStatic
@@ -518,7 +567,9 @@ class OsmAndRouter(
             road.name?.takeIf { it.isNotBlank() } ?: road.getRef("", false, true)?.takeIf { it.isNotBlank() }
 
         /**
-         * The exit number and sign text where the segment at [s] begins. The text is
+         * The exit number and sign text where the segment at [s] begins, only when that
+         * segment is a ramp (`*_link`): a route that keeps to the motorway past a junction
+         * takes no exit, and its number would be a sign for a road not driven. The text is
          * OsmAnd's own destination for the maneuver. The number is the link's
          * `junction:ref` where the map gives it one, else the `ref` of the
          * `motorway_junction` node the route leaves the motorway at, read from either road
@@ -527,13 +578,14 @@ class OsmAndRouter(
          */
         private fun exitSign(segments: List<RouteSegmentResult>, s: Int): ExitSign? {
             val segment = segments[s]
+            if (segment.getObject().highway?.endsWith("_link") != true) return null
             val before = segments.getOrNull(s - 1)
             val number = (
                 segment.getObject().junctionRef
                     ?: before?.let { junctionRef(it.getObject(), it.endPointIndex) }
                     ?: junctionRef(segment.getObject(), segment.startPointIndex)
                 )?.takeIf { it.isNotBlank() }
-            // The sign as ExitSigns words it: the road first, then the places, one " / " apart.
+            // The sign as the card words it: the road first, then the places, one " / " apart.
             val ref = segment.getObject().getDestinationRef("", false, segment.isForwardDirection)
             val places = segment.getDestinationName("", false, segments, s, false)
             val toward = listOfNotNull(ref, places)
@@ -574,8 +626,8 @@ class OsmAndRouter(
 
     /**
      * The pieces of road earlier alternatives drove, each to cost its time again: every step
-     * between two neighbouring points of a road, either way, as BRouter prices the links an
-     * earlier route used. Not whole roads: a motorway both routes start on would then be
+     * between two neighbouring points of a road, either way: the links an earlier route
+     * used. Not whole roads: a motorway both routes start on would then be
      * dearer for the alternative's every kilometre of it, including the ones only it drives.
      */
     private class UsedRoads {

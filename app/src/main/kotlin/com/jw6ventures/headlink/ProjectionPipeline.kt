@@ -96,8 +96,6 @@ class ProjectionPipeline(
     private val choices: DashboardChoices,
     /** Where ☀/☾, Ⓟ and the palette in use are kept between sessions. */
     private val saves: DashboardSaves,
-    /** Operator-supplied Mapsforge data, drawn as one map; empty runs the pane without. */
-    private val mapFiles: List<java.io.File>,
     private val zone: java.time.ZoneId,
     private val onFailure: (String) -> Unit,
 ) : VideoEncoder.Listener {
@@ -805,7 +803,7 @@ class ProjectionPipeline(
     private fun startRenderer(surface: android.view.Surface, handler: Handler): String? {
         val board = dashboard
         if (board != null) {
-            val target = DashboardRenderer(params.width, params.height, mapFiles)
+            val target = DashboardRenderer(params.width, params.height)
             val setup = target.start(surface, board.layout, board.isNight())
             if (setup != null) {
                 target.release()

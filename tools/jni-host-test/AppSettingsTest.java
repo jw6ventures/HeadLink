@@ -100,7 +100,7 @@ public final class AppSettingsTest {
         check(SessionSettings.SCENE_DASHBOARD.equals(a.getScene()), "the dashboard");
         check(a.getMapOnLeft(), "map on the left");
         check(a.getSpeedUnit() == SpeedUnit.MPH, "mph");
-        check(a.getMapFile() == null && a.getLabSocket() == null, "newest map, USB transport");
+        check(a.getLabSocket() == null, "USB transport");
     }
 
     private static void theNewSettingsStartWhereThePlanSays() {
@@ -323,12 +323,12 @@ public final class AppSettingsTest {
                 && !changed.getCongestionRestart() && !changed.getWirelessKeepAwake() && !changed.getWirelessAutoStart(),
                 "every key read: " + changed);
         Map<String, Object> form = changed.toStored();
-        check(form.size() == 68, "68 fields stored, one key each: " + form.size());
-        check(d.getOsmAndMap() && SavedSettings.Companion.fromStored(Map.of("map_osmand", false)).getOsmAndMap(),
-                "Draw map from OsmAnd files is on by default, whatever 0.8's test switch stored");
-        SavedSettings mapsforge = SavedSettings.Companion.fromStored(Map.of("map_source", "mapsforge"));
-        check(!mapsforge.getOsmAndMap() && "mapsforge".equals(mapsforge.toStored().get("map_source"))
-                && "osmand".equals(d.toStored().get("map_source")), "and switched off is stored as Mapsforge");
+        check(form.size() == 66, "66 fields stored, one key each: " + form.size());
+        for (String legacy : List.of("route_engine", "map_source", "route_osmand", "map_osmand")) {
+            check(!form.containsKey(legacy) && !d.toStored().containsKey(legacy), "no engine or map source key is stored: " + legacy);
+        }
+        check(SavedSettings.Companion.fromStored(Map.of("map_source", "mapsforge", "route_engine", "brouter")).equals(d),
+                "an old Mapsforge or BRouter choice left in the preferences reads as the defaults");
         check(SavedSettings.Companion.fromStored(form).equals(changed), "the stored form reads back whole");
         check(SavedSettings.Companion.fromStored(d.toStored()).equals(d), "and so do the defaults");
         for (Object value : form.values()) {

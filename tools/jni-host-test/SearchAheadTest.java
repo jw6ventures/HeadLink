@@ -7,12 +7,12 @@
 // is said and shown in miles and kilometres, with and without a name or a stop; the via
 // point's release on reaching or passing it; and that the report holds counts only.
 //
-// ROUTING_SEGMENTS (W100_N30.rd5) and OBF_DIR (Us_texas_austin_northamerica.obf) add a real
-// search: a route north on I-35 from downtown Austin toward Round Rock, the gas stations in
-// its corridor, the detours BRouter gives the nearest five, and the time each part took.
+// OBF_DIR (Us_texas_austin_northamerica.obf) as the first argument adds a real search: a
+// route north on I-35 from downtown Austin toward Round Rock with OsmAndRouter, the gas
+// stations in its corridor, the detours the router gives the nearest five, and the time
+// each part took.
 // AheadSearcher's threads, the speaker and Navigation.addStop need Android: the lab.
 import java.io.File;
-import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 import com.jw6ventures.headlink.AheadCorridor;
@@ -28,13 +28,12 @@ import com.jw6ventures.headlink.LegRouter;
 import com.jw6ventures.headlink.ObfFile;
 import com.jw6ventures.headlink.ObfPoi;
 import com.jw6ventures.headlink.ObfSource;
+import com.jw6ventures.headlink.OsmAndRouter;
 import com.jw6ventures.headlink.PoiKind;
 import com.jw6ventures.headlink.RoadSide;
 import com.jw6ventures.headlink.Route;
 import com.jw6ventures.headlink.RouteOptions;
 import com.jw6ventures.headlink.RouteRequest;
-import com.jw6ventures.headlink.Router;
-import com.jw6ventures.headlink.RoutingData;
 import com.jw6ventures.headlink.RoutingException;
 import com.jw6ventures.headlink.SpeedUnit;
 import com.jw6ventures.headlink.ViaRelease;
@@ -61,15 +60,14 @@ public final class SearchAheadTest {
         noStopWording();
         theViaPointIsLetGo();
         theReportHoldsCountsOnly();
-        String segments = args.length > 0 ? args[0] : "";
-        String obf = args.length > 1 ? args[1] : "";
-        if (!segments.isEmpty() && new File(segments, "W100_N30.rd5").isFile()
-            && !obf.isEmpty() && new File(obf, "Us_texas_austin_northamerica.obf").isFile()) {
-            realSearchNorthOnI35(new File(segments), new File(obf, "Us_texas_austin_northamerica.obf"));
+        String dir = args.length > 0 ? args[0] : "";
+        File austin = new File(dir, "Us_texas_austin_northamerica.obf");
+        if (!dir.isEmpty() && austin.isFile()) {
+            realSearchNorthOnI35(austin);
             System.out.println("jni-host-test: SearchAheadTest passed " + passed + " checks (with the real I-35 search)");
         } else {
             System.out.println("jni-host-test: SearchAheadTest passed " + passed
-                + " checks (real I-35 search skipped: ROUTING_SEGMENTS with W100_N30.rd5 and OBF_DIR with the Austin file not given)");
+                + " checks (real I-35 search skipped: need OBF_DIR with Us_texas_austin_northamerica.obf)");
         }
     }
 
@@ -342,10 +340,16 @@ public final class SearchAheadTest {
 
     // --- Real data ---------------------------------------------------------------------------
 
-    private static void realSearchNorthOnI35(File segments, File austin) throws Exception {
-        File work = Files.createTempDirectory("search-ahead").toFile();
-        File profile = RoutingData.INSTANCE.installProfile(new File(work, "profiles"));
-        Router router = new Router(segments, profile, 64);
+    private static void realSearchNorthOnI35(File austin) throws Exception {
+        OsmAndRouter router = new OsmAndRouter(() -> List.of(OsmAndRouter.MapFile.of(austin)));
+        try {
+            realSearchNorthOnI35(austin, router);
+        } finally {
+            router.close();
+        }
+    }
+
+    private static void realSearchNorthOnI35(File austin, OsmAndRouter router) throws Exception {
         RouteOptions options = new RouteOptions();
         // Downtown Austin by I-35 (the lab's position) to Round Rock: north on I-35.
         long t0 = System.nanoTime();
@@ -383,11 +387,9 @@ public final class SearchAheadTest {
                 most = Math.max(most, s.getDetourSeconds());
                 // Where it is on the route and how far off, never which place.
                 DetourLeg leg = AheadSearch.INSTANCE.leg(corridor, s.getHit());
-                Route ab = router.compute(new RouteRequest(leg.getALat(), leg.getALon(), leg.getBLat(), leg.getBLon(), leg.getABearing(), options),
-                    60_000, e -> kotlin.Unit.INSTANCE);
-                line.append(String.format(java.util.Locale.ROOT, " [%.1f km ahead, %d m %s, detour %d s, route A-B %.0f s vs BRouter A-B %d s]",
+                line.append(String.format(java.util.Locale.ROOT, " [%.1f km ahead, %d m %s, detour %d s, route A-B %.0f s]",
                     s.getHit().getAheadM() / 1000, Math.round(s.getHit().getOffsetM()), s.getHit().getSide().getWord(),
-                    s.getDetourSeconds(), leg.getBaseSeconds(), ab.getSeconds()));
+                    s.getDetourSeconds(), leg.getBaseSeconds()));
             }
             check(least <= 6 * 60, "the nearest stations include one a few minutes off I-35: least detour " + least + " s");
             check(most <= 15 * 60, "no detour to a station within half a mile of the road is 15 minutes or more: " + most + " s");

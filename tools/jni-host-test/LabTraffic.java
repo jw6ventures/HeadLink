@@ -1,17 +1,17 @@
 // Writes the stand-in HERE server's scenarios for the emulator lab's LAB_TRAFFIC runs (P9),
-// and the drive the lab receiver plays: BRouter's route from the lab's parked position to
-// Boston Common, and hand-written flow and incident responses in HERE's shape laid along
-// the OSM roads that route takes. Computed with the app's own Router,
-// TrafficMatch, TrafficNogos and AlternativeSearch over W75_N40.rd5, so the lab's numbers can
-// be checked against what the same code finds on the host:
+// and the drive the lab receiver plays: OsmAndRouter's route from the lab's parked position
+// to Boston Common, and hand-written flow and incident responses in HERE's shape laid along
+// the OSM roads that route takes. Computed with the app's own OsmAndRouter, TrafficMatch,
+// TrafficNogos and AlternativeSearch over Us_massachusetts_northamerica.obf, so the lab's
+// numbers can be checked against what the same code finds on the host:
 //
-//   java -cp <host-test classpath> LabTraffic <dir holding W75_N40.rd5> <tools/here-standin/scenarios> <drive.csv>
+//   java -Xmx256m -cp <host-test classpath> LabTraffic <OBF_DIR holding Us_massachusetts_northamerica.obf> <tools/here-standin/scenarios> <drive.csv>
 //
 // Not a test: it prints what it chose, checks that each scenario does what the lab relies on
 // (a queue a real way round saves at least 3 minutes on, a heavier one saving 3 minutes
-// more, a side-road closure that touches neither, a closure on the route BRouter can route
-// round) and writes the files. Nothing in them came from HERE: the geometry is OSM's
-// (ODbL), through BRouter, and every speed, jam factor and closure is made up here.
+// more, a side-road closure that touches neither, a closure on the route the router can
+// route round) and writes the files. Nothing in them came from HERE: the geometry is OSM's
+// (ODbL), through OsmAnd's maps, and every speed, jam factor and closure is made up here.
 import java.io.File;
 import java.io.PrintWriter;
 import java.io.StringReader;
@@ -25,6 +25,7 @@ import com.jw6ventures.headlink.AlternativeSearch;
 import com.jw6ventures.headlink.FlowStretch;
 import com.jw6ventures.headlink.LiveAlternative;
 import com.jw6ventures.headlink.Nogo;
+import com.jw6ventures.headlink.OsmAndRouter;
 import com.jw6ventures.headlink.PreviewRequest;
 import com.jw6ventures.headlink.Route;
 import com.jw6ventures.headlink.RouteFollower;
@@ -32,8 +33,6 @@ import com.jw6ventures.headlink.RouteOptions;
 import com.jw6ventures.headlink.RoutePlanner;
 import com.jw6ventures.headlink.RouteRequest;
 import com.jw6ventures.headlink.RouteTraffic;
-import com.jw6ventures.headlink.Router;
-import com.jw6ventures.headlink.RoutingData;
 import com.jw6ventures.headlink.TrafficArea;
 import com.jw6ventures.headlink.TrafficCost;
 import com.jw6ventures.headlink.TrafficIncident;
@@ -62,11 +61,20 @@ public final class LabTraffic {
     /** The drive the lab receiver plays for LAB_TRAFFIC=off: the route's first stretch. */
     private static final double DRIVE_M = 3_000.0;
 
+    /** The map the scenarios are routed over, in the directory given. */
+    private static final String MAP = "Us_massachusetts_northamerica.obf";
+
     public static void main(String[] args) throws Exception {
-        File segments = new File(args[0]);
+        OsmAndRouter router = new OsmAndRouter(() -> List.of(OsmAndRouter.MapFile.of(new File(args[0], MAP))));
+        try {
+            generate(router, args);
+        } finally {
+            router.close();
+        }
+    }
+
+    private static void generate(OsmAndRouter router, String[] args) throws Exception {
         File scenarios = new File(args[1]);
-        File work = Files.createTempDirectory("lab-traffic").toFile();
-        Router router = new Router(segments, RoutingData.INSTANCE.installProfile(new File(work, "profiles")), 64);
         RouteOptions options = new RouteOptions();
 
         // The route the app will compute: a shared destination is routed from the parked
@@ -77,7 +85,7 @@ public final class LabTraffic {
         double total = along[along.length - 1];
         say("route %d m, %d s, %d points", route.getDistanceM(), route.getSeconds(), route.getPoints());
 
-        // The queue: the first QUEUE_M BRouter drives at motorway speed, past QUEUE_AFTER_M.
+        // The queue: the first QUEUE_M the router drives at motorway speed, past QUEUE_AFTER_M.
         double queueFrom = -1.0;
         for (double m = QUEUE_AFTER_M; m + QUEUE_M < total - 3_000.0; m += 50.0) {
             if (QUEUE_M / (seconds(route, along, m + QUEUE_M) - seconds(route, along, m)) >= 18.0) {
@@ -87,8 +95,8 @@ public final class LabTraffic {
         }
         if (queueFrom < 0) throw new IllegalStateException("no fast stretch for the queue");
         double queueTo = queueFrom + QUEUE_M;
-        double brouterQueueS = seconds(route, along, queueTo) - seconds(route, along, queueFrom);
-        say("queue %.0f-%.0f m, BRouter %.0f s over it (%.1f m/s)", queueFrom, queueTo, brouterQueueS, QUEUE_M / brouterQueueS);
+        double routerQueueS = seconds(route, along, queueTo) - seconds(route, along, queueFrom);
+        say("queue %.0f-%.0f m, the router %.0f s over it (%.1f m/s)", queueFrom, queueTo, routerQueueS, QUEUE_M / routerQueueS);
 
         // Scenario A: slow near the vehicle, the queue, free flow after it, the other
         // carriageway's traffic laid 25 m to the left the other way (it must not match), and a
@@ -131,7 +139,7 @@ public final class LabTraffic {
                 aSide.nogos, aSide.hard);
 
         // Scenario B: the side closure, and a closure on the route itself close ahead, in both
-        // HERE's flow (closed, no speed) and its incidents. BRouter must route round it from
+        // HERE's flow (closed, no speed) and its incidents. The router must route round it from
         // where the vehicle is parked, without opening it.
         double[][] onRoute = laid(route, along, CLOSED_FROM_M, CLOSED_TO_M, LATERAL_M);
         List<String> flowB = List.of(result("Lab closed", onRoute, 3, Double.NaN, 13.0, 10.0, "closed"));
@@ -149,7 +157,7 @@ public final class LabTraffic {
                 tB.closureAhead(0.0).getFromM(), tB.closureAhead(0.0).getToM(), nB.size(), nB.stream().filter(Nogo::getHard).count(),
                 round.getDistanceM(), round.getSeconds(), round.getClosuresOpened(), nearest(round, new double[][] {{closed[0]}, {closed[1]}}));
         if (round.getClosuresOpened() || nearest(round, new double[][] {{closed[0]}, {closed[1]}}) < 20.0) {
-            throw new IllegalStateException("BRouter cannot route round B's closure");
+            throw new IllegalStateException("the router cannot route round B's closure");
         }
 
         // The side scenario alone (the closure run's first answer): the slow stretch, which
@@ -164,7 +172,7 @@ public final class LabTraffic {
         write(scenarios, "b", flowJson(flowB), incidentsB);
         write(scenarios, "empty", flowJson(List.of()), incidentsJson(List.of()));
         try (PrintWriter out = new PrintWriter(new File(scenarios, "expected.txt"), StandardCharsets.US_ASCII)) {
-            out.println("# Written by tools/jni-host-test/LabTraffic.java over W75_N40.rd5; what the app's own code finds on");
+            out.println("# Written by tools/jni-host-test/LabTraffic.java over " + MAP + "; what the app's own code finds on");
             out.println("# the host for each scenario, which the lab run checks the emulator against.");
             out.printf(Locale.ROOT, "route_m=%d route_s=%d%n", route.getDistanceM(), route.getSeconds());
             out.printf(Locale.ROOT, "a_delay_s=%.0f a_queue_delay_s=%.0f a_slow_delay_s=%.0f a_saving_s=%d%n", a.delay, a.queueDelay, a.slowDelay, a.saving);
@@ -178,14 +186,13 @@ public final class LabTraffic {
         int end = 0;
         while (end < route.getPoints() - 1 && along[end] < DRIVE_M) end++;
         try (PrintWriter out = new PrintWriter(drive, StandardCharsets.US_ASCII)) {
-            out.println("# P9 lab drive, written by tools/jni-host-test/LabTraffic.java from W75_N40.rd5 (OpenStreetMap");
+            out.println("# P9 lab drive, written by tools/jni-host-test/LabTraffic.java from " + MAP + " (OpenStreetMap");
             out.println(String.format(Locale.ROOT, "# data, ODbL): the first %.0f m of the lab position to Boston Common, %d points.", along[end], end + 1));
             for (int i = 0; i <= end; i++) {
                 out.println(String.format(Locale.ROOT, "%.6f,%.6f", route.getLatitudes()[i], route.getLongitudes()[i]));
             }
         }
         say("drive %.0f m, %d points, written to %s", along[end], end + 1, drive);
-        delete(work);
     }
 
     // ---- what the app would do with a scenario --------------------------------------------
@@ -201,7 +208,7 @@ public final class LabTraffic {
     }
 
     /** The delay and the best way round the app would offer, parked at the start (TrafficFeed.decide). */
-    private static Offer offer(Router router, Route route, RouteOptions options, String flow, String incidents) throws Exception {
+    private static Offer offer(OsmAndRouter router, Route route, RouteOptions options, String flow, String incidents) throws Exception {
         List<FlowStretch> f = TrafficJson.INSTANCE.flow(new StringReader(flow));
         List<TrafficIncident> inc = TrafficJson.INSTANCE.incidents(new StringReader(incidents));
         RouteTraffic held = TrafficMatch.INSTANCE.match(route, f, inc);
@@ -249,7 +256,7 @@ public final class LabTraffic {
     }
 
     /** A street near the route, clear of every route in [clear] by SIDE_CLEAR_M, 150 to 300 m of it. */
-    private static double[][] sideRoad(Router router, Route route, double[] along, RouteOptions options, List<Route> clear) throws Exception {
+    private static double[][] sideRoad(OsmAndRouter router, Route route, double[] along, RouteOptions options, List<Route> clear) throws Exception {
         for (double m = 1_200.0; m < along[along.length - 1] - 1_000.0; m += 400.0) {
             for (int sideSign : new int[] {-1, 1}) {
                 double[] p = at(route, along, m);
@@ -447,11 +454,5 @@ public final class LabTraffic {
 
     private static void say(String format, Object... args) {
         System.out.println("lab-traffic: " + String.format(Locale.ROOT, format, args));
-    }
-
-    private static void delete(File file) {
-        File[] children = file.listFiles();
-        if (children != null) for (File child : children) delete(child);
-        file.delete();
     }
 }

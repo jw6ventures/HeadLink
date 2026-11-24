@@ -1,11 +1,12 @@
-// P6.5's guidance loop on a desktop JVM: BRouter's commands read as cluster maneuvers, and
-// RouteFollower snapping fixes to a route, counting down, leaving it and arriving. Both are
-// pure Kotlin, so these are the classes the app runs. Nothing here is the vehicle: the
-// thresholds are checked against themselves, not against a real GPS.
+// P6.5's guidance loop on a desktop JVM: the router's turn commands read as cluster
+// maneuvers, and RouteFollower snapping fixes to a route, counting down, leaving it and
+// arriving. Both are pure Kotlin, so these are the classes the app runs. Nothing here is
+// the vehicle: the thresholds are checked against themselves, not against a real GPS.
 //
-// With a directory holding W75_N40.rd5 as the first argument it also follows a real
-// cross-town route from end to end; without one those checks are skipped and the line says
-// so.
+// With a directory of OsmAnd maps (OBF_DIR) holding Us_massachusetts_northamerica.obf as
+// the first argument it also follows a real cross-town route from Lexington to Boston from
+// end to end with OsmAndRouter, and re-routes from where the lab's Lexington drive leaves
+// its route; without one those checks are skipped and the line says so.
 import java.io.File;
 import java.nio.file.Files;
 import java.util.ArrayList;
@@ -14,14 +15,11 @@ import com.jw6ventures.headlink.FollowResult;
 import com.jw6ventures.headlink.FollowState;
 import com.jw6ventures.headlink.Maneuver;
 import com.jw6ventures.headlink.Maneuvers;
+import com.jw6ventures.headlink.OsmAndRouter;
 import com.jw6ventures.headlink.TurnCommand;
-import com.jw6ventures.headlink.Nogo;
 import com.jw6ventures.headlink.Route;
 import com.jw6ventures.headlink.RouteFollower;
-import com.jw6ventures.headlink.RouteOptions;
 import com.jw6ventures.headlink.RouteRequest;
-import com.jw6ventures.headlink.Router;
-import com.jw6ventures.headlink.RoutingData;
 
 public final class GuidanceTest {
     private static int passed;
@@ -37,13 +35,19 @@ public final class GuidanceTest {
         leavingTheRouteTakesTimeAndFixesAndCanBeUndone();
         aRouteAlwaysEndsAtADestination();
         stepIdentitiesNeverRepeatAcrossRoutes();
-        String segments = args.length > 0 ? args[0] : "";
-        if (!segments.isEmpty() && new File(segments, "W75_N40.rd5").isFile()) {
-            aRealRouteIsFollowedToItsEnd(new File(segments));
-            aReRouteStartsTheWayTheVehicleIsGoing(new File(segments));
+        File massachusetts = new File(args.length > 0 ? args[0] : "", "Us_massachusetts_northamerica.obf");
+        if (args.length > 0 && !args[0].isEmpty() && massachusetts.isFile()) {
+            OsmAndRouter router = new OsmAndRouter(() -> List.of(OsmAndRouter.MapFile.of(massachusetts)));
+            try {
+                aRealRouteIsFollowedToItsEnd(router);
+                aReRouteStartsTheWayTheVehicleIsGoing(router);
+            } finally {
+                router.close();
+            }
             System.out.println("jni-host-test: ok " + passed + " guidance checks");
         } else {
-            System.out.println("jni-host-test: ok " + passed + " guidance checks (real-route checks skipped: no W75_N40.rd5)");
+            System.out.println("jni-host-test: ok " + passed
+                + " guidance checks (real-route checks skipped: need OBF_DIR with Us_massachusetts_northamerica.obf)");
         }
     }
 
@@ -72,9 +76,9 @@ public final class GuidanceTest {
             check(m != null && m.getType() == row[1] && m.getExit() == 0, "command " + row[0] + " is maneuver " + row[1]);
             check(!m.getInstruction().isEmpty(), "command " + row[0] + " has an instruction");
         }
-        // BRouter's own numbering, pinned: a re-sync that renumbers fails here, not on a drive.
+        // The numbering saved routes carry, pinned: a renumbering fails here, not on a drive.
         check(TurnCommand.TURN_LEFT == 2 && TurnCommand.TURN_RIGHT == 5 && TurnCommand.ROUNDABOUT == 13
-            && TurnCommand.END == 100, "BRouter's command numbers are the pinned ones");
+            && TurnCommand.END == 100, "the command numbers are the pinned ones");
         // Right-hand traffic goes round counter-clockwise, and says which exit.
         Maneuver r = Maneuvers.INSTANCE.of(TurnCommand.ROUNDABOUT, 3);
         check(r.getType() == Maneuvers.ROUNDABOUT_ENTER_AND_EXIT_CCW && r.getExit() == 3, "a roundabout, third exit");
@@ -234,126 +238,100 @@ public final class GuidanceTest {
 
     // --- a real route ------------------------------------------------------------------
 
-    private static void aRealRouteIsFollowedToItsEnd(File segments) throws Exception {
-        File work = Files.createTempDirectory("guidance-test").toFile();
-        try {
-            File profile = RoutingData.INSTANCE.installProfile(new File(work, "profiles"));
-            Route route = new Router(segments, profile, 64)
-                .compute(new RouteRequest(42.4242, -71.2121, 42.3551, -71.0656), 120_000, e -> kotlin.Unit.INSTANCE);
-            int n = route.getPoints();
-            int[] commands = route.getCommands();
-            check(commands.length == route.getManeuverIndices().length, "one command per maneuver");
-            // BRouter's END is internal to its hint processing and never reaches a track, so
-            // the destination is the follower's to add - once.
-            for (int c : commands) check(c != TurnCommand.END, "no END among BRouter's hints");
-            float[] seconds = route.getPointSeconds();
-            check(seconds.length == n && seconds[0] == 0f, "a time for every point, from zero");
-            for (int i = 1; i < n; i++) check(seconds[i] >= seconds[i - 1], "time never runs backwards at point " + i);
-            check(Math.abs(seconds[n - 1] - route.getSeconds()) <= 1, "the last point's time is the route's");
+    private static void aRealRouteIsFollowedToItsEnd(OsmAndRouter router) throws Exception {
+        Route route = router.compute(new RouteRequest(42.4242, -71.2121, 42.3551, -71.0656), 120_000, e -> kotlin.Unit.INSTANCE);
+        int n = route.getPoints();
+        int[] commands = route.getCommands();
+        check(commands.length == route.getManeuverIndices().length, "one command per maneuver");
+        // The router marks no destination, so the destination is the follower's to add - once.
+        for (int c : commands) check(c != TurnCommand.END, "no END among the router's commands");
+        float[] seconds = route.getPointSeconds();
+        check(seconds.length == n && seconds[0] == 0f, "a time for every point, from zero");
+        for (int i = 1; i < n; i++) check(seconds[i] >= seconds[i - 1], "time never runs backwards at point " + i);
+        check(Math.abs(seconds[n - 1] - route.getSeconds()) <= 1, "the last point's time is the route's");
 
-            RouteFollower f = new RouteFollower(route, 7);
-            List<Integer> types = f.maneuverTypes();
-            check(types.get(types.size() - 1) == Maneuvers.DESTINATION
-                && types.indexOf(Maneuvers.DESTINATION) == types.size() - 1, "exactly one destination, last");
-            List<Integer> seen = new ArrayList<>();
-            long lastId = -1;
-            FollowResult r = null;
-            long t = 0;
-            double worst = 0;
-            // One fix a second at the profile's own pace, sampled along the geometry.
-            for (int i = 0; i < n; i++) {
-                t += 1000;
-                r = f.update(route.getLatitudes()[i], route.getLongitudes()[i], t);
-                if (r.getState() == FollowState.ARRIVED) break;
-                check(r.getState() == FollowState.ON_ROUTE, "on the route at point " + i + ": " + r.getState());
-                if (r.getStep().getId() != lastId) {
-                    check(r.getStep().getId() > lastId, "maneuvers in order at point " + i);
-                    seen.add(r.getStep().getManeuver().getType());
-                    lastId = r.getStep().getId();
-                }
-                worst = Math.max(worst, r.getOffsetM());
+        RouteFollower f = new RouteFollower(route, 7);
+        List<Integer> types = f.maneuverTypes();
+        check(types.get(types.size() - 1) == Maneuvers.DESTINATION
+            && types.indexOf(Maneuvers.DESTINATION) == types.size() - 1, "exactly one destination, last");
+        List<Integer> seen = new ArrayList<>();
+        long lastId = -1;
+        FollowResult r = null;
+        long t = 0;
+        double worst = 0;
+        // One fix a second at the profile's own pace, sampled along the geometry.
+        for (int i = 0; i < n; i++) {
+            t += 1000;
+            r = f.update(route.getLatitudes()[i], route.getLongitudes()[i], t);
+            if (r.getState() == FollowState.ARRIVED) break;
+            check(r.getState() == FollowState.ON_ROUTE, "on the route at point " + i + ": " + r.getState());
+            if (r.getStep().getId() != lastId) {
+                check(r.getStep().getId() > lastId, "maneuvers in order at point " + i);
+                seen.add(r.getStep().getManeuver().getType());
+                lastId = r.getStep().getId();
             }
-            check(r != null && r.getState() == FollowState.ARRIVED, "arrived at the end of the geometry");
-            check(seen.equals(f.maneuverTypes().subList(f.maneuverTypes().size() - seen.size(), f.maneuverTypes().size())),
-                "every maneuver after the start was shown, in order: " + seen + " against " + f.maneuverTypes());
-            check(worst < 1, "the route's own points lie on it: " + worst);
-            System.out.println("guidance-test: real route points=" + n + " maneuvers=" + f.maneuverTypes());
-        } finally {
-            delete(work);
+            worst = Math.max(worst, r.getOffsetM());
         }
+        check(r != null && r.getState() == FollowState.ARRIVED, "arrived at the end of the geometry");
+        check(seen.equals(f.maneuverTypes().subList(f.maneuverTypes().size() - seen.size(), f.maneuverTypes().size())),
+            "every maneuver after the start was shown, in order: " + seen + " against " + f.maneuverTypes());
+        check(worst < 1, "the route's own points lie on it: " + worst);
+        System.out.println("guidance-test: real route points=" + n + " metres=" + route.getDistanceM()
+            + " seconds=" + route.getSeconds() + " maneuvers=" + f.maneuverTypes());
     }
 
     /**
-     * The lab drive's missed turn, where a re-route was measured to start by going back
-     * the way the vehicle came: with the heading alone BRouter prices turning round at a
-     * flat 40 s and still set off 180 degrees off. Router's point behind the vehicle must
-     * make it set off forward, and a request without a heading must have no such point.
+     * Where the lab drive misses its turn and the follower first says it has left the route:
+     * a re-route given the vehicle's heading (which OsmAndRouter passes on as the start
+     * direction) must set off forward, not turn back the way the vehicle came.
      */
-    private static void aReRouteStartsTheWayTheVehicleIsGoing(File segments) throws Exception {
+    private static void aReRouteStartsTheWayTheVehicleIsGoing(OsmAndRouter router) throws Exception {
         File drive = new File("tools/lab-receiver/drives/lexington.csv");
-        if (!drive.isFile()) return;
+        if (!drive.isFile()) {
+            System.out.println("guidance-test: re-route skipped (no " + drive + ")");
+            return;
+        }
         List<double[]> path = new ArrayList<>();
         for (String line : Files.readAllLines(drive.toPath())) {
             if (line.startsWith("#") || line.isBlank()) continue;
             String[] p = line.split(",");
             path.add(new double[] {Double.parseDouble(p[0]), Double.parseDouble(p[1])});
         }
-        File work = Files.createTempDirectory("guidance-heading").toFile();
-        try {
-            Router router = new Router(segments, RoutingData.INSTANCE.installProfile(new File(work, "profiles")), 64);
-            Route planned = router.compute(new RouteRequest(path.get(0)[0], path.get(0)[1], 42.44950, -71.23100),
-                120_000, e -> kotlin.Unit.INSTANCE);
-            RouteFollower f = new RouteFollower(planned, 1);
-            // Drive the fixture until the follower says the vehicle has left the route.
-            long t = 0;
-            int at = -1;
-            for (int i = 0; i < path.size() && at < 0; i++) {
-                for (int k = 0; k < 5; k++) {
-                    t += 1000;
-                    if (f.update(path.get(i)[0], path.get(i)[1], t).getState() == FollowState.OFF_ROUTE) {
-                        at = i;
-                        break;
-                    }
+        Route planned = router.compute(new RouteRequest(path.get(0)[0], path.get(0)[1], 42.44950, -71.23100),
+            120_000, e -> kotlin.Unit.INSTANCE);
+        RouteFollower f = new RouteFollower(planned, 1);
+        // Drive the fixture until the follower says the vehicle has left the route.
+        long t = 0;
+        int at = -1;
+        for (int i = 0; i < path.size() && at < 0; i++) {
+            for (int k = 0; k < 5; k++) {
+                t += 1000;
+                if (f.update(path.get(i)[0], path.get(i)[1], t).getState() == FollowState.OFF_ROUTE) {
+                    at = i;
+                    break;
                 }
             }
-            check(at > 0, "the fixture drive leaves the planned route");
-            double[] here = path.get(at);
-            double[] behind = path.get(Math.max(0, at - 2));
-            double heading = RouteFollower.Companion.bearing(behind[0], behind[1], here[0], here[1]);
-            Route ahead = router.compute(new RouteRequest(here[0], here[1], 42.44950, -71.23100, heading),
-                120_000, e -> kotlin.Unit.INSTANCE);
-            int k = 1;
-            while (k < ahead.getPoints() - 1
-                && RouteFollower.Companion.distance(ahead.getLatitudes()[0], ahead.getLongitudes()[0],
-                    ahead.getLatitudes()[k], ahead.getLongitudes()[k]) < 40) k++;
-            double first = RouteFollower.Companion.bearing(ahead.getLatitudes()[0], ahead.getLongitudes()[0],
-                ahead.getLatitudes()[k], ahead.getLongitudes()[k]);
-            double turn = Math.abs(((first - heading) % 360 + 540) % 360 - 180);
-            check(ahead.getPoints() >= 2, "a re-route with a heading is still a route");
-            System.out.println(String.format("guidance-test: re-route with heading %.0f sets off at %.0f (%.0f degrees off)",
-                heading, first, turn));
-            check(turn < 90, "a re-route sets off the way the vehicle is going, not back");
-            RouteOptions options = new RouteOptions();
-            Nogo back = Router.Companion.behind(new RouteRequest(here[0], here[1], 42.44950, -71.23100, heading), options);
-            check(back != null && !back.getHard(), "a heading puts a weighted point behind the start");
-            double off = RouteFollower.Companion.distance(here[0], here[1], back.getLatitude(), back.getLongitude());
-            double towards = RouteFollower.Companion.bearing(here[0], here[1], back.getLatitude(), back.getLongitude());
-            check(near(off, Router.BEHIND_CENTRE_M, 0.1) && off > back.getRadiusM(), "the point is clear of the start");
-            check(Math.abs(((towards - heading) % 360 + 540) % 360 - 180) > 179, "the point is straight behind");
-            check(Router.Companion.behind(new RouteRequest(here[0], here[1], 42.44950, -71.23100), options) == null,
-                "no heading, no point behind");
-        } finally {
-            delete(work);
         }
+        check(at > 0, "the fixture drive leaves the planned route");
+        double[] here = path.get(at);
+        double[] behind = path.get(Math.max(0, at - 2));
+        double heading = RouteFollower.Companion.bearing(behind[0], behind[1], here[0], here[1]);
+        Route ahead = router.compute(new RouteRequest(here[0], here[1], 42.44950, -71.23100, heading),
+            120_000, e -> kotlin.Unit.INSTANCE);
+        int k = 1;
+        while (k < ahead.getPoints() - 1
+            && RouteFollower.Companion.distance(ahead.getLatitudes()[0], ahead.getLongitudes()[0],
+                ahead.getLatitudes()[k], ahead.getLongitudes()[k]) < 40) k++;
+        double first = RouteFollower.Companion.bearing(ahead.getLatitudes()[0], ahead.getLongitudes()[0],
+            ahead.getLatitudes()[k], ahead.getLongitudes()[k]);
+        double turn = Math.abs(((first - heading) % 360 + 540) % 360 - 180);
+        check(ahead.getPoints() >= 2, "a re-route with a heading is still a route");
+        System.out.println(String.format("guidance-test: re-route with heading %.0f sets off at %.0f (%.0f degrees off)",
+            heading, first, turn));
+        check(turn < 90, "a re-route sets off the way the vehicle is going, not back");
     }
 
     private static boolean near(double a, double b, double tolerance) { return Math.abs(a - b) <= tolerance; }
-
-    private static void delete(File file) {
-        File[] children = file.listFiles();
-        if (children != null) for (File child : children) delete(child);
-        file.delete();
-    }
 
     private static void check(boolean condition, String what) {
         if (!condition) throw new AssertionError("guidance: " + what);

@@ -4,8 +4,10 @@
 // request for an alternative. RoutePreview is pure Kotlin; PreviewActivity's map, its
 // process and the choice coming back to Routing need a device.
 //
-// With a directory holding W100_N30.rd5 as the first argument it also asks BRouter for
-// real alternatives around Austin and checks they are different roads.
+// With a directory of OsmAnd maps as the first argument (OBF_DIR) holding
+// Us_texas_austin_northamerica.obf it also asks OsmAndRouter for real alternatives around
+// Austin and checks they are different roads, and with Us_texas_waco_northamerica.obf too
+// that the finder's alternatives to Temple leave and rejoin the best route.
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -19,14 +21,13 @@ import com.jw6ventures.headlink.ExitSign;
 import com.jw6ventures.headlink.DestinationSource;
 import com.jw6ventures.headlink.LiveAlternative;
 import com.jw6ventures.headlink.NavigationFile;
+import com.jw6ventures.headlink.OsmAndRouter;
 import com.jw6ventures.headlink.PreviewRequest;
 import com.jw6ventures.headlink.Route;
 import com.jw6ventures.headlink.RouteOptions;
 import com.jw6ventures.headlink.RoutePlanner;
 import com.jw6ventures.headlink.RoutePreview;
 import com.jw6ventures.headlink.RouteRequest;
-import com.jw6ventures.headlink.Router;
-import com.jw6ventures.headlink.RoutingData;
 
 public final class RoutePreviewTest {
     private static int passed;
@@ -46,11 +47,18 @@ public final class RoutePreviewTest {
         theNavigationIsSavedAndReadBack(work);
         theRestOfARouteIsARouteOfItsOwn();
         anAlternativeSaysHowMuchLonger();
-        String real = "real alternatives skipped (no W100_N30.rd5)";
-        if (args.length > 0 && new File(args[0], "W100_N30.rd5").isFile()) {
-            realAlternativesAreOtherRoads(work, new File(args[0]));
-            alternativesLeaveAndRejoinTheRoute(work, new File(args[0]));
-            real = "real alternatives over W100_N30";
+        String real = "real alternatives skipped (need OBF_DIR with Us_texas_austin_northamerica.obf)";
+        File austin = args.length > 0 ? new File(args[0], "Us_texas_austin_northamerica.obf") : null;
+        if (austin != null && austin.isFile()) {
+            realAlternativesAreOtherRoads(work, austin);
+            real = "real alternatives over the Austin map";
+            File waco = new File(args[0], "Us_texas_waco_northamerica.obf");
+            if (waco.isFile()) {
+                alternativesLeaveAndRejoinTheRoute(austin, waco);
+                real += " and to Temple over Waco's";
+            } else {
+                real += " (Temple skipped: no Us_texas_waco_northamerica.obf)";
+            }
         }
         System.out.println("jni-host-test: ok " + passed + " route preview checks; " + real);
     }
@@ -72,7 +80,7 @@ public final class RoutePreviewTest {
     }
 
     private static void aRequestReadsBackWhole(File work) throws IOException {
-        RouteOptions options = new RouteOptions(true, false, true, false, true, 105, 10, false, false, false);
+        RouteOptions options = new RouteOptions(true, false, true, false, true, 105, 10, false, false);
         PreviewRequest request = new PreviewRequest(42L, 30.0, -97.0, 31.0, -97.5, 123.0, options, sample());
         File file = P.requestFile(work);
         P.writeRequest(file, request);
@@ -86,6 +94,22 @@ public final class RoutePreviewTest {
         PreviewRequest noBearing = new PreviewRequest(1L, 30.0, -97.0, 31.0, -97.5, null, new RouteOptions(), sample());
         P.writeRequest(file, noBearing);
         check(P.readRequest(file).getStartBearing() == null, "no bearing reads back as none");
+        // Version 6 (the engine switch gone): seven flags, then the top speed.
+        P.writeRequest(file, request);
+        byte[] bytes = Files.readAllBytes(file.toPath());
+        java.nio.ByteBuffer raw = java.nio.ByteBuffer.wrap(bytes);
+        check(raw.getInt(0) == 6, "a request is version 6: " + raw.getInt(0));
+        byte[] flags = Arrays.copyOfRange(bytes, 4 + 8 + 5 * 8, 4 + 8 + 5 * 8 + 7);
+        check(Arrays.equals(flags, new byte[] {1, 0, 1, 0, 1, 0, 0}) && raw.getInt(4 + 8 + 5 * 8 + 7) == 105
+                && raw.getInt(4 + 8 + 5 * 8 + 11) == 10, "with seven flags before the speed and percentage: " + Arrays.toString(flags));
+        bytes[3] = 5;
+        Files.write(file.toPath(), bytes);
+        try {
+            P.readRequest(file);
+            check(false, "a version 5 request, with its eighth flag, is not misread");
+        } catch (IOException expected) {
+            check(true, "a version 5 request is refused");
+        }
     }
 
     private static void aChoiceReadsBackWhole(File work) throws IOException {
@@ -171,9 +195,9 @@ public final class RoutePreviewTest {
         check(new RouteRequest(30.0, -97.0, 31.0, -97.5).getAlternative() == 0, "a plain request is the best route");
         try {
             new RouteRequest(30.0, -97.0, 31.0, -97.5, null, new RouteOptions(), 4);
-            check(false, "BRouter has no fifth route");
+            check(false, "there is no fifth route");
         } catch (IllegalArgumentException expected) {
-            check(true, "an alternative BRouter cannot give is refused");
+            check(true, "an alternative past the third is refused");
         }
     }
 
@@ -219,8 +243,7 @@ public final class RoutePreviewTest {
         P.writeChoice(file, 9L, viaRoute);
         Route back = P.readChoice(file).getSecond();
         check(back.getVia() != null && back.getVia()[0] == 30.005 && back.getVia()[1] == -97.001, "the via point crosses the file");
-        check(viaRoute.withTimeScale(1.1).getVia() == viaRoute.getVia() && viaRoute.withRoads(new int[0], new String[0]).getVia() != null,
-                "and survives scaling and naming");
+        check(viaRoute.withTimeScale(1.1).getVia() == viaRoute.getVia(), "and survives scaling");
         P.writeChoice(file, 9L, sample());
         check(P.readChoice(file).getSecond().getVia() == null, "a route with none reads back with none");
 
@@ -318,7 +341,7 @@ public final class RoutePreviewTest {
         Route even = new Route(other.getLatitudes(), other.getLongitudes(), 3600, 620, new int[0], new int[0], new int[0]);
         check("same".equals(LiveAlternative.Companion.of(5L, ahead, even).getLabel()), "within half a minute is the same");
         check(LiveAlternative.Companion.worthShowing(3000, 14400), "on a four-hour trip up to an hour is shown");
-        // BRouter's snapped start is between two nodes, so never a point of the other route:
+        // A router's snapped start is between two nodes, so never a point of the other route:
         // it must not count as where the alternative leaves.
         Route snapped = new Route(new double[] {29.99995, 30.0, 30.01, 30.02, 30.03}, new double[] {-97, -97, -97, -96.99, -97},
                 3336, 700, new int[0], new int[0], new int[0]);
@@ -328,13 +351,21 @@ public final class RoutePreviewTest {
     }
 
     /**
-     * Austin to Temple: BRouter's own alternatives left I 35 entirely (91 and 101 minutes
-     * against 65). The finder's must share part of the best route, be faster than
-     * BRouter's own first alternative, and never repeat an option.
+     * Austin to Temple: the router's own alternatives (each search pricing the roads the
+     * earlier ones used) tend to leave I 35 entirely. The finder's first must be its own,
+     * through a via point and not the router's raw alternative, share part of the best
+     * route, be faster than that raw alternative, and never repeat an option.
      */
-    private static void alternativesLeaveAndRejoinTheRoute(File work, File segments) throws Exception {
-        File profile = RoutingData.INSTANCE.installProfile(new File(work, "profiles"));
-        Router router = new Router(segments, profile, 64);
+    private static void alternativesLeaveAndRejoinTheRoute(File austin, File waco) throws Exception {
+        OsmAndRouter router = new OsmAndRouter(() -> List.of(OsmAndRouter.MapFile.of(austin), OsmAndRouter.MapFile.of(waco)));
+        try {
+            alternativesLeaveAndRejoinTheRoute(router);
+        } finally {
+            router.close();
+        }
+    }
+
+    private static void alternativesLeaveAndRejoinTheRoute(OsmAndRouter router) throws Exception {
         PreviewRequest shape = new PreviewRequest(1L, 30.2672, -97.7431, 31.0982, -97.3428, null, new RouteOptions(), sample());
         Route best = router.compute(shape.alternative(0), RoutePlanner.MAX_RUNNING_MS, e -> kotlin.Unit.INSTANCE);
         Route strict = router.compute(shape.alternative(1), RoutePlanner.MAX_RUNNING_MS, e -> kotlin.Unit.INSTANCE);
@@ -354,17 +385,26 @@ public final class RoutePreviewTest {
             line.append(" ").append(r.getSeconds() / 60).append("min/").append(Math.round(100 * P.shared(r, best))).append("%");
         }
         Route first = found.get(0);
+        check(first.getVia() != null, "the first came from a search through a via point");
+        check(!P.duplicate(first, List.of(strict)), "and is not the router's own alternative: " + P.shared(first, strict));
         check(P.shared(first, best) > 0.2, "the first shares part of the best route: " + P.shared(first, best));
-        check(first.getSeconds() < strict.getSeconds(), "and is faster than BRouter's own alternative: "
+        check(first.getSeconds() < strict.getSeconds(), "and is faster than the router's own alternative: "
                 + first.getSeconds() + " s against " + strict.getSeconds() + " s");
         System.out.println("route-preview-test: temple best=" + best.getSeconds() / 60 + "min strict=" + strict.getSeconds() / 60
                 + "min found=" + line + " find_ms=" + ms);
     }
 
-    /** Austin to Round Rock: BRouter's first and second alternatives against its best. */
-    private static void realAlternativesAreOtherRoads(File work, File segments) throws Exception {
-        File profile = RoutingData.INSTANCE.installProfile(new File(work, "profiles"));
-        Router router = new Router(segments, profile, 64);
+    /** Austin to Round Rock: the router's first and second alternatives against its best. */
+    private static void realAlternativesAreOtherRoads(File work, File austin) throws Exception {
+        OsmAndRouter router = new OsmAndRouter(() -> List.of(OsmAndRouter.MapFile.of(austin)));
+        try {
+            realAlternativesAreOtherRoads(work, router);
+        } finally {
+            router.close();
+        }
+    }
+
+    private static void realAlternativesAreOtherRoads(File work, OsmAndRouter router) throws Exception {
         PreviewRequest trip = new PreviewRequest(1L, 30.2672, -97.7431, 30.5083, -97.6789, null, new RouteOptions(), sample());
         Route best = router.compute(trip.alternative(0), RoutePlanner.MAX_RUNNING_MS, e -> kotlin.Unit.INSTANCE);
         Route first = router.compute(trip.alternative(1), RoutePlanner.MAX_RUNNING_MS, e -> kotlin.Unit.INSTANCE);

@@ -3,7 +3,6 @@
 // other apps use, the address-only refusal, malformed input, and the swapped-sign hint.
 // DestinationParser is pure Kotlin, so this is the class the app runs. It proves nothing
 // about what OsmAnd actually puts in an intent on the Pixel; only a real share does.
-import java.util.Set;
 import com.jw6ventures.headlink.Destination;
 import com.jw6ventures.headlink.DestinationParser;
 import com.jw6ventures.headlink.ParsedDestination;
@@ -126,21 +125,18 @@ public final class DestinationTest {
 
     /**
      * The P6.3a mistake: Austin's longitude typed without its minus sign lands in China,
-     * where no tile is installed; its mirror is, so the phone suggests it.
+     * which no OsmAnd map covers; its mirror is, so the phone suggests it. A Texas box
+     * stands in for the maps' routing bounds.
      */
     private static void aMissingMinusSignIsSuggestedNotAssumed() {
-        Set<String> tiles = Set.of("W100_N30.rd5", "W75_N40.rd5");
-        Double mirrored = PARSER.mirroredLongitude(30.2672, 97.7431, tiles);
-        check(mirrored != null && mirrored == -97.7431, "97.7 E with only W100_N30 installed suggests 97.7 W");
-        check(PARSER.mirroredLongitude(30.2672, -97.7431, tiles) == null, "a covered point needs no hint");
-        check(PARSER.mirroredLongitude(51.5, 0.5, tiles) == null, "no hint when the mirror is not covered either");
-        // 0.9: the same hint over OsmAnd's maps, a Texas box standing in for their bounds.
         com.jw6ventures.headlink.GeoBox texas = new com.jw6ventures.headlink.GeoBox(25.8, -106.7, 36.5, -93.5);
-        Double fromMaps = PARSER.mirroredLongitude(30.2672, 97.7431, (lat, lon) -> texas.contains(lat, lon));
-        check(fromMaps != null && fromMaps == -97.7431, "OsmAnd's map bounds catch a dropped minus sign too: " + fromMaps);
+        Double mirrored = PARSER.mirroredLongitude(30.2672, 97.7431, (lat, lon) -> texas.contains(lat, lon));
+        check(mirrored != null && mirrored == -97.7431, "97.7 E with only Texas covered suggests 97.7 W: " + mirrored);
         check(PARSER.mirroredLongitude(30.2672, -97.7431, (lat, lon) -> texas.contains(lat, lon)) == null,
-                "and say nothing for a point they cover");
-        check(PARSER.mirroredLongitude(30.2672, 0.0, tiles) == null, "zero has no mirror");
+                "a covered point needs no hint");
+        check(PARSER.mirroredLongitude(51.5, 0.5, (lat, lon) -> texas.contains(lat, lon)) == null,
+                "no hint when the mirror is not covered either");
+        check(PARSER.mirroredLongitude(30.2672, 0.0, (lat, lon) -> true) == null, "zero has no mirror");
     }
 
     private static Destination found(ParsedDestination parsed) {

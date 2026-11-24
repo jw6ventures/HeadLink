@@ -14,7 +14,7 @@ class LiveAlternative(
     val id: Long,
     val route: Route,
     /**
-     * Its time less the followed route's time still to go, from the same point: BRouter's
+     * Its time less the followed route's time still to go, from the same point: the engine's
      * seconds, and while live traffic is held each route's own traffic delay too (P9.6), so
      * a bubble and the offer never disagree about which is quicker.
      */
@@ -73,7 +73,7 @@ class LiveAlternative(
         /**
          * The points of [alternative] that are its own, not [ahead]'s, in order.
          *
-         * BRouter's first and last points are the ends snapped onto the road, between two of
+         * A route's first and last points are the ends snapped onto the road, between two of
          * its nodes, so they are never points of the other route even where the two are one
          * road. Counted as the alternative's own, they made every alternative "leave" where
          * the vehicle already was, and it was gone on the next fix (the first lab drive).
@@ -165,7 +165,7 @@ class LiveAlternative(
 
 /**
  * The live alternatives' search (P6.6's [AlternativeFinder]) with live traffic's no-go
- * points (P9.5, P9.6). Pure JVM over a [Router], so the host test runs it on real tiles.
+ * points (P9.5, P9.6). Pure JVM over a [RouteEngine], so the host test runs it on real maps.
  */
 object AlternativeSearch {
     /**
@@ -173,8 +173,8 @@ object AlternativeSearch {
      * [RoutePreview.duplicate] of another or of the route itself. [trip]'s points go into
      * every search ([PreviewRequest.nogos]).
      *
-     * With [aroundTraffic], the first search is BRouter's own best route over the same trip
-     * with the points: the way round the traffic that BRouter would take, which the finder's
+     * With [aroundTraffic], the first search is the engine's own best route over the same trip
+     * with the points: the way round the traffic that the engine would take, which the finder's
      * corridors, built to differ from the route on show, may not include. It is made to pass
      * through its own stretch ([LiveAlternative.throughOwn]) so that taking it from the
      * vehicle keeps to it. One search more, asked only when the traffic ahead is heavy enough
@@ -371,7 +371,6 @@ object LiveAlternatives {
         lastLookMs = nowMs
         looks++
         if (traffic) trafficLooks++
-        val maps = Routing.nameMaps
         val app = context.applicationContext
         // Answered in done, which runs even when the planner skips the look for a route
         // request: a re-route that fails keeps the token, and nothing else would clear
@@ -382,22 +381,9 @@ object LiveAlternatives {
         Routing.explore(
             context,
             done = {
-                // Named, so a route taken from a bubble says its roads on the cluster.
-                val named = routes.map { route ->
-                    if (trip.options.osmAndRouting) {
-                        route
-                    } else {
-                        val withNames = try {
-                            if (maps != null) StreetNames.name(route, maps) else route
-                        } catch (e: RuntimeException) {
-                            route
-                        }
-                        Routing.signed(app, withNames)
-                    }
-                }
                 val took = (System.nanoTime() - begun) / 1_000_000L
                 val looked = ran
-                main.post { finished(app, forToken, follower, ahead, aheadAlongM, named, took, looked) }
+                main.post { finished(app, forToken, follower, ahead, aheadAlongM, routes, took, looked) }
             },
         ) { router, started, cancelled ->
             ran = true
@@ -450,7 +436,7 @@ object LiveAlternatives {
      * The alternative starts a little ahead of where the vehicle now is, so it is not
      * followed as it is. Its via point becomes the chosen route's ([Navigation.via]) and a
      * route is asked for from the vehicle through it: the road ahead and then the
-     * alternative. One with no via point (BRouter's own, when no via route qualified) is
+     * alternative. One with no via point (the engine's own, when no via route qualified) is
      * taken as it is, and the follower joins it or re-routes.
      */
     fun choose(context: Context, id: Long) {

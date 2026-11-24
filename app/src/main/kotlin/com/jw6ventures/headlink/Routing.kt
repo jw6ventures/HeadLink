@@ -4,8 +4,6 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.os.Process
-import java.io.File
-import java.io.IOException
 import java.util.Locale
 
 /**
@@ -72,6 +70,17 @@ object Routing {
     /** The last request itself: what the route preview asks alternatives of. Never reported. */
     private var lastRequest: RouteRequest? = null
 
+    /** Whether the request in flight is [Navigation]'s, for its held destination. */
+    private var tripRequest = false
+
+    /**
+     * The last answered request when no map covered it ([OsmAndRouter.coverage]), with the
+     * reason, or null: what [coverageText] words. Its own request's, never the held
+     * destination's, so a two-point request off the maps names its own end.
+     */
+    private var uncovered: Pair<RouteRequest, String>? = null
+    private var uncoveredTrip = false
+
     /**
      * Names the route on show: changes whenever [line] does. The route preview is handed
      * it and hands it back with a choice, so a choice made about a route that has since
@@ -98,39 +107,22 @@ object Routing {
     var line: Route? = null
         private set
 
-    /**
-     * The maps street names are read from: the ones the dashboard draws while it projects,
-     * installed by [ProjectionService], else every installed map. Read on the routing thread.
-     */
-    @Volatile
-    var nameMaps: List<File>? = null
-
-    fun root(context: Context): File = RoutingData.root(context.applicationContext.filesDir)
-
-    fun installed(context: Context): List<File> = RoutingData.installed(RoutingData.segments(root(context)))
+    /** The saved route preferences, as a request uses them. */
+    fun options(context: Context): RouteOptions = AppSettings.load(context).routing
 
     /**
-     * The saved route preferences as a request should use them: OsmAnd's router (the
-     * default) unless no OsmAnd maps folder is chosen while BRouter tiles are installed,
-     * when BRouter routes as it did before 0.9 rather than every route failing.
+     * Starts [request] on the routing thread; the result arrives through [SessionController.note].
+     * [trip] marks [Navigation]'s requests for its held destination: only their failures
+     * are that destination's.
      */
-    fun options(context: Context): RouteOptions {
-        val saved = AppSettings.load(context).routing
-        return if (saved.osmAndRouting && !ObfLibrary.chosen(context) && installed(context).isNotEmpty()) {
-            saved.copy(osmAndRouting = false)
-        } else {
-            saved
-        }
-    }
-
-    /** Starts [request] on the routing thread; the result arrives through [SessionController.note]. */
-    fun request(context: Context, request: RouteRequest, from: String, startFrom: String) {
+    fun request(context: Context, request: RouteRequest, from: String, startFrom: String, trip: Boolean = false) {
         val planner = planner(context)
         requests++
         origin = from
         start = startFrom
         options = request.options
         lastRequest = request
+        tripRequest = trip
         pending = planner.request(request) { result -> main.post { finished(result) } }
         SessionController.note("route requested from $from (request $pending)")
     }
@@ -147,7 +139,6 @@ object Routing {
     /** The routing thread's planner, made on first use. */
     private fun planner(context: Context): RoutePlanner {
         planner?.let { return it }
-        val root = root(context)
         // The planner outlives this call, so it keeps the application, never an activity.
         val app = context.applicationContext
         // One for the planner's life, so OsmAnd's readers stay open between routes.
@@ -157,7 +148,7 @@ object Routing {
         // (DestinationActivity has no window) found nothing open, and OsmAnd's router said
         // "no OsmAnd maps open" for every request. A search holds the files itself; its
         // readers keep their own handles once opened, so letting go afterwards is safe.
-        val osmand = object : RouteEngine {
+        val engine = object : RouteEngine {
             override fun compute(request: RouteRequest, maxRunningMs: Long, started: (SearchHandle) -> Unit): Route {
                 ObfLibrary.hold(MAPS_HOLDER, true)
                 try {
@@ -167,54 +158,15 @@ object Routing {
                 }
             }
         }
-        val engines = EngineChoice(
-            brouter = {
-                // On the routing thread: the profile copy is file I/O too.
-                val profile = try {
-                    RoutingData.installProfile(RoutingData.profiles(root))
-                } catch (e: IOException) {
-                    throw RoutingException("routing profile: ${e.message}")
-                }
-                Router(RoutingData.segments(root), profile)
-            },
-            osmand = { osmand },
-        )
         return RoutePlanner(
-            router = { engines },
+            router = { engine },
             // Below the scene and encoder threads, which run at the default and have a
             // frame deadline this does not — but deliberately not THREAD_PRIORITY_BACKGROUND.
             // Android moves a thread at that level into the background scheduling group,
             // which keeps it on the phone's little cores: the first build used it, and a
             // 94 km route took 23.9 s warm on the Pixel against 2.3 s on one desktop core.
             threadSetup = { Process.setThreadPriority(THREAD_PRIORITY) },
-            annotate = { request, route -> annotated(app, route, request.options, nameMaps) },
         ).also { planner = it }
-    }
-
-    /**
-     * [route] with its street names ([StreetNames], from [maps] or else every installed map)
-     * and exit signs ([signed]), when BRouter made it. One OsmAnd's router made under
-     * [options] already has both from the same maps, and is returned as it is. The
-     * routing thread's work: it opens files.
-     */
-    fun annotated(context: Context, route: Route, options: RouteOptions, maps: List<File>?): Route {
-        if (options.osmAndRouting) return route
-        val named = try {
-            StreetNames.name(route, maps ?: MapData.installed(context))
-        } catch (e: RuntimeException) {
-            route
-        }
-        return signed(context, named)
-    }
-
-    /**
-     * [route] with the exit signs OsmAnd's maps give it ([ExitSigns]); [route] itself with
-     * no maps or when reading them fails. The routing thread's work: it opens files.
-     */
-    fun signed(context: Context, route: Route): Route = try {
-        ExitSigns.sign(route, ObfLibrary.sources(context))
-    } catch (e: RuntimeException) {
-        route
     }
 
     private fun finished(result: RouteResult) {
@@ -224,13 +176,19 @@ object Routing {
         }
         pending = 0
         val route = result.route
+        val request = lastRequest
+        val coverage = OsmAndRouter.coverage(result.error)
+        uncovered = if (coverage && request != null) request to result.error!! else null
+        uncoveredTrip = coverage && tripRequest
         if (route == null && (origin == CLOSURE || origin == REROUTE) && line != null) {
             // A re-route that found nothing: the destination has not changed, so the route
             // the vehicle had is still the way there. It stays on the map and in guidance
             // rather than vanishing, so a driver who finds their own way back onto it is
-            // guided along it again; one still off it is re-routed again on Guide's clock.
+            // guided along it again; one still off it is re-routed again on Guide's clock,
+            // unless no map covers the trip, which no re-route can mend ([Navigation.uncovered]).
             val what = if (origin == CLOSURE) "re-route round a closure" else "re-route"
             SessionController.note("$what failed after ${result.computeMs} ms: ${result.error}")
+            if (tripRequest) Navigation.coverage(result.error)
             Guide.onRouteFailed()
             return
         }
@@ -244,8 +202,9 @@ object Routing {
             Guide.onRoute(route)
         } else {
             // Nothing to follow: the destination is held and asked for again as the vehicle
-            // moves ([Navigation.retry]), and the dashboard says so meanwhile.
-            Navigation.routeFailed()
+            // moves ([Navigation.retry]) unless no map covers it, and the dashboard says so.
+            // A two-point request's coverage failure is its own, not the held destination's.
+            Navigation.routeFailed(if (tripRequest) result.error else null)
             Guide.onRouteLost()
         }
         NavigationStore.changed()
@@ -254,7 +213,7 @@ object Routing {
             result.route?.let { route ->
                 "route computed in ${result.computeMs} ms on ${result.thread}: ${route.distanceM} m, " +
                     "${route.seconds} s, ${route.points} points, ${route.maneuverIndices.size} maneuvers" +
-                    lowered(route) + traffic(route)
+                    traffic(route)
             } ?: "route failed after ${result.computeMs} ms on ${result.thread}: ${result.error}",
         )
     }
@@ -266,12 +225,6 @@ object Routing {
         else -> ""
     }
 
-    /** Said when BRouter could not finish at the chosen top speed and the route was timed lower. */
-    private fun lowered(route: Route): String {
-        val asked = options?.topSpeedKmh ?: return ""
-        return if (route.topSpeedKmh in 1 until asked) "; timed at ${route.topSpeedKmh} km/h, as $asked km/h failed" else ""
-    }
-
     /**
      * Forgets the route and takes its line off the map. A search still running finishes
      * on its own thread and is then counted as superseded, never shown.
@@ -280,6 +233,7 @@ object Routing {
         pending = 0
         last = null
         line = null
+        uncovered = null
         token++
         SessionController.note("route cleared")
     }
@@ -302,7 +256,7 @@ object Routing {
      * Follows [route], an alternative the preview offered, in place of the one on show.
      * Refused, returning false, when [chosenToken] no longer names the route on show: it
      * was re-routed, replaced or cleared while the preview was open, and the choice was
-     * made about a route that is gone. A re-route later is BRouter's best route from
+     * made about a route that is gone. A re-route later is the engine's best route from
      * wherever the vehicle is, not this alternative: nothing keeps a re-route to it.
      */
     fun adopt(route: Route, chosenToken: Long): Boolean {
@@ -310,6 +264,7 @@ object Routing {
         val previous = last ?: return false
         alternativesChosen++
         last = RouteResult(previous.sequence, route, null, 0, "preview", false)
+        uncovered = null
         line = route
         token++
         Guide.onRoute(route)
@@ -338,14 +293,40 @@ object Routing {
         origin = "restored"
         start = "saved"
         last = RouteResult(0, route, null, 0, "restored", false)
+        uncovered = null
         line = route
         token++
         Guide.onRoute(route)
     }
 
-    /** One line for the connection screen, which is the operator's own and may say more. */
-    fun summary(): String? {
+    /**
+     * What the operator is told when the last request's destination or stop is outside
+     * every OsmAnd map, or null: the place and the map to get, or the mirrored longitude
+     * for a dropped minus sign. Names the place, so it is for the screen, never the report.
+     */
+    fun coverageText(context: Context): String? {
+        if (pending != 0L) return null
+        val (request, error) = uncovered ?: return null
+        val held = Navigation.destination?.takeIf { uncoveredTrip }
+        val place = held?.let(Navigation::describe) ?: Navigation.coordinates(request.toLat, request.toLon)
+        return when (error) {
+            OsmAndRouter.MIRRORED -> context.getString(
+                R.string.destination_mirrored, place, Navigation.coordinates(request.toLat, -request.toLon),
+            )
+            OsmAndRouter.STOP_NOT_COVERED -> context.getString(
+                R.string.stop_no_osmand_map, Navigation.coordinates(request.viaLat ?: return null, request.viaLon ?: return null),
+            )
+            else -> context.getString(R.string.destination_no_osmand_map, place)
+        }
+    }
+
+    /**
+     * One line for the connection screen, which is the operator's own and may say more:
+     * for a destination no map covers, the place and the map to get.
+     */
+    fun summary(context: Context): String? {
         if (pending != 0L) return "computing…"
+        coverageText(context)?.let { return it }
         val result = last ?: return null
         val route = result.route ?: return "failed: ${result.error}"
         return String.format(
@@ -361,20 +342,10 @@ object Routing {
     /**
      * The `[routing]` report section. **No coordinates, no geometry and no destination**,
      * on the footing navigation evidence takes (docs/navigation.md): what was computed,
-     * how long it took and where, and how big the answer was. Tile names say which 5°
-     * square data was installed for, as the map line already names the map file.
+     * how long it took and where, and how big the answer was.
      */
-    fun report(context: Context): String = buildString {
-        val root = root(context)
-        val segments = installed(context)
-        appendLine(
-            "routing_engine=brouter-1.7.10 profile=${RoutingData.PROFILE} " +
-                "turn_instruction_mode=${Router.TURN_INSTRUCTION_MODE} routing_thread_priority=$THREAD_PRIORITY",
-        )
-        appendLine(
-            "routing_profile_installed=${File(RoutingData.profiles(root), RoutingData.PROFILE).isFile} " +
-                "routing_segments=${segments.joinToString(",") { "${it.name}:${it.length()}" }.ifEmpty { "-" }}",
-        )
+    fun report(): String = buildString {
+        appendLine("routing_engine=osmand profile=car routing_thread_priority=$THREAD_PRIORITY")
         appendLine(
             "routing_requests=$requests routing_origin=$origin routing_start=$start " +
                 "routing_pending=${pending != 0L} routing_superseded=$superseded " +
@@ -406,10 +377,7 @@ object Routing {
                 "routing_through_closure=${route.closuresOpened}",
             )
             // How many stretches the map named, never which names: a road name says where.
-            appendLine(
-                "routing_named_roads=${route.roadNames.count { it != null }}/${route.roadStarts.size} " +
-                    "routing_naming_ms=${result.namingMs}",
-            )
+            appendLine("routing_named_roads=${route.roadNames.count { it != null }}/${route.roadStarts.size}")
         } else {
             appendLine("routing_error=${result.error}")
         }

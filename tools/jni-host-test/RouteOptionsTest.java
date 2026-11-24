@@ -1,17 +1,20 @@
-// Maps & routing -> Route preferences on a desktop JVM: the options' profile parameters,
-// repair, labels and time scaling, the Learn my pace tracker over synthetic drives, and
-// the stored keys, and since 0.11 the pace learned across drives (PaceRoad's kinds of road,
-// PaceBook's buckets, fading, text form and route times). RouteOptions, PaceTracker and
-// PaceBook are pure Kotlin; the switches and spinners around them need a device.
+// Maps & routing -> Route preferences on a desktop JVM: repair, labels and time scaling,
+// the Learn my pace tracker over synthetic drives, and the stored keys, and since 0.11 the
+// pace learned across drives (PaceRoad's kinds of road, PaceBook's buckets, fading, text
+// form and route times). RouteOptions, PaceTracker and PaceBook are pure Kotlin; the
+// switches and spinners around them need a device. How each switch becomes one of OsmAnd's
+// profile parameters is OsmAndRoutingTest's (theSettingsAreTheProfilesParameters).
 //
-// With a directory of routing tiles as the first argument it also routes for real: with
-// W100_N30.rd5 (Austin) a toll road the default route takes and Avoid toll roads leaves,
-// and with that or W75_N40.rd5 that a route's switches reach BRouter every time, not just
-// the first time a profile is parsed.
+// With a directory of OsmAnd maps as the first argument (OBF_DIR) it also routes for real
+// with OsmAndRouter: with Us_texas_austin_northamerica.obf a toll road the default route
+// takes and Avoid toll roads leaves, and that a route's switches reach the router every
+// time, not just the first time a configuration is built.
 import java.io.File;
-import java.nio.file.Files;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import com.jw6ventures.headlink.ExitSign;
+import com.jw6ventures.headlink.OsmAndRouter;
 import com.jw6ventures.headlink.PaceBook;
 import com.jw6ventures.headlink.PaceRoad;
 import com.jw6ventures.headlink.PaceTracker;
@@ -19,8 +22,6 @@ import com.jw6ventures.headlink.Route;
 import com.jw6ventures.headlink.RouteOptions;
 import com.jw6ventures.headlink.RoutePlanner;
 import com.jw6ventures.headlink.RouteRequest;
-import com.jw6ventures.headlink.Router;
-import com.jw6ventures.headlink.RoutingData;
 import com.jw6ventures.headlink.SavedSettings;
 
 public final class RouteOptionsTest {
@@ -28,7 +29,6 @@ public final class RouteOptionsTest {
 
     public static void main(String[] args) throws Exception {
         theDefaultsAreTheTexasOnes();
-        everySwitchReachesTheProfile();
         anOptionNoLongerOfferedIsRepaired();
         onlyRouteChangesRecompute();
         theLabelsReadInBothUnits();
@@ -43,31 +43,29 @@ public final class RouteOptionsTest {
         theLearnedPaceIsKeptAsText();
         aRouteIsTimedAtTheLearnedPace();
         theTrackerHandsOnTheRoutesOwnFall();
-        String segments = args.length > 0 ? args[0] : "";
-        String real = "real routes skipped (no tile directory given)";
-        if (!segments.isEmpty()) {
-            File work = Files.createTempDirectory("route-options-test").toFile();
-            File profile = RoutingData.INSTANCE.installProfile(new File(work, "profiles"));
-            Router router = new Router(new File(segments), profile, 64);
-            if (new File(segments, "W100_N30.rd5").isFile()) {
+        String dir = args.length > 0 ? args[0] : "";
+        String real = "real routes skipped (need OBF_DIR with Us_texas_austin_northamerica.obf)";
+        File austin = new File(dir, "Us_texas_austin_northamerica.obf");
+        if (!dir.isEmpty() && austin.isFile()) {
+            List<OsmAndRouter.MapFile> maps = new ArrayList<>();
+            maps.add(OsmAndRouter.MapFile.of(austin));
+            File sanAntonio = new File(dir, "Us_texas_san-antonio_northamerica.obf");
+            if (sanAntonio.isFile()) maps.add(OsmAndRouter.MapFile.of(sanAntonio));
+            OsmAndRouter router = new OsmAndRouter(() -> maps);
+            try {
                 avoidTollsLeavesSh130(router);
-                switchesReachBRouterEveryTime(router, 30.4394, -97.6200, 30.0600, -97.7000);
-                real = "real routes over W100_N30";
-                if (new File(segments, "W105_N30.rd5").isFile()) {
-                    aLongTripTheEngineCannotFinishIsTimedLower(router);
-                    real += " and Austin to Lubbock";
-                }
-            } else if (new File(segments, "W75_N40.rd5").isFile()) {
-                switchesReachBRouterEveryTime(router, 42.4242, -71.2121, 42.3551, -71.0656);
-                real = "real routes over W75_N40";
+                switchesReachTheRouterEveryTime(router, 30.4394, -97.6200, 30.0600, -97.7000);
+            } finally {
+                router.close();
             }
+            real = "real routes over " + maps.size() + " OsmAnd map(s) round Austin";
         }
         System.out.println("jni-host-test: ok " + passed + " route preference checks; " + real);
     }
 
     private static RouteOptions options(boolean highways, boolean tolls, boolean unpaved, boolean towns, boolean tracks,
             int kmh, int percent, boolean pace) {
-        return new RouteOptions(highways, tolls, unpaved, towns, tracks, kmh, percent, pace, true, true);
+        return new RouteOptions(highways, tolls, unpaved, towns, tracks, kmh, percent, pace, true);
     }
 
     private static void theDefaultsAreTheTexasOnes() {
@@ -79,21 +77,6 @@ public final class RouteOptionsTest {
         check(d.getLearnPace(), "learn my pace on");
         check(RouteOptions.Companion.getTOP_SPEEDS_KMH().contains(90), "the profile's own 90 km/h is still offered");
         check(new SavedSettings().getRouting().equals(d), "a first launch saves the model's defaults");
-    }
-
-    private static void everySwitchReachesTheProfile() {
-        Map<String, String> off = new RouteOptions().profileParameters();
-        check(off.size() == 6, "six parameters, every time: " + off);
-        check("0".equals(off.get("avoid_motorways")) && "0".equals(off.get("avoid_toll"))
-                && "0".equals(off.get("avoid_unpaved")) && "0".equals(off.get("consider_town"))
-                && "0".equals(off.get("use_offroad")), "a switch off is sent as 0, never left out");
-        check("121".equals(off.get("vmax")), "vmax in km/h");
-        Map<String, String> on = options(true, true, true, true, true, 90, 0, true).profileParameters();
-        check("1".equals(on.get("avoid_motorways")) && "1".equals(on.get("avoid_toll"))
-                && "1".equals(on.get("avoid_unpaved")) && "1".equals(on.get("consider_town"))
-                && "1".equals(on.get("use_offroad")) && "90".equals(on.get("vmax")), "every switch on: " + on);
-        for (String value : on.values()) Float.parseFloat(value);
-        check(true, "every value parses as the number BRouter reads it as");
     }
 
     private static void anOptionNoLongerOfferedIsRepaired() {
@@ -109,7 +92,7 @@ public final class RouteOptionsTest {
         check(d.routeDiffers(options(false, false, false, false, false, 105, 0, true)), "a top speed recomputes");
         check(d.routeDiffers(options(false, false, false, false, false, 121, 10, true)), "a time adjustment recomputes");
         check(!d.routeDiffers(d), "the same options recompute nothing");
-        check(!d.routeDiffers(new RouteOptions(false, false, false, false, false, 121, 0, true, false, true)),
+        check(!d.routeDiffers(new RouteOptions(false, false, false, false, false, 121, 0, true, false)),
                 "nor does hiding the map's alternatives");
         check(d.getShowAlternatives(), "the map's alternatives are on by default");
     }
@@ -131,8 +114,7 @@ public final class RouteOptionsTest {
         check(route.withTimeScale(1.0) == route, "a factor of 1 is the same route");
         Route timed = new Route(new double[] {0, 0}, new double[] {0, 0.001}, 111, 10, new int[0], new int[0], new int[0],
                 new float[] {0f, 10f}, new int[0], new String[0], 105);
-        check(timed.withTimeScale(1.1).getTopSpeedKmh() == 105 && timed.withRoads(new int[0], new String[0]).getTopSpeedKmh() == 105,
-                "the speed a route was timed at survives scaling and naming");
+        check(timed.withTimeScale(1.1).getTopSpeedKmh() == 105, "the speed a route was timed at survives scaling");
         Route longer = route.withTimeScale(options(false, false, false, false, false, 121, 20, true).getTimeFactor());
         check(longer.getSeconds() == 120, "the total scales: " + longer.getSeconds());
         check(Math.abs(longer.getPointSeconds()[1] - 48f) < 1e-3 && Math.abs(longer.getPointSeconds()[2] - 120f) < 1e-3,
@@ -155,15 +137,6 @@ public final class RouteOptionsTest {
                 "route_top_speed_kmh", 300, "route_eta_percent", "ten", "route_avoid_tolls", "yes"));
         check(odd.getRouting().equals(new RouteOptions()), "unknown or mistyped routing values read as the defaults");
         check(back.withVoiceGuidance(false).getRouting().equals(changed), "a voice toggle press leaves the routing options alone");
-        check(new RouteOptions().getOsmAndRouting(), "Route with OsmAnd maps is on by default");
-        SavedSettings old = SavedSettings.Companion.fromStored(java.util.Map.of("route_osmand", false));
-        check(old.getRouting().getOsmAndRouting(), "0.8's test switch, stored off on every phone, no longer turns it off");
-        SavedSettings brouter = SavedSettings.Companion.fromStored(java.util.Map.of("route_engine", "brouter"));
-        check(!brouter.getRouting().getOsmAndRouting() && "brouter".equals(brouter.toStored().get("route_engine")),
-                "switched off, it is stored as BRouter and read back");
-        check("osmand".equals(old.toStored().get("route_engine")) && !old.toStored().containsKey("route_osmand"),
-                "on, as OsmAnd, under the new key only");
-        check(old.getRouting().report().contains("routing_osmand=true"), "and the report says which router ran");
     }
 
     /** One fix a second along a route whose estimate falls [perSecond] a second. */
@@ -388,7 +361,7 @@ public final class RouteOptionsTest {
         check(pace.getCountedActualS() == 0.0, "off the route nothing is handed on");
     }
 
-    private static Route route(Router router, double fromLat, double fromLon, double toLat, double toLon, RouteOptions o) throws Exception {
+    private static Route route(OsmAndRouter router, double fromLat, double fromLon, double toLat, double toLon, RouteOptions o) throws Exception {
         return router.compute(new RouteRequest(fromLat, fromLon, toLat, toLon, null, o), RoutePlanner.MAX_RUNNING_MS,
                 e -> kotlin.Unit.INSTANCE);
     }
@@ -403,7 +376,7 @@ public final class RouteOptionsTest {
      * Pflugerville to Mustang Ridge: SH 130, the toll road east of Austin, is the fast way
      * and runs east of -97.59; the free way is I 35 and the roads west of it.
      */
-    private static void avoidTollsLeavesSh130(Router router) throws Exception {
+    private static void avoidTollsLeavesSh130(OsmAndRouter router) throws Exception {
         Route plain = route(router, 30.4394, -97.6200, 30.0600, -97.7000, new RouteOptions());
         Route noTolls = route(router, 30.4394, -97.6200, 30.0600, -97.7000,
                 options(false, true, false, false, false, 121, 0, true));
@@ -420,26 +393,11 @@ public final class RouteOptionsTest {
     }
 
     /**
-     * Austin to Lubbock, 598 km: at 113 km/h and above BRouter's final pass fails with
-     * "error re-tracking track"; at 105 it finishes. The route must still come back.
+     * The router builds a configuration per search from the options' parameters. The same
+     * options must give the same route whatever was routed just before, and avoid highways
+     * and avoid tolls must give different ones here.
      */
-    private static void aLongTripTheEngineCannotFinishIsTimedLower(Router router) throws Exception {
-        Route route = route(router, 30.2672, -97.7431, 33.5779, -101.8552, new RouteOptions());
-        check(route.getTopSpeedKmh() < 121 && route.getTopSpeedKmh() >= 90,
-                "the route comes back, timed at a lower speed: " + route.getTopSpeedKmh());
-        check(route.getDistanceM() > 500_000, "and it is the whole trip: " + route.getDistanceM() + " m");
-        Route slow = route(router, 30.2672, -97.7431, 33.5779, -101.8552, options(false, false, false, false, false, 90, 0, true));
-        check(slow.getTopSpeedKmh() == 90, "the profile's own speed needs no step down");
-        System.out.println("route-options-test: lubbock timed_at_kmh=" + route.getTopSpeedKmh() + " seconds=" + route.getSeconds()
-                + " at_56mph_s=" + slow.getSeconds());
-    }
-
-    /**
-     * BRouter keys its parsed profile on a sum of the parameters' hash codes, which cannot
-     * tell avoid highways from avoid tolls when one is on and the other off. The same
-     * options must give the same route whatever was routed just before.
-     */
-    private static void switchesReachBRouterEveryTime(Router router, double fromLat, double fromLon, double toLat, double toLon) throws Exception {
+    private static void switchesReachTheRouterEveryTime(OsmAndRouter router, double fromLat, double fromLon, double toLat, double toLon) throws Exception {
         RouteOptions highways = options(true, false, false, false, false, 121, 0, true);
         RouteOptions tolls = options(false, true, false, false, false, 121, 0, true);
         Route tollsFresh = route(router, fromLat, fromLon, toLat, toLon, tolls);

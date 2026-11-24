@@ -780,6 +780,7 @@ object DashboardDrawing {
             val caption = when {
                 trip.arrived -> "trip"
                 trip.rerouting -> "rerouting…"
+                trip.noMap -> "no map here"
                 trip.searching -> "finding route…"
                 else -> "arrive"
             }
@@ -1431,12 +1432,12 @@ object DashboardDrawing {
         // `ok` branch, because the arrival time owes it even over a pane with no map in it.
         if (snapshot.trafficAttributed) drawTrafficAttribution(canvas, paint, layout, palette)
         // Outside the `ok` branch too: the Home Assistant button has nothing to do with the
-        // map, and a phone with no map installed can still open the garage.
+        // map, and a phone with no map data can still open the garage.
         snapshot.homeAssistant?.let {
             if (!layout.homeAssistantInHeader) drawHomeAssistant(canvas, paint, layout.homeAssistantBubble, it, palette, header = false)
         }
         // Outside the map's `ok` branch: guidance does not need a map, and a driver
-        // following a route with no map installed still needs to know the next turn.
+        // following a route with no map data still needs to know the next turn.
         val offer = snapshot.offer
         if (offer != null) {
             drawOfferCard(canvas, paint, layout, snapshot.turnCard, offer, palette)

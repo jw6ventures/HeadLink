@@ -23,7 +23,7 @@ class RouteFigures @JvmOverloads constructor(
          * Without it — no fix on the route yet, a re-route in flight, arrived, or no
          * session at all — the route's own totals are shown ([totalMetres],
          * [totalSeconds]), and the arrival is the moment the route was computed
-         * ([computedAtMillis], negative when not seen) plus BRouter's estimate. An arrival
+         * ([computedAtMillis], negative when not seen) plus the router's estimate. An arrival
          * already in the past is dropped: it says the estimate is spent, not when the
          * vehicle will get there. No route and no live figures is null.
          *

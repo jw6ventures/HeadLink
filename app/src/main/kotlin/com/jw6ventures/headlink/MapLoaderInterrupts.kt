@@ -14,8 +14,8 @@ import java.util.concurrent.atomic.AtomicLong
  * channel.** `Map.setTheme` pauses every tile loader first (`TileLayer.pauseLoaders`),
  * and `PausableThread.pause` does that with `Thread.interrupt()`. A loader that is inside
  * a map-file read at that moment gets `ClosedByInterruptException`, and NIO closes the
- * channel for good: each loader owns one `MapFile` with its own `FileChannel`, and every
- * read that loader makes for the rest of the session fails with `ClosedChannelException`.
+ * channel for good: a loader whose data source reads through its own `FileChannel` fails
+ * every read it makes for the rest of the session with `ClosedChannelException`.
  * Before P7.6 the theme was set once, before any tile was read, so this never happened.
  * The first lab run with day/night switching hit it on the switch at session start, when
  * the loaders were busy with the first tiles: 108 failed reads from one loader over the
@@ -32,9 +32,7 @@ import java.util.concurrent.atomic.AtomicLong
  *   that arrived mid-read is still set when the read returns (that is how
  *   `ClosedByInterruptException` leaves it), so the loader's source is replaced by a
  *   new one, with a new channel, before its next tile. The tile that was being
- *   read is lost, and VTM reads it again as it does any failed tile; [MapReadGuard]
- *   sees the reader's warning and reports it as a failed read rather than a loaded
- *   empty tile.
+ *   read is lost, and VTM reads it again as it does any failed tile.
  *
  * No VTM source is changed.
  */

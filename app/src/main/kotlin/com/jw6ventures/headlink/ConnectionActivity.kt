@@ -139,7 +139,6 @@ class ConnectionActivity : Activity() {
     private lateinit var markerColourSpinner: Spinner
     // Settings → Map zoom (docs/dashboard.md, "Adaptive zoom").
     private lateinit var adaptiveZoomCheck: CompoundButton
-    private lateinit var osmAndMapCheck: CompoundButton
     private lateinit var adaptiveZoomLevelSpinners: List<Spinner>
     private lateinit var adaptiveZoomOutSpinner: Spinner
     private lateinit var adaptiveZoomInSpinner: Spinner
@@ -167,7 +166,6 @@ class ConnectionActivity : Activity() {
     private lateinit var avoidHighwaysCheck: CompoundButton
     private lateinit var avoidTollsCheck: CompoundButton
     private lateinit var avoidUnpavedCheck: CompoundButton
-    private lateinit var osmAndRoutingCheck: CompoundButton
     private lateinit var bypassTownsCheck: CompoundButton
     private lateinit var allowTracksCheck: CompoundButton
     private lateinit var topSpeedSpinner: Spinner
@@ -225,18 +223,10 @@ class ConnectionActivity : Activity() {
     private lateinit var navigationForceRow: View
     private lateinit var navigationScriptRow: View
     private lateinit var sensorLocationRow: View
-    private lateinit var mapText: TextView
-    private lateinit var importMapButton: Button
-    private lateinit var routingText: TextView
-    private lateinit var folderText: TextView
-    private lateinit var chooseFolderButton: Button
-    private lateinit var checkFolderButton: Button
-    private lateinit var importRoutingButton: Button
-    private lateinit var removeDataButton: Button
     private lateinit var routeInput: EditText
     /** P11.4: live suggestions from OsmAnd's maps under [routeInput]. */
     private lateinit var searchSuggestions: SearchSuggestions
-    /** P11.1: Settings → OsmAnd maps. */
+    /** P11.1: Maps → OsmAnd maps. */
     private lateinit var osmAndMapsCard: OsmAndMapsCard
     private lateinit var speechModelRows: SpeechModelRows
     private lateinit var homeAssistantCard: HomeAssistantCard
@@ -291,7 +281,6 @@ class ConnectionActivity : Activity() {
     private var shownFavorites: List<Favorite>? = null
     private lateinit var setupList: LinearLayout
     private var shownSetup: List<SetupItem>? = null
-    private var shownHereTile: String? = null
     private val setupButtons = mutableMapOf<SetupItem, Button>()
     private lateinit var callControlsText: TextView
     /** P8.1: Home's "Speech: …" line, re-read in onResume, since an engine may have come or gone. */
@@ -363,13 +352,9 @@ class ConnectionActivity : Activity() {
         if (intent?.action == UsbManager.ACTION_USB_ACCESSORY_ATTACHED) selectTab(TAB_HOME)
     }
 
-    /**
-     * Notification access may have been granted or withdrawn in Settings meanwhile, and
-     * files may have landed in the drop folder.
-     */
+    /** Notification access may have been granted or withdrawn in Settings meanwhile. */
     override fun onResume() {
         super.onResume()
-        DropFolder.sweep(this)
         // The dashboard's ☀/☾ saves day/night from the head unit while this screen is
         // behind it, so the row is re-read rather than trusted. Selecting
         // the same position again fires nothing, and a changed one stores what it read.
@@ -1076,21 +1061,12 @@ class ConnectionActivity : Activity() {
         }
         val uri = data?.data
         if (resultCode != RESULT_OK || uri == null) return
-        if (requestCode == REQUEST_IMPORT_MAP) {
-            importMap(uri)
-            return
-        }
-        if (requestCode == REQUEST_IMPORT_ROUTING) {
-            importRouting(uri)
-            return
-        }
         if (requestCode == REQUEST_MAPS_FOLDER) {
-            val message = try {
-                if (ObfLibrary.choose(this, uri)) null else getString(R.string.osmand_maps_is_drop_folder)
+            try {
+                ObfLibrary.choose(this, uri)
             } catch (e: SecurityException) {
-                getString(R.string.osmand_maps_failed, e.message ?: e.toString())
+                Toast.makeText(this, getString(R.string.osmand_maps_failed, e.message ?: e.toString()), Toast.LENGTH_LONG).show()
             }
-            message?.let { Toast.makeText(this, it, Toast.LENGTH_LONG).show() }
             render()
             return
         }
@@ -1101,16 +1077,6 @@ class ConnectionActivity : Activity() {
                 Toast.makeText(this, getString(R.string.speech_model_failed, e.message ?: e.toString()), Toast.LENGTH_LONG).show()
             }
             speechModelRows.chosen()
-            return
-        }
-        if (requestCode == REQUEST_DROP_FOLDER) {
-            val message = try {
-                if (DropFolder.choose(this, uri)) null else getString(R.string.drop_folder_is_maps_folder)
-            } catch (e: SecurityException) {
-                getString(R.string.drop_folder_failed, e.message ?: e.toString())
-            }
-            message?.let { Toast.makeText(this, it, Toast.LENGTH_LONG).show() }
-            render()
             return
         }
         if (requestCode == REQUEST_IMPORT_IDENTITY) {
@@ -1154,102 +1120,6 @@ class ConnectionActivity : Activity() {
         }
         Toast.makeText(this, if (adopted) R.string.preview_adopted else R.string.preview_stale, Toast.LENGTH_LONG).show()
         render()
-    }
-
-    /**
-     * Copies a picked Mapsforge file into the app's map directory on a worker thread.
-     *
-     * A region extract is tens of megabytes, so this cannot run on the main thread, and
-     * the result has to come back to it to refresh the label.
-     */
-    private fun importMap(uri: Uri) {
-        // The worker holds the application, not this activity: a copy can outlast it.
-        val app = applicationContext
-        Thread({
-            val message = try {
-                val name = queryName(app, uri) ?: "region${MapData.SUFFIX}"
-                val installed = app.contentResolver.openInputStream(uri)?.use { stream ->
-                    MapData.install(app, name, stream)
-                } ?: throw IOException("no input stream")
-                app.getString(R.string.map_imported, installed.name)
-            } catch (e: Exception) {
-                // I/O, and a provider that refuses or has lost the grant (SecurityException,
-                // IllegalArgumentException): any of them on this bare thread would end the
-                // process, a projecting session with it.
-                app.getString(R.string.map_import_failed, e.message ?: e.toString())
-            }
-            importDone(app, message)
-        }, "map-import").start()
-    }
-
-    /**
-     * Streams a picked BRouter `.rd5` tile into app-private storage on a worker thread.
-     *
-     * A tile is over a hundred megabytes; [RoutingData.install] never holds it in memory,
-     * and checks it against the packaged profile before it replaces anything.
-     */
-    private fun importRouting(uri: Uri) {
-        val app = applicationContext
-        val root = Routing.root(app)
-        Thread({
-            val message = try {
-                val name = queryName(app, uri) ?: uri.lastPathSegment ?: "-"
-                RoutingData.installProfile(RoutingData.profiles(root))
-                val installed = app.contentResolver.openInputStream(uri)?.use { stream ->
-                    RoutingData.install(RoutingData.segments(root), RoutingData.profiles(root), name, stream)
-                } ?: throw IOException("no input stream")
-                app.getString(R.string.routing_imported, installed.name)
-            } catch (e: Exception) {
-                // As for maps: no provider failure may escape the bare thread.
-                app.getString(R.string.routing_import_failed, e.message ?: e.toString())
-            }
-            importDone(app, message)
-        }, "routing-import").start()
-    }
-
-    /** Reports an import's result, and refreshes this screen only if it is still there. */
-    private fun importDone(app: Context, message: String) {
-        runOnUiThread {
-            Toast.makeText(app, message, Toast.LENGTH_LONG).show()
-            SessionController.note(message)
-            if (!isDestroyed) render()
-        }
-    }
-
-    /**
-     * Lists every installed map and routing tile and deletes the one the operator picks.
-     *
-     * One file per confirmation, never a batch: a region's map or tile is a long transfer
-     * to put back, so each removal names exactly what goes. Idle and with no route being
-     * computed, because a session reads the maps it started with and the router reads
-     * the tiles.
-     */
-    private fun removeData() {
-        val files = MapData.installed(this) + Routing.installed(this)
-        if (files.isEmpty()) {
-            Toast.makeText(this, R.string.remove_data_none, Toast.LENGTH_LONG).show()
-            return
-        }
-        val labels = files.map { "${it.name} (${it.length() / (1L shl 20)} MiB)" }.toTypedArray()
-        AlertDialog.Builder(this)
-            .setTitle(R.string.remove_data)
-            .setItems(labels) { _, which ->
-                val file = files[which]
-                AlertDialog.Builder(this)
-                    .setMessage(getString(R.string.remove_data_confirm, file.name))
-                    .setPositiveButton(R.string.remove_data_delete) { _, _ ->
-                        val message =
-                            if (file.delete()) getString(R.string.data_removed, file.name)
-                            else getString(R.string.data_remove_failed, file.name)
-                        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
-                        SessionController.note(message)
-                        render()
-                    }
-                    .setNegativeButton(android.R.string.cancel, null)
-                    .show()
-            }
-            .setNegativeButton(android.R.string.cancel, null)
-            .show()
     }
 
     /**
@@ -1350,7 +1220,7 @@ class ConnectionActivity : Activity() {
     }
 
     /**
-     * P11.1: Settings → OsmAnd maps → Choose folder. A read-only grant ([ObfLibrary.choose]);
+     * P11.1: Maps → OsmAnd maps → Choose folder. A read-only grant ([ObfLibrary.choose]);
      * the picker opens wherever it last was, and the card's help says where OsmAnd keeps them.
      */
     private fun chooseMapsFolder() {
@@ -1516,11 +1386,6 @@ class ConnectionActivity : Activity() {
         render()
     }
 
-    /** The picked document's display name, for the installed file to keep. */
-    private fun queryName(context: Context, uri: Uri): String? =
-        context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
-            ?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
-
     private fun writeExport(uri: Uri, text: () -> String) {
         val message =
             try {
@@ -1619,24 +1484,10 @@ class ConnectionActivity : Activity() {
             idle && stopAfterSpinner.selectedItem == SessionSettings.STOP_AFTER_PROJECTION
         val dashboard = sceneSpinner.selectedItem == SessionSettings.SCENE_DASHBOARD
         mapSideSpinner.isEnabled = sceneSpinner.isEnabled && dashboard
-        importMapButton.isEnabled = idle
         mapSideRow.visibility = if (dashboard) View.VISIBLE else View.GONE
         // The unit is the dashboard header's; the demo scene draws no speed at all.
         speedUnitSpinner.isEnabled = sceneSpinner.isEnabled && dashboard
         speedUnitRow.visibility = if (dashboard) View.VISIBLE else View.GONE
-        // P7.7: the map rows now live on their own tab and stay visible with the demo
-        // scene, which only hides what the maps are for, not whether they are installed.
-        // Every installed map is drawn, so every one is listed.
-        val maps = MapData.installed(this)
-        mapText.text = maps.takeIf { it.isNotEmpty() }?.let {
-            getString(R.string.map_installed, it.joinToString(", ") { map -> map.name }, it.sumOf { map -> map.length() } / (1L shl 20))
-        } ?: getString(R.string.map_none)
-        // Routing is not tied to an attempt or a scene: a route can be computed with no head
-        // unit attached, which is how its cost on the phone is measured.
-        val tiles = Routing.installed(this)
-        routingText.text =
-            if (tiles.isEmpty()) getString(R.string.routing_none)
-            else getString(R.string.routing_installed, tiles.joinToString(", ") { it.name })
         // The destination's name is the operator's own and may be shown here; the report
         // beside it carries only which source set it. Home says the same in words; this
         // is the pre-P7.7 detail, with where the destination came from and the search time.
@@ -1650,7 +1501,7 @@ class ConnectionActivity : Activity() {
                     ),
                 )
             }
-            Routing.summary()?.let {
+            Routing.summary(this@ConnectionActivity)?.let {
                 if (isNotEmpty()) append("\n")
                 append(getString(R.string.route_line, it))
             }
@@ -1658,17 +1509,9 @@ class ConnectionActivity : Activity() {
         }
         clearRouteButton.isEnabled = Navigation.destination != null || Routing.line != null || Routing.pending != 0L
         previewButton.isEnabled = Routing.previewRequest() != null
-        importRoutingButton.isEnabled = Routing.pending == 0L
-        removeDataButton.isEnabled = idle && Routing.pending == 0L && !DropFolder.busy
-        folderText.text = DropFolder.folder(this)?.let { folder ->
-            getString(
-                R.string.drop_folder_line,
-                DropFolder.describe(folder),
-                if (DropFolder.busy) getString(R.string.drop_folder_checking) else DropFolder.lastSweep ?: "-",
-            )
-        } ?: getString(R.string.drop_folder_none)
-        checkFolderButton.isEnabled = DropFolder.folder(this) != null && !DropFolder.busy
-        routeButton.isEnabled = tiles.isNotEmpty() && Routing.pending == 0L
+        // Routing is not tied to an attempt or a scene: a route can be computed with no head
+        // unit attached, which is how its cost on the phone is measured.
+        routeButton.isEnabled = Routing.pending == 0L && ObfLibrary.chosen(this)
         keepaliveSpinner.isEnabled = idle
         forgetPinsButton.isEnabled = idle
         replaceIdentityButton.isEnabled = idle && !SessionController.identityBusy
@@ -1700,7 +1543,7 @@ class ConnectionActivity : Activity() {
         if (currentTab == TAB_DIAGNOSTICS) reportText.text = SessionReport.compose(this, usb, filter)
         projectionText.text = SessionController.projectionReport.ifEmpty { getString(R.string.no_projection) }
         renderHome(stage, attempt, pins.size)
-        renderSetup(idle, maps.size, tiles.map { it.name }.toSet(), pins.size, notificationsGranted, mediaAccess)
+        renderSetup(idle, pins.size, notificationsGranted, mediaAccess)
         renderSettings()
         renderTraffic()
         renderWeather()
@@ -1791,7 +1634,8 @@ class ConnectionActivity : Activity() {
         val figures = RouteClock.figures(System.currentTimeMillis())
         val clock = ClockFormat.entries.getOrElse(clockFormatSpinner.selectedItemPosition) { ClockFormat.DEFAULT }
         val arrival = figures?.arrivalMillis?.let { clock.time(it, ZoneId.systemDefault()) }
-        routeSummaryText.text = StatusText.routeSummary(
+        // A destination or stop no map covers says so and which map to get, not just "no route".
+        routeSummaryText.text = Routing.coverageText(this) ?: StatusText.routeSummary(
             destination?.let(Navigation::describe),
             Navigation.waiting,
             Routing.pending != 0L,
@@ -1926,11 +1770,10 @@ class ConnectionActivity : Activity() {
     /**
      * Setup: what is missing, each with the one button that fixes it, or Ready.
      * Rebuilt only when the list changes; the buttons' enabled state follows every render,
-     * because the imports and trust are only allowed while idle, as they are elsewhere.
+     * because trust is only allowed while idle, as it is elsewhere.
      */
-    private fun renderSetup(idle: Boolean, maps: Int, tiles: Set<String>, pins: Int, sessionNotifications: Boolean, access: Boolean) {
+    private fun renderSetup(idle: Boolean, pins: Int, sessionNotifications: Boolean, access: Boolean) {
         val location = hasLocation()
-        val here = if (location && tiles.isNotEmpty()) lastKnownLocation()?.let { RoutingData.tileFor(it.latitude, it.longitude) } else null
         val wanted = SetupCheck.notificationAccessWanted(
             mediaInfoCheck.isChecked, notificationsOnDashboardCheck.isChecked, callControlsCheck.isChecked,
             CallControl.fullControlsGranted(this),
@@ -1938,16 +1781,14 @@ class ConnectionActivity : Activity() {
         // Saved rather than the switches: the lab may have changed them before this render.
         val saved = AppSettings.load(this)
         val items = SetupCheck.items(
-            maps, tiles, here, wanted, access, location, pins, sessionNotifications,
+            ObfLibrary.chosen(this), wanted, access, location, pins, sessionNotifications,
             weatherWanted = saved.weather.enabled, weatherPermission = weatherPermitted(),
-            osmAndMap = saved.osmAndMap, osmAndRouting = saved.routing.osmAndRouting, osmAndFolder = ObfLibrary.chosen(this),
         )
         // Only what a drive needs counts; optional items wait under their own heading.
         val required = items.count { !it.optional }
         tabs[TAB_SETUP].text = if (required == 0) getString(R.string.tab_setup) else getString(R.string.tab_setup_count, required)
-        if (items != shownSetup || here != shownHereTile) {
+        if (items != shownSetup) {
             shownSetup = items
-            shownHereTile = here
             setupList.removeAllViews()
             setupButtons.clear()
             if (required == 0) {
@@ -1969,13 +1810,7 @@ class ConnectionActivity : Activity() {
                             setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
                             typeface = Typeface.DEFAULT_BOLD
                         },
-                        ui.caption().apply {
-                            text = if (item == SetupItem.NO_ROUTING_HERE && here != null) {
-                                getString(R.string.setup_tile_needed, item.detail, here)
-                            } else {
-                                item.detail
-                            }
-                        },
+                        ui.caption().apply { text = item.detail },
                         fix,
                     ),
                 )
@@ -1983,8 +1818,6 @@ class ConnectionActivity : Activity() {
         }
         setupButtons.forEach { (item, button) ->
             button.isEnabled = when (item) {
-                SetupItem.NO_MAP -> importMapButton.isEnabled
-                SetupItem.NO_ROUTING, SetupItem.NO_ROUTING_HERE -> importRoutingButton.isEnabled
                 SetupItem.NO_PINS -> idle && !SessionController.identityBusy
                 else -> true
             }
@@ -1994,8 +1827,6 @@ class ConnectionActivity : Activity() {
     private fun fix(item: SetupItem) {
         when (item) {
             SetupItem.NO_OSMAND_MAPS -> chooseMapsFolder()
-            SetupItem.NO_MAP -> importMapButton.performClick()
-            SetupItem.NO_ROUTING, SetupItem.NO_ROUTING_HERE -> importRoutingButton.performClick()
             SetupItem.NOTIFICATION_ACCESS -> grantNotificationAccess()
             SetupItem.LOCATION -> requestLocation()
             SetupItem.WEATHER_PERMISSION -> requestWeatherPermission(REQUEST_WEATHER_GRANT)
@@ -2156,18 +1987,6 @@ class ConnectionActivity : Activity() {
         return if (guidanceOn) said else said + "\n" + getString(R.string.voice_sample_guidance_off)
     }
 
-    /**
-     * Where maps and routing tiles come from, opened in the phone's browser. The download
-     * is the browser's; this app still fetches no map or routing data itself (APP10).
-     */
-    private fun openLink(url: String) {
-        try {
-            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-        } catch (e: android.content.ActivityNotFoundException) {
-            Toast.makeText(this, getString(R.string.no_browser, url), Toast.LENGTH_LONG).show()
-        }
-    }
-
     /** Android's text-to-speech settings: engine, voice and rate are chosen there. */
     private fun openSpeechSettings() {
         try {
@@ -2199,10 +2018,9 @@ class ConnectionActivity : Activity() {
             checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
 
     /**
-     * The phone's newest cached fix of any age, for Setup's "no routing data for where you
-     * are" only: which 5° tile the phone is in changes over hundreds of kilometres, so an
-     * old fix still answers it. Also where typed search ranks from (P11.4) when nothing
-     * projects. Never requests a fix, and never leaves the phone.
+     * The phone's newest cached fix of any age: where typed search ranks from (P11.4) when
+     * nothing projects, and where the Weather card's own read asks about. Never requests a
+     * fix, and never leaves the phone.
      */
     private fun lastKnownLocation(): Location? {
         if (!hasLocation()) return null
@@ -2734,7 +2552,6 @@ class ConnectionActivity : Activity() {
         wirelessAutoCheck = switch(R.string.wireless_auto_label)
         diagnosticsCheck = switch(R.string.diagnostics)
         markerColourSpinner = spinner(MarkerColour.LABELS)
-        osmAndMapCheck = switch(R.string.map_osmand_label)
         // Adaptive zoom: the switch, a level per speed band, and the three times, each in
         // AdaptiveZoomSettings' list order, which is how the rows read them.
         adaptiveZoomCheck = switch(R.string.adaptive_zoom_label)
@@ -2775,7 +2592,6 @@ class ConnectionActivity : Activity() {
         avoidHighwaysCheck = switch(R.string.route_avoid_highways)
         avoidTollsCheck = switch(R.string.route_avoid_tolls)
         avoidUnpavedCheck = switch(R.string.route_avoid_unpaved)
-        osmAndRoutingCheck = switch(R.string.route_osmand_label)
         bypassTownsCheck = switch(R.string.route_bypass_towns)
         allowTracksCheck = switch(R.string.route_allow_tracks)
         topSpeedSpinner = spinner(RouteOptions.TOP_SPEEDS_KMH.map(RouteOptions::topSpeedLabel))
@@ -2825,60 +2641,6 @@ class ConnectionActivity : Activity() {
             addView(exclusionsText, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             addView(quietButton(R.string.notification_exclusions_choose) { chooseExclusions() })
         }
-        mapText = ui.body()
-        importMapButton = button(R.string.import_map) {
-            AlertDialog.Builder(this)
-                .setMessage(R.string.import_map_description)
-                .setPositiveButton(R.string.import_map) { _, _ ->
-                    try {
-                        startActivityForResult(
-                            Intent(Intent.ACTION_OPEN_DOCUMENT)
-                                .addCategory(Intent.CATEGORY_OPENABLE)
-                                .setType("*/*"),
-                            REQUEST_IMPORT_MAP,
-                        )
-                    } catch (e: android.content.ActivityNotFoundException) {
-                        SessionController.note("no document picker available: $e")
-                    }
-                }
-                .setNegativeButton(android.R.string.cancel, null)
-                .show()
-        }
-        routingText = ui.body()
-        importRoutingButton = button(R.string.import_routing) {
-            AlertDialog.Builder(this)
-                .setMessage(R.string.import_routing_description)
-                .setPositiveButton(R.string.import_routing) { _, _ ->
-                    try {
-                        startActivityForResult(
-                            Intent(Intent.ACTION_OPEN_DOCUMENT)
-                                .addCategory(Intent.CATEGORY_OPENABLE)
-                                .setType("*/*"),
-                            REQUEST_IMPORT_ROUTING,
-                        )
-                    } catch (e: android.content.ActivityNotFoundException) {
-                        SessionController.note("no document picker available: $e")
-                    }
-                }
-                .setNegativeButton(android.R.string.cancel, null)
-                .show()
-        }
-        removeDataButton = button(R.string.remove_data) { removeData() }
-        folderText = ui.body()
-        chooseFolderButton = button(R.string.choose_drop_folder) {
-            AlertDialog.Builder(this)
-                .setMessage(R.string.choose_drop_folder_description)
-                .setPositiveButton(R.string.choose_drop_folder) { _, _ ->
-                    try {
-                        startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), REQUEST_DROP_FOLDER)
-                    } catch (e: android.content.ActivityNotFoundException) {
-                        SessionController.note("no folder picker available: $e")
-                    }
-                }
-                .setNegativeButton(android.R.string.cancel, null)
-                .show()
-        }
-        checkFolderButton = button(R.string.check_drop_folder) { DropFolder.sweep(this) }
         routeInput = EditText(this).apply {
             setHint(R.string.route_input_hint)
             // One line of input, but the hint may wrap to a second on a narrow phone
@@ -3020,17 +2782,10 @@ class ConnectionActivity : Activity() {
         setupList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val setup = page(setupList)
 
-        // Maps & routing: import, the drop folder, the installed files, removal.
+        // Maps & routing: where the maps come from first, then what routes do with them.
         val mapsPage = page(
-            ui.card(
-                ui.title(R.string.maps_title), mapText, importMapButton,
-                quietButton(R.string.maps_where) { openLink(MAPS_DOWNLOAD) },
-            ),
-            ui.card(
-                ui.title(R.string.routing_title), routingText, importRoutingButton,
-                quietButton(R.string.routing_where) { openLink(ROUTING_DOWNLOAD) },
-            ),
-            ui.card(ui.title(R.string.drop_folder_title), folderText, ui.row(chooseFolderButton, checkFolderButton)),
+            // P11.1 (docs/navigation.md): the maps folder, its status, markers and search ahead.
+            osmAndMapsCard.view,
             ui.card(
                 ui.title(R.string.route_prefs_title),
                 ui.caption().apply { setText(R.string.route_prefs_caption) },
@@ -3044,7 +2799,6 @@ class ConnectionActivity : Activity() {
                 ui.withHelp(learnPaceCheck, R.string.route_learn_pace_label, R.string.route_learn_pace_help),
                 quietButton(R.string.route_forget_pace) { confirmForgetPace() },
                 ui.withHelp(showAlternativesCheck, R.string.route_show_alternatives_label, R.string.route_show_alternatives_help),
-                ui.withHelp(osmAndRoutingCheck, R.string.route_osmand_label, R.string.route_osmand_help),
             ),
             // P9.1: live traffic, beside the route preferences it adds to.
             ui.card(
@@ -3079,7 +2833,6 @@ class ConnectionActivity : Activity() {
                 ui.withHelp(sampleButton, R.string.voice_sample, R.string.voice_sample_help),
                 sampleText,
             ),
-            ui.card(removeDataButton),
         )
 
         // Settings: the everyday choices, each a few words with its ⓘ.
@@ -3104,7 +2857,6 @@ class ConnectionActivity : Activity() {
                 mapSideRow,
                 ui.labelled(R.string.marker_colour_label, null, markerColourSpinner),
                 ui.labelled(R.string.day_night_label, R.string.day_night_help, dayNightSpinner),
-                ui.withHelp(osmAndMapCheck, R.string.map_osmand_label, R.string.map_osmand_help),
             ),
             ui.card(
                 ui.title(R.string.adaptive_zoom_title),
@@ -3162,8 +2914,6 @@ class ConnectionActivity : Activity() {
             ),
             // Settings → Home Assistant: the dashboard's one Home Assistant button.
             homeAssistantCard.view,
-            // P11.1 (docs/navigation.md): the maps folder, its status, markers and search ahead.
-            osmAndMapsCard.view,
             // Voice input (spec §2.1 as amended 11 November 2026): the switch and the car microphone test.
             voiceInputCard.view,
             // P8.1: applies to notification reading and, from P8.2, turn prompts.
@@ -3314,7 +3064,6 @@ class ConnectionActivity : Activity() {
         diagnosticsCheck.isChecked = saved.diagnostics
         markerColourSpinner.setSelection(saved.markerColour.ordinal)
         adaptiveZoomCheck.isChecked = saved.adaptiveZoom.enabled
-        osmAndMapCheck.isChecked = saved.osmAndMap
         adaptiveZoomLevelSpinners.forEachIndexed { band, spinner ->
             spinner.setSelection(AdaptiveZoomSettings.LEVELS.indexOf(saved.adaptiveZoom.levels[band]))
         }
@@ -3339,7 +3088,6 @@ class ConnectionActivity : Activity() {
         avoidHighwaysCheck.isChecked = saved.routing.avoidHighways
         avoidTollsCheck.isChecked = saved.routing.avoidTolls
         avoidUnpavedCheck.isChecked = saved.routing.avoidUnpaved
-        osmAndRoutingCheck.isChecked = saved.routing.osmAndRouting
         bypassTownsCheck.isChecked = saved.routing.bypassTowns
         allowTracksCheck.isChecked = saved.routing.allowTracks
         topSpeedSpinner.setSelection(RouteOptions.TOP_SPEEDS_KMH.indexOf(saved.routing.topSpeedKmh))
@@ -3400,7 +3148,6 @@ class ConnectionActivity : Activity() {
         }
         markerColourSpinner.saves { s, i -> s.copy(markerColour = MarkerColour.entries[i]) }
         adaptiveZoomCheck.saves { s, on -> s.copy(adaptiveZoom = s.adaptiveZoom.copy(enabled = on)) }
-        osmAndMapCheck.saves { s, on -> s.copy(osmAndMap = on) }
         adaptiveZoomLevelSpinners.forEachIndexed { band, spinner ->
             spinner.saves { s, i ->
                 val levels = s.adaptiveZoom.levels.toMutableList().also { it[band] = AdaptiveZoomSettings.LEVELS[i] }
@@ -3480,7 +3227,6 @@ class ConnectionActivity : Activity() {
         etaSpinner.savesRouting { r, i -> r.copy(etaPercent = RouteOptions.ETA_PERCENTS[i]) }
         learnPaceCheck.savesRouting { r, on -> r.copy(learnPace = on) }
         showAlternativesCheck.savesRouting { r, on -> r.copy(showAlternatives = on) }
-        osmAndRoutingCheck.savesRouting { r, on -> r.copy(osmAndRouting = on) }
         loadTraffic()
         loadWeather()
     }
@@ -3556,9 +3302,6 @@ class ConnectionActivity : Activity() {
         private const val REQUEST_EXPORT = 2
         private const val REQUEST_EXPORT_SAVED = 3
         private const val REQUEST_IMPORT_IDENTITY = 4
-        private const val REQUEST_IMPORT_MAP = 5
-        private const val REQUEST_IMPORT_ROUTING = 6
-        private const val REQUEST_DROP_FOLDER = 7
         private const val REQUEST_SETUP_LOCATION = 8
         private const val REQUEST_PREVIEW = 9
         private const val REQUEST_WEATHER = 10
@@ -3578,8 +3321,6 @@ class ConnectionActivity : Activity() {
         private const val TAB_SETTINGS = 3
         private const val TAB_DIAGNOSTICS = 4
         private const val STATE_TAB = "tab"
-        private const val MAPS_DOWNLOAD = "https://download.mapsforge.org/maps/v5/"
-        private const val ROUTING_DOWNLOAD = "https://brouter.de/brouter/segments4/"
 
         /** Adaptive zoom's band rows, slowest first, as [AdaptiveZoomSettings.levels] reads them. */
         private val ADAPTIVE_ZOOM_BAND_LABELS = listOf(

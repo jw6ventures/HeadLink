@@ -7,8 +7,9 @@
 // hole, without its closing point; a building kept whole at building zoom; points inside and
 // outside the tile; OsmAnd's layer; and the sea from coastlines - a coast across the tile
 // with the water on its right as OSM draws it, an island in the open sea, and a tile of open
-// sea as a whole-tile polygon. It proves nothing about a real .obf file, VTM's drawing or the
-// phone's speed.
+// sea as a whole-tile polygon; and that with no OsmAnd map data, or only routing data, the
+// source does not open, so the pane shows its no-data ground. It proves nothing about a real
+// .obf file, VTM's drawing or the phone's speed.
 import java.util.List;
 import com.jw6ventures.headlink.ObfMapTiles;
 import net.osmand.binary.BinaryMapDataObject;
@@ -47,7 +48,7 @@ public final class ObfMapTilesTest {
         aCoastAcrossTheTilePutsTheSeaOnItsRight();
         anIslandIsLandInTheSea();
         openSeaIsTheWholeTile();
-        noMapDataLeavesTheMapsforgeFile();
+        noMapDataOpensNoSource();
         aLoaderAsksForTheFilesAsTheyAreNow();
         System.out.println("jni-host-test: ok " + passed + " OsmAnd map tile checks");
     }
@@ -228,13 +229,13 @@ public final class ObfMapTilesTest {
         check(e.layer == 0, "under everything else");
     }
 
-    private static void noMapDataLeavesTheMapsforgeFile() throws java.io.IOException {
+    private static void noMapDataOpensNoSource() throws java.io.IOException {
         com.jw6ventures.headlink.ObfMapSource none = new com.jw6ventures.headlink.ObfMapSource(List::of, 0, 20, 17);
-        check(!none.open().isSuccess(), "no OsmAnd maps: the source does not open, so the map falls back");
-        // ExitSignsTest's file has a routing section and no map section.
+        check(!none.open().isSuccess(), "no OsmAnd maps: the source does not open, and the pane shows no map data");
+        // SyntheticObf's file has a routing section and no map section.
         java.nio.file.Path file = java.nio.file.Files.createTempFile("obf-map", ".obf");
         try {
-            java.nio.file.Files.write(file, ExitSignsTest.syntheticObf());
+            java.nio.file.Files.write(file, SyntheticObf.syntheticObf());
             com.jw6ventures.headlink.ObfMapSource routingOnly = new com.jw6ventures.headlink.ObfMapSource(
                 () -> List.of(com.jw6ventures.headlink.OsmAndRouter.MapFile.of(file.toFile())), 0, 20, 17);
             check(!routingOnly.open().isSuccess() && routingOnly.getFiles().isEmpty(), "nor does a file with no map section");

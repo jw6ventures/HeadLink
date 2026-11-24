@@ -76,8 +76,8 @@
     <m e="way">
 
         <!--###### PASS 1: AREAS ######-->
-        <!-- Sea and the land on it, from OsmAnd's coastlines (ObfMapTiles.coast) or a
-             Mapsforge file's sea polygons: first, so everything else draws over them. -->
+        <!-- Sea and the land on it, from OsmAnd's coastlines (ObfMapTiles.coast): first,
+             so everything else draws over them. -->
         <m k="natural" v="sea">
             <area fill="#16283c" />
         </m>
@@ -142,17 +142,15 @@
                 <line use="casing-arterial" />
             </m>
             <m v="motorway|motorway_link|trunk|trunk_link" zoom-min="8">
-                <!-- The stock Mapsforge writer does not keep OSM's value: its
-                     tag-mapping rewrites toll=yes and toll=true to `tl_yes`. Matching
-                     `yes|true` against `~|no|false` left a toll road matching neither,
-                     so every one drew no line at all, its name floating over empty
-                     ground (Texas drive, 21 September 2026). The second rule is the
-                     exact complement of the first — `-` matches an absent key or any
-                     value not listed — so no value can fall through both. -->
-                <m k="toll" v="tl_yes|yes|true">
+                <!-- The second rule is the exact complement of the first — `-` matches
+                     an absent key or any value not listed — so no value can fall through
+                     both. Matching `yes|true` against `~|no|false` once left a toll road
+                     whose value was neither drawing no line at all, its name floating
+                     over empty ground (Texas drive, 21 September 2026). -->
+                <m k="toll" v="yes|true">
                     <line use="casing-toll" />
                 </m>
-                <m k="toll" v="-|tl_yes|yes|true">
+                <m k="toll" v="-|yes|true">
                     <line use="casing-motorway" />
                 </m>
             </m>
@@ -173,18 +171,18 @@
                 <line use="arterial" />
             </m>
             <m v="motorway|trunk" zoom-min="8">
-                <m k="toll" v="tl_yes|yes|true">
+                <m k="toll" v="yes|true">
                     <line use="toll" />
                 </m>
-                <m k="toll" v="-|tl_yes|yes|true">
+                <m k="toll" v="-|yes|true">
                     <line use="motorway" />
                 </m>
             </m>
             <m v="motorway_link|trunk_link" zoom-min="10">
-                <m k="toll" v="tl_yes|yes|true">
+                <m k="toll" v="yes|true">
                     <line use="toll-link" />
                 </m>
-                <m k="toll" v="-|tl_yes|yes|true">
+                <m k="toll" v="-|yes|true">
                     <line use="motorway-link" />
                 </m>
             </m>

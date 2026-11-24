@@ -10,7 +10,7 @@ import kotlin.math.roundToInt
 /**
  * P11.5a (docs/navigation.md, "OsmAnd maps: search and places"): search ahead on the
  * route. While a route is followed, a press that lights Gas, Food or Shop also looks
- * along the road ahead, works out the detour to the nearest few places with BRouter,
+ * along the road ahead, works out the detour to the nearest few places with the router,
  * says the best one and lists up to three on the flex tile with **Add stop**.
  *
  * Everything here is pure JVM, for the host test (SearchAheadTest): the corridor and its
@@ -98,7 +98,7 @@ class AheadCorridor(val route: Route, fromAlongM: Double, lengthM: Double) {
         )
     }
 
-    /** BRouter's own time from the start to [metres] along, interpolated; by distance when the route has no point times. */
+    /** The router's own time from the start to [metres] along, interpolated; by distance when the route has no point times. */
     fun secondsAt(metres: Double): Double {
         if (totalM <= 0.0) return 0.0
         val m = metres.coerceIn(0.0, totalM)
@@ -358,7 +358,7 @@ object AheadSearch {
                 if (e.stopped && cancelled()) return AheadDetours(stops, routed, failed, true)
                 failed++
             } catch (e: RuntimeException) {
-                // A malformed request or BRouter's own failure: this place only.
+                // A malformed request or the engine's own failure: this place only.
                 failed++
             }
         }

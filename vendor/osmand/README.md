@@ -21,8 +21,7 @@ The commit SHAs are the pin. The authoritative copy of what is vendored is this 
 
 OsmAnd publishes OsmAnd-java to its own builder server, not to Maven Central, and with no
 checksummed coordinate for `gradle/verification-metadata.xml` to pin. Vendoring the
-source keeps the build offline and free of prebuilt jars, the same reasoning as
-`vendor/brouter`.
+source keeps the build offline and free of prebuilt jars.
 
 ## What was taken
 

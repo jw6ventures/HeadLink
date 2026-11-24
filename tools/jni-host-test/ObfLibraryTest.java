@@ -1,6 +1,6 @@
 // P11.1's maps folder rules and Settings -> OsmAnd maps on a desktop JVM: which files in
 // the folder are opened, what identifies one version of a file, which persisted grant is
-// the maps folder and which the drop folder, the card's status line, and PoiSettings'
+// the maps folder and which the speech model, the card's status line, and PoiSettings'
 // defaults, repair and stored form. ObfRules and PoiValues are pure Kotlin; the document
 // API, the grants themselves and the preferences file need a device.
 import java.time.LocalDate;
@@ -67,11 +67,11 @@ public final class ObfLibraryTest {
 
     private static void eachFolderKeepsItsOwnGrant() {
         ObfRules r = ObfRules.INSTANCE;
-        // DropFolder.choose gives up only drop grants; ObfLibrary.choose only maps grants.
-        check(r.isDropGrant(true, true) && !r.isMapsGrant(true, true), "read+write is the drop folder");
-        check(r.isMapsGrant(true, false) && !r.isDropGrant(true, false), "read-only is the maps folder");
-        check(!r.isMapsGrant(false, true) && !r.isDropGrant(false, true), "write-only is neither");
-        check(!r.isMapsGrant(true, false, false) && !r.isDropGrant(true, true, false), "a single file is never a folder");
+        // ObfLibrary.choose gives up only maps grants; an older version's read+write folder is not one.
+        check(r.isMapsGrant(true, false), "read-only is the maps folder");
+        check(!r.isMapsGrant(true, true), "a folder this app may also write is not");
+        check(!r.isMapsGrant(false, true), "write-only is not");
+        check(!r.isMapsGrant(true, false, false), "a single file is never a folder");
         check(r.isSpeechModelGrant(true, false), "a read grant on one file is the speech model");
         check(!r.isSpeechModelGrant(true, true), "a folder is never the speech model");
     }

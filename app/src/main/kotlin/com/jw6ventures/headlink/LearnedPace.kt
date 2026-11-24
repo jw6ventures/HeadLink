@@ -10,8 +10,8 @@ import kotlin.math.floor
 /**
  * The kind of road a stretch of route is, for the learned pace ([PaceBook]): its class from
  * the map's `highway` tag and how built up its surroundings are, packed in one byte as
- * `road * 4 + density`. Only OsmAnd's routes carry these ([OsmAndRouter.toRoute]); a
- * BRouter route has none, and learns and is timed by the overall pace alone.
+ * `road * 4 + density`. OsmAnd's routes carry these ([OsmAndRouter.toRoute]); a route
+ * saved before 0.11 has none, and learns and is timed by the overall pace alone.
  */
 object PaceRoad {
     const val UNKNOWN = 0

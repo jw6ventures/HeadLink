@@ -1,7 +1,7 @@
 // The two owned map themes (P7.6) on a desktop JVM, read as XML rather than through VTM:
 // that the day theme has exactly the night theme's rules, so no feature class appears or
 // disappears when the head unit's night flag changes; that every style a rule uses exists;
-// that toll matching still carries the Mapsforge writer's `tl_yes`; that neither theme uses
+// that toll rules match the toll=yes and toll=true OsmAnd's maps carry and no other value; that neither theme uses
 // the route line's colour; and that the labels are legible against the ground they sit on.
 //
 // VTM's own parser needs a canvas backend this JVM does not have, so whether VTM accepts
@@ -44,8 +44,8 @@ public final class MapThemeTest {
         everyStyleUsedExists("dark", night);
         everyStyleUsedExists("light", day);
         bothDefineTheSameStyles(night, day);
-        tollMatchesTheWritersValue("dark", night);
-        tollMatchesTheWritersValue("light", day);
+        tollMatchesOsmAndsValues("dark", night);
+        tollMatchesOsmAndsValues("light", day);
         neitherUsesTheRouteColour(new File(dir, "dashboard-dark.xml"));
         neitherUsesTheRouteColour(new File(dir, "dashboard-light.xml"));
         theGroundsAreDayAndNight(night, day);
@@ -122,17 +122,18 @@ public final class MapThemeTest {
     }
 
     /**
-     * The stock Mapsforge writer stores toll=yes and toll=true as `tl_yes`
-     * (memory: mapsforge-writer-rewrites-values). A toll rule that lists yes without it
-     * matches nothing on a real file, and the road draws no line at all.
+     * ObfMapTiles passes OsmAnd's decoded toll=yes or toll=true through unchanged, so every
+     * toll rule (and its `-|yes|true` complement) lists both, and no value the drawing never
+     * receives, such as `tl_yes`.
      */
-    private static void tollMatchesTheWritersValue(String name, Element root) {
+    private static void tollMatchesOsmAndsValues(String name, Element root) {
         int tolls = 0;
         for (Element e : all(root)) {
             if (!"m".equals(e.getTagName()) || !"toll".equals(e.getAttribute("k"))) continue;
             tolls++;
             List<String> values = List.of(e.getAttribute("v").split("\\|"));
-            check(!values.contains("yes") || values.contains("tl_yes"), name + ": toll rule " + values + " carries tl_yes");
+            check(values.contains("yes") && values.contains("true"), name + ": toll rule " + values + " takes yes and true");
+            check(List.of("-", "yes", "true").containsAll(values), name + ": toll rule " + values + " lists no other value");
         }
         check(tolls > 0, name + " theme has toll rules");
     }

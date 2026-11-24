@@ -2,9 +2,11 @@ package com.jw6ventures.headlink
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
 import android.hardware.usb.UsbManager
 import android.os.Handler
 import android.os.Looper
+import android.provider.DocumentsContract
 import java.io.File
 import java.time.Instant
 import java.util.concurrent.ExecutorService
@@ -34,6 +36,66 @@ class SourceApplication : Application() {
         Traffic.install(this)
         IdentityWork.ensure(this, replace = false)
         CallControl.resetAtStartup(this)
+        LegacyData.clear(this)
+    }
+}
+
+/**
+ * Clears what earlier versions kept for the map and routing data they read, now that
+ * OsmAnd's maps folder ([ObfLibrary]) is the only source: the Mapsforge maps under
+ * `files/maps`, BRouter's tiles and profile under `files/routing`, the drop folder's
+ * read+write grant, and the settings keys of the engine and map source switches.
+ *
+ * Runs at every start of the main process, with no marker: each step finds nothing to do
+ * once done, so a start cut short just finishes the job next time. The grant goes at once,
+ * before any screen can open a folder chooser: a folder chosen again as the maps folder
+ * adds its read to the same persisted entry, which a later release would take with it.
+ * The files and settings keys go off the main thread. A failure is noted and left for the
+ * next start; it never stops the app.
+ */
+object LegacyData {
+    fun clear(context: Context) {
+        val app = context.applicationContext
+        val grants = try {
+            releaseDropGrants(app)
+        } catch (e: Exception) {
+            SessionController.note("releasing the old drop folder grant failed: $e")
+            0
+        }
+        Thread({
+            try {
+                val removed = buildList {
+                    for (name in listOf("maps", "routing")) {
+                        val directory = File(app.filesDir, name)
+                        if (directory.exists() && directory.deleteRecursively()) add("files/$name")
+                    }
+                    if (grants > 0) add("drop folder grant")
+                }
+                AppSettings.forgetLegacy(app)
+                if (removed.isNotEmpty()) SessionController.note("removed old map data: ${removed.joinToString(", ")}")
+            } catch (e: Exception) {
+                SessionController.note("removing old map data failed: $e")
+            }
+        }, "legacy-data").start()
+    }
+
+    /**
+     * Lets go of every folder grant that reads and writes, and says how many. The drop
+     * folder's is the only such grant: the maps folder's reads only, and the speech
+     * model's is on a single file. A cheap listing and a binder call or two, so the main
+     * thread can wait for it.
+     */
+    private fun releaseDropGrants(context: Context): Int {
+        val resolver = context.contentResolver
+        val drop = resolver.persistedUriPermissions
+            .filter { DocumentsContract.isTreeUri(it.uri) && it.isReadPermission && it.isWritePermission }
+        for (grant in drop) {
+            resolver.releasePersistableUriPermission(
+                grant.uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+            )
+        }
+        return drop.size
     }
 }
 

@@ -21,13 +21,10 @@ if [ "$mode" != --online ]; then
     gradle_offline=--offline
     set -- --network=none
 fi
-# ROUTING_SEGMENTS=<dir of .rd5 tiles> on the host mounts that directory read-only so the
-# host tests that take real routes run them; without it they are skipped and say so.
-if [ -n "${ROUTING_SEGMENTS:-}" ]; then
-    set -- "$@" -v "$ROUTING_SEGMENTS:/cache/rd5:ro" -e ROUTING_SEGMENTS=/cache/rd5
-fi
-# OBF_DIR=<dir of OsmAnd .obf files> likewise mounts them read-only for ObfTest's real-file
-# checks (P11.2-P11.3); without it they are skipped and say so.
+# OBF_DIR=<dir of OsmAnd .obf files> on the host mounts that directory read-only so the
+# host tests that read real maps or take real routes run them (ObfTest, AddressSearchTest,
+# OsmAndRoutingTest, RoutePlannerTest and the other real-route tests); without it they are
+# skipped and say so.
 if [ -n "${OBF_DIR:-}" ]; then
     set -- "$@" -v "$OBF_DIR:/cache/obf:ro" -e OBF_DIR=/cache/obf
 fi

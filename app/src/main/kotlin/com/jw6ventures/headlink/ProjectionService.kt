@@ -652,7 +652,6 @@ class ProjectionService : Service() {
                 adaptiveZoom = saved.adaptiveZoom,
             ),
             dashboardSaves(),
-            MapData.resolveAll(this, session.attempt.settings.mapFile),
             java.time.ZoneId.systemDefault(),
         ) { detail ->
             // Encoder thread: tell the session, which ends with ENCODER_FAILED.
@@ -661,10 +660,10 @@ class ProjectionService : Service() {
         // P11: OsmAnd's maps stay open for the drive (docs/navigation.md). Held before the
         // markers' first query, which opens nothing without a hold.
         ObfLibrary.hold(MAPS_HOLDER, true)
-        // Settings -> Map -> Draw map from OsmAnd files: the pane reads the same open files,
-        // and falls back to the Mapsforge files when none has map data.
+        // The pane reads the same open files; with no maps folder chosen it has no map
+        // data and draws its no-data background.
         val mapsContext = applicationContext
-        MapEngine.obfMaps = if (saved.osmAndMap && ObfLibrary.chosen(mapsContext)) ({ ObfLibrary.routingMaps(mapsContext) }) else null
+        MapEngine.obfMaps = if (ObfLibrary.chosen(mapsContext)) ({ ObfLibrary.routingMaps(mapsContext) }) else null
         // P11.5: the map's Gas, Food and Shop markers, read from OsmAnd's maps on a thread of
         // their own, one query at a time; the files stay open while this projects. Buttons
         // start off and are not saved; a debug build's lab may light some (lab-poi).
@@ -694,8 +693,7 @@ class ProjectionService : Service() {
         session.pipeline = pipeline
         // Where a route starts while this projects: the same fix the map follows.
         Navigation.vehicleFix = { pipeline.vehiclePosition() }
-        // Street names come from the maps being drawn, and the header shows the next turn.
-        Routing.nameMaps = MapData.resolveAll(this, session.attempt.settings.mapFile)
+        // The header shows the next turn.
         Guide.turnListener = { turn ->
             pipeline.upcomingTurn(turn)
             session.ahead?.guidance(turn)
@@ -911,7 +909,6 @@ class ProjectionService : Service() {
         // P11.5: no more marker queries; the files close once nothing else holds them.
         stopPoi(session)
         Navigation.vehicleFix = null
-        Routing.nameMaps = null
         Guide.turnListener = null
         LiveAlternatives.listener = null
         Traffic.listener = null
