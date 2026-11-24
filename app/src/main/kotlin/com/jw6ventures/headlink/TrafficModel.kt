@@ -108,12 +108,17 @@ class TrafficRun(
     /** HERE's speed over the run, m/s, or null for [Congestion.NONE] and closed runs without one. */
     val speedMps: Double?,
     /**
-     * Seconds HERE's speed takes over the run less BRouter's own time for it, never below 0
+     * Seconds HERE's speed takes over the run less the router's own time for it, never below 0
      * (positive delays only). 0 for [Congestion.NONE].
      */
     val delaySeconds: Double,
     /** The HERE stretch's road name, for the offer's reason ("Queue on I-35E"), or null. */
     val road: String?,
+    /**
+     * The HERE functional class (1 to 5) of the stretch the run matched, which prices a jam's
+     * points ([TrafficCost.classFactor]). 3 for a run no stretch matched: a closure incident.
+     */
+    val functionalClass: Int,
 ) {
     /** A closed run long enough to be the road closed ([RouteTraffic.MIN_CLOSED_M]). */
     val closes: Boolean get() = congestion == Congestion.CLOSED && toM - fromM >= RouteTraffic.MIN_CLOSED_M
@@ -155,10 +160,9 @@ class RouteTraffic(
 }
 
 /**
- * One BRouter no-go point: a circle of [radiusM] metres BRouter must not enter
- * when [weight] is null (a closure), and otherwise charges distance-inside × [weight].
- * Handed to `RoutingContext.nogopoints` as an `OsmNodeNamed`, whose `nogoWeight` of NaN is
- * the hard block.
+ * One traffic no-go point: a circle of [radiusM] metres the router must not enter when
+ * [weight] is null (a closure), and otherwise charges metres-inside × [weight] seconds
+ * ([TrafficCost]) on every step of road through it ([OsmAndRouter]).
  */
 data class Nogo(val latitude: Double, val longitude: Double, val radiusM: Double, val weight: Double?) {
     val hard: Boolean get() = weight == null

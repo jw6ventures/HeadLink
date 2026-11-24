@@ -123,17 +123,21 @@
 #   stretches laid on a route (same carriageway, the other one 30 m off and reversed, a
 #   frontage road, an overpass, subSegments, a no-data gap, closures), the delay, and the
 #   nogos' placement (8 m, 30 m end margin, 150 m spacing, hard vs weighted, short closures,
-#   crossings, the cap). OBF_DIR with Us_texas_dallas_northamerica.obf adds the same on
+#   crossings, the cap, a jam of touching class-1 and class-2 runs priced each at its own
+#   factor). OBF_DIR with Us_texas_dallas_northamerica.obf adds the same on
 #   OsmAndRouter's route up I-35E (Stemmons Freeway) in Dallas; without it the summary line
 #   says so.
 # * NogoRoutingTest: P9.5's traffic no-go points - RouteRequest's validation, TrafficCost's
-#   delay-to-cost prices and the route's traffic marks. OBF_DIR with the Austin map adds I-35
-#   through OsmAndRouter: a heavy jam moves the route and a light one leaves it, a closure is
-#   driven round, jams at 0.3x and 3x the way round stay or leave on I-35 and RM 2222, a
-#   vehicle or destination on a closed stretch is still routed, a jam beside a closure does
-#   not open it, the overpass and frontage road are not charged, timings with 0/50/200/400
-#   points, and nothing carried to the next request; with the Victoria map, US 290 east of
-#   Bastrop, and with the Dallas map, US 75.
+#   seconds-per-metre weights and class factors, and the route's traffic marks. OBF_DIR with
+#   the Austin map adds I-35 through OsmAndRouter, every point placed by TrafficNogos.forRoute:
+#   a heavy jam moves the route and a light one leaves it, a closure is driven round, jams at
+#   0.3x and 3x the way round stay or leave all of it, the multiples at which the route leaves
+#   part and all of each stretch (bracketed, and held to 0.75-1.35 with the delay missed per
+#   second added: the table in docs/navigation.md), a vehicle or destination on a closed
+#   stretch is still routed and marked, a jam beside a closure does not open it, the overpass
+#   and frontage road are not charged, timings with 0/50/200/400 points, and nothing carried
+#   to the next request; with the Victoria map, US 290 east of Bastrop, and with the Dallas
+#   map, US 75.
 # * DashboardTrafficTest: P9.3, P9.4 and P9.6 on the dashboard - which traffic runs colour
 #   the route line ahead (slow amber, queuing red, closed dashed dark red; none and free
 #   left to the route's own colour), merged and capped, cut at the vehicle in 50 m steps and
@@ -151,13 +155,15 @@
 #   whole, dropped when stale, off, keyless or at the route's end; the time as the route's
 #   paced time plus the delay ahead, free flow adding nothing and the pace never counting the
 #   delay; no-go points on every request, alternatives search and via route, with closures
-#   and jams laid on the route's own line; a closure ahead re-routing once and never on a
-#   route that opened closures; the offer at 3 minutes, Keep's suppression until 3 more,
-#   withdrawal past the split or when the saving goes, Take; Home's "+N min traffic"; and no
-#   place, road, reason or key in the report or event log. OBF_DIR with
-#   Us_texas_dallas_northamerica.obf adds OsmAndRouter's I-35E route in Dallas: a closure
-#   laid on it is re-routed round once without opening it, and a queue brings an offer whose
-#   way round misses it.
+#   and jams laid on the route's own line, the same at the slowest and fastest top speed; a
+#   closure ahead re-routing once and never on a route that opened closures; the offer at 3
+#   minutes, a look's way round offered alone without ever swapping or taking down the offer
+#   up, Keep's suppression until 3 more, withdrawal past the split or when the saving goes,
+#   Take; Home's "+N min traffic"; and no place, road, reason or key in the report or event
+#   log. OBF_DIR with Us_texas_dallas_northamerica.obf adds OsmAndRouter's I-35E route in
+#   Dallas: a closure laid on it is re-routed round once without opening it, and a queue
+#   brings an offer on the engine's way round as soon as that one search returns (its time
+#   and the whole look's printed), kept once the bubbles' searches end, whose way round misses it.
 # * WeatherTest: P10's weather from Breezy - the provider's gzipped JSON read (every field,
 #   every optional one missing, unknown fields, not gzip, the wrong shape), the location
 #   chosen, the stale and far labels at their limits, alerts filtered and ordered, the
@@ -229,7 +235,9 @@
 # LabDrive.java and LabTraffic.java are compiled here but not run: they are generators run
 # by hand over an OBF_DIR holding Us_massachusetts_northamerica.obf, routing with
 # OsmAndRouter, the second writing the P9 lab's stand-in HERE scenarios and traffic drive
-# (tools/here-standin/, docs/verification.md).
+# (tools/here-standin/, docs/verification.md). LabTraffic needs -Xmx512m: OsmAnd's plain
+# search from the lab position to Boston Common runs out of its memory guard (a third of
+# the heap) at 256 MB, as the app's would without its large heap.
 # See each test for scope; neither proves anything about ART or Android storage.
 set -eu
 classes=app/build/intermediates/built_in_kotlinc/release/compileReleaseKotlin/classes

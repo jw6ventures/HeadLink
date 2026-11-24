@@ -25,7 +25,6 @@ import com.jw6ventures.headlink.Nogo;
 import com.jw6ventures.headlink.OsmAndRouter;
 import com.jw6ventures.headlink.Route;
 import com.jw6ventures.headlink.RouteFollower;
-import com.jw6ventures.headlink.RouteOptions;
 import com.jw6ventures.headlink.RoutePlanner;
 import com.jw6ventures.headlink.RouteRequest;
 import com.jw6ventures.headlink.RouteTraffic;
@@ -66,6 +65,7 @@ public final class TrafficMatchTest {
         withTheRouteTheJamOnItIsKept();
         reviewReversibleLanesAndShortClosures();
         reviewAStoppedQueueIsADelay();
+        reviewTouchingClassesArePricedEach();
         String real = "real route skipped (need OBF_DIR with Us_texas_dallas_northamerica.obf)";
         if (args.length > 0 && !args[0].isEmpty() && new File(args[0], "Us_texas_dallas_northamerica.obf").isFile()) {
             real = realRoute(new File(args[0]));
@@ -368,21 +368,16 @@ public final class TrafficMatchTest {
         double[][] t = straight(30.1, -97.0, 0.0, 1_000.0, 20.0);
         List<FlowStretch> flow = List.of(new FlowStretch("One", 1_000.0, s[0], s[1], 1, List.of(jam)),
                 new FlowStretch("Three", 1_000.0, t[0], t[1], 3, List.of(jam)));
-        List<Nogo> nogos = NOGOS.of(flow, List.of(), null, fc -> fc == 1 ? 10.0 : 30.0, 300);
+        List<Nogo> nogos = NOGOS.of(flow, List.of());
         double one = 0.0;
         double three = 0.0;
         for (Nogo nogo : nogos) {
             double charge = nogo.getWeight() * 2.0 * TrafficNogos.RADIUS_M;
             if (nogo.getLatitude() < 30.05) one += charge; else three += charge;
         }
-        check(Math.abs(one - 60.0 * 10.0) < 1e-6, "the points on a span charge its delay in cost, crossed through their middles: " + one);
-        check(Math.abs(three - 60.0 * 30.0) < 1e-6, "at the cost per second given for its road class: " + three);
-        // Untold, the weights are P9.5's calibration at the default top speed (TrafficCost).
-        List<Nogo> calibrated = NOGOS.of(flow, List.of());
-        double oneDefault = 0.0;
-        for (Nogo nogo : calibrated) if (nogo.getLatitude() < 30.05) oneDefault += nogo.getWeight() * 2.0 * TrafficNogos.RADIUS_M;
-        check(Math.abs(oneDefault - 60.0 * TrafficCost.INSTANCE.costPerSecond(1, RouteOptions.DEFAULT_TOP_SPEED_KMH)) < 1e-6,
-                "by default a second of delay costs TrafficCost's calibrated price: " + oneDefault);
+        check(Math.abs(one - 60.0 * TrafficCost.MOTORWAY_FACTOR) < 1e-6,
+                "the points on a span charge its delay in seconds times its class's factor, crossed through their middles: " + one);
+        check(Math.abs(three - 60.0 * TrafficCost.ROAD_FACTOR) < 1e-6, "class 3's factor is the road factor: " + three);
     }
 
     private static void closuresAreHardAndJamsWeighted() {
@@ -467,8 +462,8 @@ public final class TrafficMatchTest {
             double[][] s = straight(31.0 + i * 0.01, -97.0, 0.0, 400.0, 20.0);
             incidents.add(new TrafficIncident("x" + i, "roadClosure", "critical", true, null, s[0], s[1]));
         }
-        List<Nogo> all = NOGOS.of(flow, incidents, null, fc -> 20.0, 100_000);
-        List<Nogo> capped = NOGOS.of(flow, incidents, null, fc -> 20.0, 100);
+        List<Nogo> all = NOGOS.of(flow, incidents, null, 100_000);
+        List<Nogo> capped = NOGOS.of(flow, incidents, null, 100);
         check(all.size() == 60 * 7 + 5 * 3 && capped.size() <= 100, "420 jam points and 15 closure points cut to at most 100: " + capped.size());
         int hard = 0;
         double lightestKept = Double.MAX_VALUE;
@@ -498,8 +493,8 @@ public final class TrafficMatchTest {
             double[][] s = straight(30.5 + i * 0.01, -97.0, 0.0, 1_000.0, 20.0);
             flow.add(new FlowStretch("Far " + i, 1_000.0, s[0], s[1], 2, List.of(span(0.0, 1_000.0, 2.0, 25.0, 9.0))));
         }
-        List<Nogo> blind = NOGOS.of(flow, List.of(), null, fc -> 20.0, 100);
-        List<Nogo> aware = NOGOS.of(flow, List.of(), route, fc -> 20.0, 100);
+        List<Nogo> blind = NOGOS.of(flow, List.of(), null, 100);
+        List<Nogo> aware = NOGOS.of(flow, List.of(), route, 100);
         check(countNear(blind, route) == 0, "without the route, a light jam on it loses to heavy ones far away");
         check(countNear(aware, route) == 7, "with it, the jam on the route is kept first: " + countNear(aware, route));
     }
@@ -562,7 +557,7 @@ public final class TrafficMatchTest {
         FlowStretch lanes = new FlowStretch("I-35E", 2_000.0, general[0], general[1], 1, List.of(span(0.0, 2_000.0, 10.0, 25.0, 6.0)));
         RouteTraffic both = MATCH.match(route, List.of(express, lanes), List.of());
         check(both.getRuns().size() == 1 && both.getRuns().get(0).getCongestion() == Congestion.SLOW, "the general lanes' slow flow is what the route gets");
-        List<Nogo> own = NOGOS.forRoute(List.of(express), List.of(), t, fc -> TrafficCost.INSTANCE.costPerSecond(fc, RouteOptions.DEFAULT_TOP_SPEED_KMH), TrafficNogos.MAX_NOGOS).getNogos();
+        List<Nogo> own = NOGOS.forRoute(List.of(express), List.of(), t, TrafficNogos.MAX_NOGOS).getNogos();
         check(own.size() == NOGOS.of(List.of(express), List.of()).size()
                         && own.stream().allMatch(n -> fromRoute(route, n.getLatitude(), n.getLongitude()) > TrafficNogos.RADIUS_M),
                 "and no hard point of its own on the route's line: " + own.size());
@@ -575,8 +570,7 @@ public final class TrafficMatchTest {
         check(shortOne.getRuns().stream().anyMatch(r -> r.getCongestion() == Congestion.CLOSED && r.getToM() - r.getFromM() < RouteTraffic.MIN_CLOSED_M),
                 "a closure matched for under 30 m is still a closed run to draw: " + describe(shortOne.getRuns(), 0.0));
         check(shortOne.closureAhead(0.0) == null, "but not a closure ahead to re-route round");
-        List<Nogo> shortPoints = NOGOS.forRoute(List.of(), List.of(ramp), shortOne, fc -> TrafficCost.INSTANCE.costPerSecond(fc, RouteOptions.DEFAULT_TOP_SPEED_KMH),
-                TrafficNogos.MAX_NOGOS).getNogos();
+        List<Nogo> shortPoints = NOGOS.forRoute(List.of(), List.of(ramp), shortOne, TrafficNogos.MAX_NOGOS).getNogos();
         check(shortPoints.size() == NOGOS.of(List.of(), List.of(ramp)).size(), "and no hard points of its own on the route's line");
         double[][] long1 = laid(route, along, 2_000.0, 2_200.0, 2.0, false);
         TrafficIncident shut = new TrafficIncident("s", "roadClosure", "critical", true, null, long1[0], long1[1]);
@@ -597,6 +591,59 @@ public final class TrafficMatchTest {
         check(NOGOS.delaySeconds(stopped.getSpans().get(0)) > 900.0, "and weighed off the route too");
         check(!NOGOS.of(List.of(stopped), List.of()).isEmpty() && NOGOS.of(List.of(stopped), List.of()).stream().noneMatch(Nogo::getHard),
                 "with weighted points");
+    }
+
+    /**
+     * A queue running from a class-1 stretch straight on into a class-2 one is one jam to
+     * TrafficNogos.forRoute (its points placed along both), but each run's delay is charged at
+     * its own class's factor: the points sum to d1 x MOTORWAY_FACTOR + d2 x ROAD_FACTOR, not
+     * the whole delay at either factor, and the class-1 half's points weigh more.
+     */
+    private static void reviewTouchingClassesArePricedEach() {
+        Route route = line(32.80, -96.80, 0.0, 5_000.0, 50.0, 25.0);
+        double[] along = AREA.metres(route);
+        double[][] a = laid(route, along, 1_000.0, 2_000.0, 2.0, false);
+        double[][] b = laid(route, along, 2_000.0, 3_000.0, 2.0, false);
+        FlowStretch motorway = new FlowStretch("Motorway", 1_000.0, a[0], a[1], 1, List.of(span(0.0, 1_000.0, 10.0, 25.0, 6.0)));
+        FlowStretch road = new FlowStretch("Road", 1_000.0, b[0], b[1], 2, List.of(span(0.0, 1_000.0, 10.0, 25.0, 6.0)));
+        RouteTraffic t = MATCH.match(route, List.of(motorway, road), List.of());
+        List<TrafficRun> runs = t.getRuns();
+        check(runs.size() == 2 && runs.get(0).getFunctionalClass() == 1 && runs.get(1).getFunctionalClass() == 2
+                && runs.get(1).getFromM() - runs.get(0).getToM() <= 5.0, "two touching slow runs, class 1 then class 2: " + describe(runs, 0.0));
+        double d1 = runs.get(0).getDelaySeconds();
+        double d2 = runs.get(1).getDelaySeconds();
+        List<Nogo> own = NOGOS.forRoute(List.of(motorway, road), List.of(), t, TrafficNogos.MAX_NOGOS).getNogos();
+        double charged = 0.0;
+        double firstMin = Double.MAX_VALUE;
+        double secondMax = 0.0;
+        int points = 0;
+        for (Nogo n : own) {
+            if (n.getHard() || fromRoute(route, n.getLatitude(), n.getLongitude()) > 1.0) continue;
+            points++;
+            charged += n.getWeight() * 2.0 * TrafficNogos.RADIUS_M;
+            double at = alongOf(route, along, n.getLatitude(), n.getLongitude());
+            if (at > 1_100.0 && at < 1_900.0) firstMin = Math.min(firstMin, n.getWeight());
+            if (at > 2_100.0 && at < 2_900.0) secondMax = Math.max(secondMax, n.getWeight());
+        }
+        double want = d1 * TrafficCost.MOTORWAY_FACTOR + d2 * TrafficCost.ROAD_FACTOR;
+        check(points >= 12 && Math.abs(charged - want) < 1e-6 * want,
+                points + " points on the line charge " + Math.round(charged) + " s, each run at its own factor: " + Math.round(want) + " s, not "
+                + Math.round((d1 + d2) * TrafficCost.MOTORWAY_FACTOR) + " or " + Math.round((d1 + d2) * TrafficCost.ROAD_FACTOR));
+        check(firstMin > secondMax, "and the class-1 run's points weigh more than the class-2 run's: " + firstMin + " > " + secondMax);
+    }
+
+    /** Metres along [route] to its nearest point to ([lat], [lon]), to the nearest route point. */
+    private static double alongOf(Route route, double[] along, double lat, double lon) {
+        int best = 0;
+        double nearest = Double.MAX_VALUE;
+        for (int i = 0; i < route.getPoints(); i++) {
+            double d = RouteFollower.Companion.distance(route.getLatitudes()[i], route.getLongitudes()[i], lat, lon);
+            if (d < nearest) {
+                nearest = d;
+                best = i;
+            }
+        }
+        return along[best];
     }
 
     // ---- Helpers ----

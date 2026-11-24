@@ -30,6 +30,7 @@ import java.util.Locale;
 import java.util.Map;
 import kotlin.Unit;
 import kotlin.jvm.functions.Function0;
+import kotlin.jvm.functions.Function1;
 import com.jw6ventures.headlink.AlternativeSearch;
 import com.jw6ventures.headlink.ArrivalTime;
 import com.jw6ventures.headlink.Congestion;
@@ -39,6 +40,7 @@ import com.jw6ventures.headlink.LiveAlternative;
 import com.jw6ventures.headlink.MemoryTrafficLedger;
 import com.jw6ventures.headlink.NextStep;
 import com.jw6ventures.headlink.Nogo;
+import com.jw6ventures.headlink.LookStop;
 import com.jw6ventures.headlink.OsmAndRouter;
 import com.jw6ventures.headlink.PaceTracker;
 import com.jw6ventures.headlink.PreviewRequest;
@@ -47,14 +49,16 @@ import com.jw6ventures.headlink.RouteFigures;
 import com.jw6ventures.headlink.RouteFollower;
 import com.jw6ventures.headlink.RouteOptions;
 import com.jw6ventures.headlink.RoutePlanner;
+import com.jw6ventures.headlink.RouteEngine;
 import com.jw6ventures.headlink.RouteRequest;
+import com.jw6ventures.headlink.RoutingException;
+import com.jw6ventures.headlink.SearchHandle;
 import com.jw6ventures.headlink.RouteTraffic;
 import com.jw6ventures.headlink.SpeedUnit;
 import com.jw6ventures.headlink.StatusText;
 import com.jw6ventures.headlink.TrafficArea;
 import com.jw6ventures.headlink.TrafficBox;
 import com.jw6ventures.headlink.TrafficClient;
-import com.jw6ventures.headlink.TrafficCost;
 import com.jw6ventures.headlink.TrafficDisplay;
 import com.jw6ventures.headlink.TrafficFeed;
 import com.jw6ventures.headlink.TrafficFetch;
@@ -86,6 +90,7 @@ public final class TrafficFeedTest {
         theReportSaysNothingOfWhere();
         homesRouteLineSaysTheDelay();
         reviewFixes();
+        secondReviewFixes();
         String real = "real routes skipped (need OBF_DIR with Us_texas_dallas_northamerica.obf)";
         if (args.length > 0 && !args[0].isEmpty() && new File(args[0], "Us_texas_dallas_northamerica.obf").isFile()) {
             real = realRoutes(new File(args[0]));
@@ -505,19 +510,18 @@ public final class TrafficFeedTest {
         check(hardOnLine >= 2, "the closure matched to the route is blocked on the route's own line: " + hardOnLine);
         check(hardOff >= 1, "as well as on HERE's shape 12 m off: " + hardOff);
         check(jamOnLine >= 15 && jamNearOff == 0, "the queue's points are on the route's line, in place of HERE's 2 m off: " + jamOnLine + "/" + jamNearOff);
-        // Priced at the request's own top speed.
-        RouteOptions slow = options.copy(false, false, false, false, false, 90, options.getEtaPercent(), options.getLearnPace(), options.getShowAlternatives());
-        List<Nogo> cheaper = feed.nogos(slow);
-        double scale = TrafficCost.INSTANCE.secondPrice(90) / TrafficCost.INSTANCE.secondPrice(RouteOptions.DEFAULT_TOP_SPEED_KMH);
-        boolean scaled = cheaper.size() == nogos.size();
-        for (int i = 0; scaled && i < nogos.size(); i++) {
-            Double a = nogos.get(i).getWeight();
-            Double b = cheaper.get(i).getWeight();
-            scaled = (a == null && b == null) || (a != null && b != null && Math.abs(b - a * scale) < 1e-9);
-        }
-        check(scaled && scale < 1.0, "a search at 90 km/h gets the same points at 90 km/h's price");
+        // Seconds of delay, whatever the search's top speed: the same request at the slowest
+        // and the fastest top speed gets the same points, weights and all.
+        RouteRequest slowest = new RouteRequest(32.70, -96.80, 33.00, -96.80, 0.0,
+                new RouteOptions(false, false, false, false, false, 90, 0, true, true));
+        RouteRequest fastest = new RouteRequest(32.70, -96.80, 33.00, -96.80, 0.0,
+                new RouteOptions(false, false, false, false, false, 137, 0, true, true));
+        List<Nogo> atSlowest = feed.withNogos(slowest).getNogos();
+        List<Nogo> atFastest = feed.withNogos(fastest).getNogos();
+        check(atSlowest.equals(nogos) && atFastest.equals(nogos) && feed.withNogos(fastest).getOptions().getTopSpeedKmh() == 137,
+                "a search at 90 km/h and one at 137 km/h get the same points, weights and all");
         // The alternatives search: every request it makes carries them.
-        PreviewRequest trip = new PreviewRequest(1L, 32.71, -96.80, 33.0, -96.80, null, options, route, feed.nogos(options));
+        PreviewRequest trip = new PreviewRequest(1L, 32.71, -96.80, 33.0, -96.80, null, options, route, feed.nogos());
         check(trip.alternative(1).getNogos().equals(nogos) && trip.through(32.8, -96.79).getNogos().equals(nogos)
                 && trip.alternative(0).getNogos().equals(nogos), "the router's alternatives and every via route get them too");
         check(feed.getDisplay().getRouteShaped() == route.getTrafficShaped(), "the display credits HERE for a route traffic shaped");
@@ -579,6 +583,36 @@ public final class TrafficFeedTest {
         waiting.onPosition(route, on(100.0));
         busy.drain();
         check(busy.rerouteCalls == 2 && waiting.report().contains("traffic_closure_reroutes=1"), "a refused re-route is asked again, and counted once done");
+        // Review 2, fix 5: a route that enters a closure at its start (OsmAndRouter's
+        // endClosures) skips that closure only. A second one farther ahead still re-routes.
+        double[] along = TrafficArea.INSTANCE.metres(route);
+        double[] inStart = at(route, along, 60.0);
+        Route fromInside = route.withNogos(12, false, List.of(new Nogo(inStart[0], inStart[1], TrafficNogos.RADIUS_M, null)));
+        check(!fromInside.getClosuresOpened() && fromInside.getEndClosures().size() == 1, "an end closure is not an opened one");
+        Host startOnly = new Host(settings(true, KEY));
+        startOnly.http.incidents = incidentsJson(List.<double[][]>of(closure(route, 30.0, 430.0, 3.0)));
+        TrafficFeed onIt = new TrafficFeed(startOnly);
+        onIt.onRoute(fromInside);
+        onIt.onPosition(fromInside, on(0.0));
+        startOnly.drain();
+        check(onIt.report().contains("traffic_closed_runs=1") && startOnly.rerouteCalls == 0,
+                "the closure the route starts in is no reason to re-route (it would find it again): " + startOnly.rerouteCalls);
+        Host plainStart = new Host(settings(true, KEY));
+        plainStart.http.incidents = incidentsJson(List.<double[][]>of(closure(route, 30.0, 430.0, 3.0)));
+        TrafficFeed plainFeed = new TrafficFeed(plainStart);
+        plainFeed.onRoute(route);
+        plainFeed.onPosition(route, on(0.0));
+        plainStart.drain();
+        check(plainStart.rerouteCalls == 1, "the same closure on a route that does not start in it re-routes");
+        Host twoClosures = new Host(settings(true, KEY));
+        twoClosures.http.incidents = incidentsJson(List.<double[][]>of(closure(route, 30.0, 430.0, 3.0), closure(route, 20_000.0, 20_400.0, 3.0)));
+        TrafficFeed both = new TrafficFeed(twoClosures);
+        both.onRoute(fromInside);
+        both.onPosition(fromInside, on(0.0));
+        twoClosures.drain();
+        check(twoClosures.rerouteCalls == 1, "but a separate closure farther ahead on it still re-routes: " + twoClosures.rerouteCalls);
+        check(fromInside.remainder(1).getEndClosures().equals(fromInside.getEndClosures())
+                && fromInside.withTimeScale(1.1).getEndClosures().equals(fromInside.getEndClosures()), "the end closures go with the route's copies");
     }
 
     // ---- the offer (P9.6) ------------------------------------------------
@@ -616,6 +650,15 @@ public final class TrafficFeedTest {
         Route roundAgain = aside(look, 10_000.0, look.ahead.getSeconds() + delay - 250);
         look.assess(feed, host, List.of(roundAgain));
         check(feed.getDisplay().getOffer() != null && feed.getDisplay().getOffer().getId() == id, "the same way round keeps its id");
+        // A look's way round alone (LiveAlternatives.wayRoundFound) never swaps or takes
+        // down the offer up: another way saving more, or one saving too little, leaves it.
+        check(look.assessWayRound(feed, host, aside(look, 12_000.0, look.ahead.getSeconds() + delay - 600)) == null
+                && feed.getDisplay().getOffer() != null && feed.getDisplay().getOffer().getId() == id, "a look's way round alone never swaps the offer up");
+        check(look.assessWayRound(feed, host, short1) == null && feed.getDisplay().getOffer() != null
+                && feed.getDisplay().getOffer().getId() == id, "nor takes it down");
+        Route sameAgain = aside(look, 10_000.0, look.ahead.getSeconds() + delay - 260);
+        check(look.assessWayRound(feed, host, sameAgain) == sameAgain && feed.getDisplay().getOffer().getId() == id,
+                "the same way round alone refreshes the offer up, keeping its id");
         // Keep: gone, and not offered again unless it saves 3 minutes more.
         feed.answer(id, false);
         host.drain();
@@ -742,6 +785,96 @@ public final class TrafficFeedTest {
         RouteRequest asked = odd.withNogos(new RouteRequest(32.7, -96.8, 33.0, -96.8));
         check(asked.getNogos().stream().allMatch(n -> Double.isFinite(n.getLatitude()) && Math.abs(n.getLatitude()) <= 90.0),
                 "no point off the globe reaches a request");
+    }
+
+    // ---- the second traffic review's fixes (docs/verification.md, LAB_TRAFFIC) ------------
+
+    private static void secondReviewFixes() {
+        Route route = northbound(40_000.0, "I-35E");
+        double toLat = route.getLatitudes()[route.getPoints() - 1];
+        double toLon = route.getLongitudes()[route.getPoints() - 1];
+        // Fix 1: a look carries the points it searched with; once newer ones are held, its
+        // routes decide nothing, early way round or full result.
+        Host host = new Host(settings(true, KEY));
+        TrafficFeed feed = fresh(route, host);
+        int delay = feed.getDelaySeconds();
+        Look look = new Look(route, 0.0);
+        long old = feed.getPointsRevision();
+        host.now += 10 * MIN;
+        feed.onPosition(route, on(0.0));
+        host.drain();
+        check(feed.getPointsRevision() != old && feed.getDelaySeconds() == delay, "a refresh replaces the points: " + old + " to " + feed.getPointsRevision());
+        Route round = aside(look, 10_000.0, look.ahead.getSeconds() + delay - 400);
+        check(look.assessWayRound(feed, host, old, round) == null && feed.getDisplay().getOffer() == null,
+                "a superseded look's way round offers nothing");
+        Assessed stale = look.assess(feed, host, old, List.of(round));
+        check(stale.offered == null && feed.getDisplay().getOffer() == null && stale.extras.length == 1 && stale.extras[0] < -delay / 2,
+                "nor does its full result, though its bubble's delay is still given: " + (stale.extras.length > 0 ? stale.extras[0] : 0));
+        check(look.assessWayRound(feed, host, round) == round && feed.getDisplay().getOffer() != null, "searched with the points held, it is offered");
+        long id = feed.getDisplay().getOffer().getId();
+        long before = feed.getPointsRevision();
+        host.now += 10 * MIN;
+        feed.onPosition(route, on(0.0));
+        host.drain();
+        Route tooLittle = aside(look, 10_000.0, look.ahead.getSeconds() + delay - 100);
+        Route better = aside(look, 12_000.0, look.ahead.getSeconds() + delay - 900);
+        look.assess(feed, host, before, List.of(tooLittle));
+        look.assess(feed, host, before, List.of());
+        look.assess(feed, host, before, List.of(better));
+        check(feed.getDisplay().getOffer() != null && feed.getDisplay().getOffer().getId() == id,
+                "a superseded look's result neither withdraws nor replaces the offer up");
+        look.assess(feed, host, List.of(better));
+        check(feed.getDisplay().getOffer() != null && feed.getDisplay().getOffer().getId() != id, "the same result with the points held replaces it");
+        long betterId = feed.getDisplay().getOffer().getId();
+
+        // Fix 2: bubbles off, a traffic look searches the way round only, and that alone is
+        // the decision: it neither replaces nor withdraws a different offer up.
+        RouteOptions bubblesOff = new RouteOptions(false, false, false, false, false, RouteOptions.DEFAULT_TOP_SPEED_KMH, 0, true, false);
+        PreviewRequest offTrip = new PreviewRequest(1L, look.ahead.getLatitudes()[0], look.ahead.getLongitudes()[0], toLat, toLon, null,
+                bubblesOff, look.ahead, feed.nogos());
+        StagedEngine solo = new StagedEngine(List.of(round));
+        List<Route> rounds = new ArrayList<>();
+        List<Route> found = new ArrayList<>();
+        AlternativeSearch.INSTANCE.find(solo, offTrip, true, RoutePlanner.MAX_RUNNING_MS, h -> Unit.INSTANCE, () -> false,
+                r -> { rounds.add(r); return Unit.INSTANCE; }, r -> { found.add(r); return Unit.INSTANCE; });
+        check(solo.computes == 1 && rounds.size() == 1 && found.isEmpty(), "bubbles off: one search, the way round, and no bubbles: " + solo.computes);
+        check(look.assessWayRound(feed, host, rounds.get(0)) == null && feed.getDisplay().getOffer().getId() == betterId,
+                "and the way round alone leaves a better way up as it is");
+        check(look.assessWayRound(feed, host, tooLittle) == null && feed.getDisplay().getOffer().getId() == betterId, "nor takes it down");
+
+        // Fix 3: stopping a look terminates its running search at once, and every search it
+        // starts after that as its handle arrives, inside one engine request too: alternative
+        // 1 is two OsmAnd searches, and a stop between them ends the second before it runs.
+        PreviewRequest trip = new PreviewRequest(1L, look.ahead.getLatitudes()[0], look.ahead.getLongitudes()[0], toLat, toLon, null,
+                new RouteOptions(), look.ahead, feed.nogos());
+        StagedEngine nested = new StagedEngine(List.of(round, better));
+        LookStop between = new LookStop();
+        nested.betweenSearches = between::stop;
+        rounds.clear();
+        found.clear();
+        AlternativeSearch.INSTANCE.find(nested, trip, true, RoutePlanner.MAX_RUNNING_MS, h -> { between.started(h); return Unit.INSTANCE; },
+                between::getStopped, r -> { rounds.add(r); return Unit.INSTANCE; }, r -> { found.add(r); return Unit.INSTANCE; });
+        check(nested.searches == 2 && nested.handles.size() == 3 && nested.handles.get(2)[0] && nested.computes == 2 && found.isEmpty(),
+                "a search a stopped look starts is terminated as its handle arrives, nested ones too: searches=" + nested.searches
+                + " handles=" + nested.handles.size() + " computes=" + nested.computes);
+        StagedEngine running = new StagedEngine(List.of(round));
+        LookStop during = new LookStop();
+        running.duringSearch = during::stop;
+        rounds.clear();
+        AlternativeSearch.INSTANCE.find(running, trip, true, RoutePlanner.MAX_RUNNING_MS, h -> { during.started(h); return Unit.INSTANCE; },
+                during::getStopped, r -> { rounds.add(r); return Unit.INSTANCE; }, r -> Unit.INSTANCE);
+        check(running.handles.size() == 1 && running.handles.get(0)[0] && rounds.isEmpty() && running.computes == 1,
+                "and the search running when it stops is terminated at once, its route never given");
+
+        // Fix 4: the way round now offered is no longer also a bubble, grey line and all.
+        Route wayA = aside(look, 10_000.0, look.ahead.getSeconds() + 60);
+        Route wayB = aside(look, 15_000.0, look.ahead.getSeconds() + 90);
+        LiveAlternative bubbleA = LiveAlternative.Companion.of(1L, look.ahead, wayA);
+        LiveAlternative bubbleB = LiveAlternative.Companion.of(2L, look.ahead, wayB);
+        check(bubbleA != null && bubbleB != null, "two bubbles");
+        Route offeredA = LiveAlternative.Companion.throughOwn(look.ahead, aside(look, 10_000.0, look.ahead.getSeconds() + 30));
+        List<LiveAlternative> left = LiveAlternative.Companion.withoutOffered(List.of(bubbleA, bubbleB), look.ahead, offeredA);
+        check(left.size() == 1 && left.get(0) == bubbleB, "the bubble for the way offered goes, the other stays: " + left.size());
     }
 
     private static TrafficFeed fresh(Route route, Host host) {
@@ -880,13 +1013,21 @@ public final class TrafficFeedTest {
         jammed.http.flow = flowJson(List.of(jam(route, c, c + 3_000.0, 3.0, 2.0, 10.0, "x")));
         TrafficFeed queue = new TrafficFeed(jammed);
         List<Route> found = new ArrayList<>();
+        Route[] wayRound = {null};
         long[] lookMs = {0L};
+        long[] wayRoundMs = {0L};
         Look look = new Look(route, 0.0);
         jammed.onLook = () -> {
             long begun = System.nanoTime();
             PreviewRequest trip = new PreviewRequest(1L, look.ahead.getLatitudes()[0], look.ahead.getLongitudes()[0], toLat, toLon, null,
-                    options, look.ahead, queue.nogos(options));
+                    options, look.ahead, queue.nogos());
             AlternativeSearch.INSTANCE.find(router, trip, queue.worthLooking(), RoutePlanner.MAX_RUNNING_MS, e -> Unit.INSTANCE, () -> false,
+                    r -> {
+                        wayRoundMs[0] = (System.nanoTime() - begun) / 1_000_000L;
+                        wayRound[0] = r;
+                        found.add(r);
+                        return Unit.INSTANCE;
+                    },
                     r -> { found.add(r); return Unit.INSTANCE; });
             lookMs[0] = (System.nanoTime() - begun) / 1_000_000L;
         };
@@ -894,6 +1035,13 @@ public final class TrafficFeedTest {
         queue.onPosition(route, on(0.0));
         jammed.drain();
         check(jammed.looks == 1 && !found.isEmpty(), "one search for the update, which found ways round: " + found.size());
+        // LiveAlternatives.wayRoundFound: the offer is made on the engine's way round alone,
+        // before the bubbles' searches end, and kept when they do.
+        check(wayRound[0] != null && found.get(0) == wayRound[0], "the engine's way round came first");
+        check(look.assessWayRound(queue, jammed, wayRound[0]) == wayRound[0], "and offered alone, before the bubbles' searches end");
+        TrafficOffer early = queue.getDisplay().getOffer();
+        check(early != null && early.getRoute() == wayRound[0] && early.getSavingSeconds() >= TrafficFeed.OFFER_SAVING_S,
+                "the way round alone is offered: " + (early == null ? "none" : early.getSavingSeconds() + " s"));
         Assessed a = look.assess(queue, jammed, found);
         TrafficOffer offer = queue.getDisplay().getOffer();
         check(offer != null && offer.getSavingSeconds() >= TrafficFeed.OFFER_SAVING_S, "a way round the queue is offered: "
@@ -905,9 +1053,10 @@ public final class TrafficFeedTest {
         double itsDelay = offer == null ? -1.0 : TrafficMatch.INSTANCE.match(offer.getRoute(), flowHeld, List.of()).delayAheadSeconds(0.0);
         check(offer != null && itsDelay < queue.getDelaySeconds() / 4.0, "the way round misses the queue: " + itsDelay + " s of it against " + queue.getDelaySeconds());
         System.out.println(String.format(Locale.ROOT, "traffic-feed-test: real route distance_m=%d jam_from_m=%d closure_reroute_ms=%d "
-                + "delay_s=%d nogos=%d look_ms=%d found=%d saving_s=%d offer_delay_s=%d offer_via=%b", route.getDistanceM(), Math.round(c), rerouteMs[0],
-                queue.getDelaySeconds(), queue.nogos(options).size(), lookMs[0], found.size(), offer == null ? -1 : offer.getSavingSeconds(),
-                Math.round(itsDelay), offer != null && offer.getRoute().getVia() != null));
+                + "delay_s=%d nogos=%d way_round_ms=%d look_ms=%d found=%d way_round_saving_s=%d saving_s=%d same_offer=%b offer_delay_s=%d offer_via=%b",
+                route.getDistanceM(), Math.round(c), rerouteMs[0], queue.getDelaySeconds(), queue.nogos().size(), wayRoundMs[0], lookMs[0], found.size(),
+                early == null ? -1 : early.getSavingSeconds(), offer == null ? -1 : offer.getSavingSeconds(),
+                early != null && offer != null && early.getId() == offer.getId(), Math.round(itsDelay), offer != null && offer.getRoute().getVia() != null));
         return "real routes over the Dallas map (I-35E: a closure re-routed round, a queue offered a way round)";
     }
 
@@ -959,7 +1108,6 @@ public final class TrafficFeedTest {
         @Override public void network(Function0<Unit> task) { network.add(task); }
         @Override public void compute(Function0<Unit> task) { compute.add(task); }
         @Override public void main(Function0<Unit> task) { main.add(task); }
-        @Override public int topSpeedKmh() { return RouteOptions.DEFAULT_TOP_SPEED_KMH; }
         @Override public boolean projecting() { return projecting; }
         @Override public boolean reroute() {
             rerouteCalls++;
@@ -1009,8 +1157,13 @@ public final class TrafficFeedTest {
         }
 
         Assessed assess(TrafficFeed feed, Host host, List<Route> alternatives) {
+            return assess(feed, host, feed.getPointsRevision(), alternatives);
+        }
+
+        /** [TrafficFeed.assess] for routes searched with the points of [revision]. */
+        Assessed assess(TrafficFeed feed, Host host, long revision, List<Route> alternatives) {
             Assessed result = new Assessed();
-            feed.assess(followed, ahead, aheadAlongM, alternatives, (extras, offered) -> {
+            feed.assess(revision, followed, ahead, aheadAlongM, alternatives, (extras, offered) -> {
                 result.extras = extras;
                 result.offered = offered;
                 result.done = true;
@@ -1019,6 +1172,60 @@ public final class TrafficFeedTest {
             host.drain();
             check(result.done, "the assessment always answers");
             return result;
+        }
+
+        /** [TrafficFeed.assessWayRound]: the way round now offered, or null. */
+        Route assessWayRound(TrafficFeed feed, Host host, Route wayRound) {
+            return assessWayRound(feed, host, feed.getPointsRevision(), wayRound);
+        }
+
+        Route assessWayRound(TrafficFeed feed, Host host, long revision, Route wayRound) {
+            Route[] offered = {null};
+            boolean[] done = {false};
+            feed.assessWayRound(revision, followed, ahead, aheadAlongM, wayRound, r -> {
+                offered[0] = r;
+                done[0] = true;
+                return Unit.INSTANCE;
+            });
+            host.drain();
+            check(done[0], "the way round's assessment always answers");
+            return offered[0];
+        }
+    }
+
+    /**
+     * An engine searching as OsmAnd does: request alternative k is k + 1 searches, each
+     * handing out its own handle first, and a terminated handle ends the request. Answers
+     * [answers] in turn, the last again once they run out.
+     */
+    private static final class StagedEngine implements RouteEngine {
+        final List<Route> answers;
+        final List<boolean[]> handles = new ArrayList<>();
+        int computes;
+        int searches;
+        /** Runs inside each search, as a stop from another thread would land. */
+        Runnable duringSearch;
+        /** Runs after a search, before the request's next one begins. */
+        Runnable betweenSearches;
+
+        StagedEngine(List<Route> answers) {
+            this.answers = answers;
+        }
+
+        @Override
+        public Route compute(RouteRequest request, long maxRunningMs, Function1<? super SearchHandle, Unit> started) throws RoutingException {
+            computes++;
+            for (int s = 0; s <= request.getAlternative(); s++) {
+                if (s > 0 && betweenSearches != null) betweenSearches.run();
+                boolean[] terminated = {false};
+                handles.add(terminated);
+                started.invoke((SearchHandle) () -> terminated[0] = true);
+                if (terminated[0]) throw new RoutingException("routing stopped", true);
+                searches++;
+                if (duringSearch != null) duringSearch.run();
+                if (terminated[0]) throw new RoutingException("routing stopped", true);
+            }
+            return answers.get(Math.min(computes - 1, answers.size() - 1));
         }
     }
 

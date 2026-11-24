@@ -60,11 +60,12 @@ import kotlin.math.sqrt
  *
  * **Traffic** ([RouteRequest.nogos]). A hard point closes every step of road inside its
  * circle. A weighted one adds time to each step in proportion to the metres of it inside
- * the circle: its weight is cost per metre at the request's top speed ([TrafficCost]),
- * turned into seconds by [TrafficCost.secondPrice]. OsmAnd adds every step's time, so
- * overlapping circles add up. A request that finds no route with its closures closed is
+ * the circle: its weight is seconds per metre ([TrafficCost]). OsmAnd adds every step's
+ * time, so overlapping circles add up. A request that finds no route with its closures closed is
  * tried once more with each closure passable at a high price, so a vehicle already on a
- * closed road still gets its way out ([cutOff]).
+ * closed road still gets its way out ([cutOff]). A route that starts or ends inside a
+ * closure's circle, closures closed, carries the closures it enters there
+ * ([Route.endClosures], [closuresAtEnds]); it has opened none.
  *
  * **Direction.** [RouteRequest.startBearing] goes to OsmAnd as the initial direction, and
  * the car profile charges 300 s for setting off the other way, so a re-route does not
@@ -222,13 +223,13 @@ class OsmAndRouter(
         try {
             val found = search(request, readers, nogos, used, maxRunningMs, started)
             if (nogos.none { it.hard } || !cutOff(found.route, request, readers, used, maxRunningMs, started)) {
-                return Found(found.route.withNogos(nogos.size, false), found.segments)
+                return Found(found.route.withNogos(nogos.size, false, closuresAtEnds(found.route, nogos)), found.segments)
             }
         } catch (e: RoutingException) {
             if (e.stopped || nogos.none { it.hard }) throw e
         }
         val opened = nogos.map { nogo ->
-            if (nogo.hard) nogo.copy(weight = TrafficCost.openedClosureWeight(nogo.radiusM, request.options.topSpeedKmh)) else nogo
+            if (nogo.hard) nogo.copy(weight = TrafficCost.openedClosureWeight(nogo.radiusM)) else nogo
         }
         val found = search(request, readers, opened, used, maxRunningMs, started)
         return Found(found.route.withNogos(opened.size, true), found.segments)
@@ -266,6 +267,26 @@ class OsmAndRouter(
             return false
         }
         return displaced(start, startDistance(free, request)) || displaced(end, endDistance(free, request))
+    }
+
+    /**
+     * The closures [route] enters at either end. Every whole step of a route found with its
+     * closures closed keeps out of them, but OsmAnd cuts the first and last steps from a
+     * road to where the trip starts and ends without pricing those pieces, so a vehicle on
+     * a closed road, or a destination in one, is reached through that closure all the
+     * same. Only those closures: a re-route would find them again, while any other closure
+     * on the route is still one to re-route round ([TrafficFeed]).
+     */
+    private fun closuresAtEnds(route: Route, nogos: List<Nogo>): List<Nogo> {
+        val n = route.points
+        if (n < 2) return emptyList()
+        val ends = listOf(0, n - 2).distinct()
+        return nogos.filter { nogo ->
+            nogo.hard && ends.any { i ->
+                val circle = StepPenalty.Circle(nogo.latitude, nogo.longitude, nogo.radiusM, null, false)
+                StepPenalty.metresInside(route.latitudes[i], route.longitudes[i], route.latitudes[i + 1], route.longitudes[i + 1], circle) > 0.0
+            }
+        }
     }
 
     /**
@@ -311,7 +332,7 @@ class OsmAndRouter(
     ): Found {
         val options = request.options
         val townCircles = if (options.bypassTowns) townsAround(request, maxRunningMs, started, diagnostic) else emptyList()
-        val penalties = StepPenalty.of(nogos, townCircles, options.topSpeedKmh)
+        val penalties = StepPenalty.of(nogos, townCircles)
         val from = LatLon(request.fromLat, request.fromLon)
         val to = LatLon(request.toLat, request.toLon)
         val via = request.viaLat?.let { listOf(LatLon(it, request.viaLon!!)) }
@@ -1064,11 +1085,10 @@ class OsmAndRouter(
         companion object {
             private const val METRES_PER_DEGREE = 6_371_000.0 * Math.PI / 180.0
 
-            fun of(nogos: List<Nogo>, towns: List<Town>, topSpeedKmh: Int): StepPenalty? {
+            fun of(nogos: List<Nogo>, towns: List<Town>): StepPenalty? {
                 if (nogos.isEmpty() && towns.isEmpty()) return null
-                val price = TrafficCost.secondPrice(topSpeedKmh)
                 return StepPenalty(
-                    nogos.map { Circle(it.latitude, it.longitude, it.radiusM, it.weight?.let { w -> w / price }, false) } +
+                    nogos.map { Circle(it.latitude, it.longitude, it.radiusM, it.weight, false) } +
                         towns.map { Circle(it.lat, it.lon, it.radiusM, it.secondsPerMetre, true) },
                 )
             }

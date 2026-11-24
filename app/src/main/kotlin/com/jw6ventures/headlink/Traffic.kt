@@ -80,8 +80,6 @@ object Traffic {
                 handler.post { task() }
             }
 
-            override fun topSpeedKmh(): Int = AppSettings.load(app).routing.topSpeedKmh
-
             override fun projecting(): Boolean = Guide.attached
 
             override fun reroute(): Boolean = Guide.rerouteForClosure(app)
@@ -138,16 +136,25 @@ object Traffic {
     /** [request] with the traffic's no-go points, when traffic is on and a response is held. */
     fun withNogos(request: RouteRequest): RouteRequest = feed?.withNogos(request) ?: request
 
-    /** The points for an alternatives search made with [options]. */
-    fun nogos(options: RouteOptions): List<Nogo> = feed?.nogos(options) ?: emptyList()
+    /** The points for an alternatives search. */
+    fun nogos(): List<Nogo> = feed?.nogos() ?: emptyList()
+
+    /** Which points [nogos] gives now ([TrafficFeed.pointsRevision]), taken with them for [assess]. */
+    fun pointsRevision(): Long = feed?.pointsRevision ?: 0L
 
     /** Whether the traffic ahead is enough for a way round to be worth a search of its own. */
     fun worthLooking(): Boolean = feed?.worthLooking() ?: false
 
     /** See [TrafficFeed.assess]; with no loop, every delay is 0 and nothing is offered. */
-    fun assess(followed: Route, ahead: Route, aheadAlongM: Double, alternatives: List<Route>, done: (IntArray, Route?) -> Unit) {
+    fun assess(revision: Long, followed: Route, ahead: Route, aheadAlongM: Double, alternatives: List<Route>, done: (IntArray, Route?) -> Unit) {
         val feed = feed
-        if (feed == null) done(IntArray(alternatives.size), null) else feed.assess(followed, ahead, aheadAlongM, alternatives, done)
+        if (feed == null) done(IntArray(alternatives.size), null) else feed.assess(revision, followed, ahead, aheadAlongM, alternatives, done)
+    }
+
+    /** See [TrafficFeed.assessWayRound]; with no loop, nothing is offered. */
+    fun assessWayRound(revision: Long, followed: Route, ahead: Route, aheadAlongM: Double, wayRound: Route, done: (Route?) -> Unit) {
+        val feed = feed
+        if (feed == null) done(null) else feed.assessWayRound(revision, followed, ahead, aheadAlongM, wayRound, done)
     }
 
     /** Take or Keep on the divided turn card. */

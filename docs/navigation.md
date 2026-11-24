@@ -660,15 +660,15 @@ and only then falls back: Austin to San Antonio took 30 to 50 s on a desktop tha
 against 1.5 s straight to the plain search. Updating every map in OsmAnd at once puts
 them back in one build.
 
-<!-- wave3: traffic weight units and tuning (TrafficCost pricing for OsmAnd) pending -->
 **Traffic and future knobs.** With nothing to steer round, OsmAnd's precomputed highway
 hierarchy answers in milliseconds. A request with traffic points or earlier alternatives
-uses the plain search with `PenaltyRouter`, a `GeneralRouter` whose per-step obstacle
+uses the plain search with `RequestRouter`, a `GeneralRouter` whose per-step obstacle
 time is where every penalty goes: a closure makes a step impassable; a jam adds the metres
-inside its circle times its weight (`TrafficCost`, first written for BRouter's pricing);
-and a step an earlier alternative drove costs its time over again. Closures with no way
+inside its circle times its weight, in seconds per metre (`TrafficCost`, below); and a
+step an earlier alternative drove costs its time over again. Closures with no way
 round are opened rather than failing,
 and a route whose end lands more than 250 m from the destination is treated the same way.
+The plain search needs the app's large heap on dense city trips (**Large heap**, above).
 Toll penalties, a learned preferred route and other knobs are meant to be added here, as
 more per-step costs, each behind its own switch.
 
@@ -861,26 +861,69 @@ roads showed "+1 min"). A closure ahead needs a closed run of at least 30 m. Man
 reversible lanes beside the route are not closures of it. HERE's lines sit within a couple
 of metres of OSM's mostly, but up to 20 m on some interstate stretches.
 
-<!-- wave3: traffic weight units and tuning for OsmAnd (the measured BRouter list below is history) -->
-**No-go points** (`TrafficNogos`, `TrafficCost`, `OsmAndRouter`'s `PenaltyRouter`).
+**No-go points** (`TrafficNogos`, `TrafficCost`, `OsmAndRouter`'s `RequestRouter`).
 Closures become hard circles and jams weighted ones, radius 8 m, at most 150 m apart, none
 within 30 m of a stretch's end (junctions), slid clear of HERE roads that cross
 (overpasses), capped at 300. Because HERE's geometry can be 20 m off, closures and jams
-matched to the route also get points on the route's own line. Every request carries them
+matched to the route also get points on the route's own line, in place of HERE's own for
+a jam. Every request carries them
 while a response is held, including re-routes and every alternatives search. A closure
 makes a step impassable; a jam adds time in proportion to the metres of the step inside
 its circle, and overlapping circles add up. A request that finds no route with its
-closures closed is tried once more with each closure passable at a high price, so a
+closures closed is tried once more with each closure passable at 300 s a point, so a
 vehicle already in a closure still gets out; such a route never triggers a closure
-re-route, or it would loop. Circles have no direction: on an undivided road a jam one way
-charges both.
+re-route, or it would loop. A route that starts or ends inside a closure's circle with the
+closures shut is another case: OsmAnd joins the trip's two ends to the road without
+pricing those pieces, so a vehicle or destination in a closure is reached through it all
+the same. Such a route opened nothing; it carries the closures it enters there
+(`Route.endClosures`, in memory only), and only those are no reason to re-route: another
+closure farther along it still re-routes. Circles have no direction: on an undivided road
+a jam one way charges both.
 
-What BRouter did with points, measured before 0.12 and the origin of the spacing, cap and
-weights above: only the last circle per link counted (charges did not add up), a jam's
-weight was delay × `secondPrice(topSpeed)` ÷ (points × 16 m) with ×1.6 for HERE classes
-1–2, a weighted circle after a hard one on the same link opened the closure (hence
-`Router.closuresCrossed`), and every point was checked for every segment (~3 ms a point
-a search).
+**Weights.** A weight is seconds per metre inside the circle: a jam's points together
+charge its delay times its HERE class's factor to a route through all their middles, so
+a point weighs its share of that ÷ 16 m. Matched to the route, a jam of several touching
+runs is placed as one, and each point charges the part of the jam nearest it, each run at
+its own class's factor (a queue running off a motorway onto its ramp). The same whatever
+the top speed. The factor is there because OsmAnd does not choose by seconds alone: its
+car profile weighs a road by length ÷ (speed × priority), the priority 1.1 on a motorway,
+0.65 on its ramps, 0.9–1.0 on primary to tertiary roads and 0.7 on residential streets,
+and adds 7.5–30 s a turn, none of it in a route's time, so a way round off a main road
+costs the search more than the driver.
+
+`NogoRoutingTest` bisects, on OsmAnd's Texas maps with the points `TrafficNogos` places
+on the route, for the jam multiple (delay ÷ the closure's way round) at which the route
+leaves part of the stretch and all of it; both ends of the bisection (0.1× and 10×) are
+probed first, and a result they do not bracket fails the test. Charged its bare delay
+(both factors 1), a jam was left whole only at 2.25× the way round on I-35, 3.34× on
+US-75, 1.22× on US-290 and 1.18× on RM 2222. Hence 2.8 on HERE's class 1
+(`MOTORWAY_FACTOR`) and 1.2 on classes 2–5 (`ROAD_FACTOR`): empirical defaults from these
+four stretches, not a fit validated across road classes or cities. With them, 24
+November 2026:
+
+| Stretch | HERE class | Way round | Leaves all of it | Leaves part first | Delay missed ÷ seconds added |
+| --- | --- | --- | --- | --- | --- |
+| I-35 north of US-183, Austin | 1 | 104 s | 0.81× | 0.75×: 6 of 10 points for +36 s | 1.29 |
+| US-290 Bastrop to Giddings | 2 | 1,030 s | 1.02× | 0.57×: 2 of 10 for +100 s | 1.25 |
+| RM 2222 west of MoPac | 3 | 72 s | 0.98× | the same: 7 of 7 for +72 s | 0.98 |
+| US-75 north of downtown Dallas | 1 | 113 s | 1.20× | 0.57×: 7 of 10 for +41 s | 1.09 |
+
+The four "leaves all of it" multiples (median 1.00) and the four ratios are within the
+0.75–1.35 aim, and the test holds them there. The "leaves part first" multiples (0.57 to
+0.98) are not held to it: leaving part of a stretch is right as soon as that part's own
+delay outweighs the shorter way round it, so it is priced on that part, the last column
+(the delay of the points the route then misses ÷ the seconds it adds). A jam of 0.3× the
+way round stays and one of 3× leaves every point, on all four. Until the
+test used `TrafficNogos`' own placement it put a point 30 m from each end, one of them where
+an on-ramp merges onto US-75, which made that jam look unleavable below 3.1×; the app puts
+none there.
+
+Until 0.12 BRouter routed with these points: only the last circle per link counted
+(charges did not add up), a jam's weight was in its kinematic cost, delay ×
+`secondPrice(topSpeed)` ÷ (points × 16 m) with ×1.6 for HERE classes 1–2 for the circles
+it skipped on long links, a weighted circle after a hard one on the same link opened the
+closure, and every point was checked for every segment (~3 ms a point a search). The
+spacing and cap come from then.
 
 The first route of a trip has no points (nothing is fetched before a route is followed); a
 closure found by the first fetch re-routes, a jam is offered.
@@ -890,7 +933,22 @@ closure (`Guide.rerouteForClosure`, `routing_origin=closure`). A failed closure 
 keeps the old route.
 
 **The offer.** After an update with at least 3 minutes of delay ahead, one alternatives
-search runs with the points (plus the best route with them). An alternative is
+search runs with the points. Its first search is the engine's own best route with them,
+the way round the traffic; it is laid on the traffic and offered the moment it returns,
+and the bubbles' alternatives (up to eight more searches, as slow as the first, every one
+a plain search because of the points) follow only when Show other routes on the map is
+on, after which the offer is decided again over all of them. The way round alone never
+swaps or takes down a different offer already up; that is left to the full decision. A
+newer update stops a look at once: its running search is terminated, and so is each search
+it would start after (OsmAnd's alternative *k* is *k* + 1 searches), as its handle arrives.
+What a stopped look found decides nothing, and every look carries the points it searched
+with, so a result that arrives once newer points are held (a refresh in between) gives
+its bubbles' delays but leaves the offer alone. With the bubbles off the way round is the
+only decision: it neither replaces nor withdraws a different offer up. An offered way that
+is already a bubble leaves the map at once, grey line and all. On the host's Dallas I-35E
+queue the offer came 1.8 s into the look rather than at
+its end, 57.6 s; in the lab emulator, 18 s after the traffic arrived rather than 140 s.
+An alternative is
 offered when it saves at least 180 s counting both routes' traffic, traffic is part of why,
 it leaves the route more than 30 m ahead, and it has no closure. The turn card divides:
 "Faster: −7 min", a reason ("Queue on I-35E", "Traffic on …", "Closed: …", or "Traffic

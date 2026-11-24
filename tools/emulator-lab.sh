@@ -226,18 +226,21 @@
 # Its counts are in here/stats.txt and its requests, key hidden, in here/requests.log.
 # LAB_TRAFFIC picks the run:
 #   * offer (the default): scenario a, a slow stretch just ahead (amber),
-#     a queue on the motorway 10 km on (red) and a closure on a side road. The receiver checks
+#     a queue on Route 2 from 2 km on (red; its way round, the route closed there, takes 301 s
+#     more) and a closure on a side road. The receiver checks
 #     the route line turns amber in the picture, waits for the divided turn card (Take filled
 #     in the accent), checks the map reframed, shows the card in the other palette and back,
 #     presses Keep and checks the card is whole and the map back on the vehicle. The script
 #     then serves a2 (the queue slower) and turns traffic off and on; the receiver waits for
 #     the next offer and presses Take. The app side checks the delay against expected.txt
-#     (+-60 s), the pieces drawn and not stale, the credit, "+N min" on the trip panel, the
-#     offers made, kept and taken, both fits and refollows, and the route through the offer's
-#     via point; after the run, that the cluster's time rose by the delay and equals the trip
-#     panel's (receiver-eta.txt against app-report-a.txt).
+#     (+-60 s), the first offer against the host way round (+-1 min) and, apart from that,
+#     that it came from the way round of a look before that look ended, the one taken against
+#     the host ways round on a2, the pieces drawn and not stale, the credit, "+N min" on the
+#     trip panel, the offers made, kept and taken, both fits and refollows, and the route
+#     through the offer's via point; after the run, that the cluster's time rose by the delay
+#     and equals the trip panel's (receiver-eta.txt against app-report-a.txt).
 #   * closure (check 4): scenario side (the side-road closure must not re-route), then b, the
-#     closure moved onto the route 250 m ahead, fetched by turning traffic off and on. The
+#     closure moved onto the route 30 m ahead, fetched by turning traffic off and on. The
 #     receiver checks the closure's colour in the picture and REROUTING then a new route on the
 #     cluster; the app side one closure re-route, a new route with points that does not go
 #     through the closure. Then traffic is turned off: nothing held within 8 s, and the
@@ -253,6 +256,9 @@
 # the turn card divides, and LAB_MARGINS=WxH advertises video margins (74x0 on 800x480 is
 # Ford's 726x480 content rectangle), for the renders of the divided card (P9.6). Every run
 # checks that no key, road, reason, stand-in description or coordinate reached the report.
+# Every traffic run also keeps what a dropped session needs: the whole logcat (a 32 MB
+# buffer), top.txt (the busiest guest threads every 10 s) and the adb server's transport
+# trace (adb.*.log), since the projection reaches the receiver through adb reverse.
 #
 # The weather script (P10; LAB_WEATHER set with no script names it too) runs weather
 # against the stand-in Breezy Weather, tools/breezy-standin (tools/breezy-standin.sh builds it
@@ -784,8 +790,20 @@ with zipfile.ZipFile(sys.argv[1], \"a\") as apk:
         -gpu swangle_indirect -feature -Vulkan $([ "$MODEM" = yes ] || echo -feature -ModemSimulator) -accel on -no-metrics \
         > /out/emulator.txt 2>&1 &
     emulator=$!
-    trap "kill $emulator 2>/dev/null || true" EXIT
-    adb start-server > /dev/null 2>&1
+    # One way out for every exit, pass or fail: stop the sampler, the logcat reader, the
+    # stand-in and the emulator, whichever were started, and keep the adb server transport
+    # trace (P9: a dropped adb link, which the projection rides by adb reverse, shows which
+    # side closed it; docs/verification.md).
+    cleanup() {
+        for pid in ${toplog:-} ${breezylog:-} ${standin:-} ${emulator:-}; do kill "$pid" 2>/dev/null || true; done
+        cp /tmp/adb.*.log /out/ 2>/dev/null || true
+    }
+    trap cleanup EXIT
+    if [ "$SCRIPT" = traffic ]; then
+        ADB_TRACE=transport adb start-server > /dev/null 2>&1
+    else
+        adb start-server > /dev/null 2>&1
+    fi
     booted=
     for _ in $(seq 240); do
         if [ "$(timeout 10 adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" = 1 ]; then booted=1; break; fi
@@ -898,6 +916,14 @@ with zipfile.ZipFile(sys.argv[1], \"a\") as apk:
         adb logcat -v time -s BreezyStandin:I > /out/breezy-standin-log.txt 2>&1 &
         breezylog=$!
     fi
+    # P9: the traffic runs search for minutes while projecting. A logcat buffer the whole
+    # run fits in, the vCPUs, and every 10 s the busiest threads, for a session that drops.
+    if [ "$SCRIPT" = traffic ]; then
+        adb logcat -G 32M > /dev/null 2>&1 || true
+        log "guest: $(adb shell nproc | tr -d "\r") vCPUs, $(adb shell sed -n 1p /proc/meminfo | tr -s " " | tr -d "\r")"
+        ( while :; do echo "== $(date -u +%H:%M:%S)"; timeout 20 adb shell top -b -H -n 1 -m 15 2>&1 | tr -d "\r"; sleep 10; done ) > /out/top.txt 2>&1 &
+        toplog=$!
+    fi
 
     # The app reaches the receiver through adbd, so the APK needs no network permission.
     adb reverse localabstract:openauto-lab tcp:5288 || fail "adb reverse"
@@ -909,7 +935,6 @@ with zipfile.ZipFile(sys.argv[1], \"a\") as apk:
         python3 tools/here-standin/here-standin.py --port 8765 --scenarios tools/here-standin/scenarios \
             --state /out/here --key "$TRAFFIC_KEY" --scenario $first > /out/here-standin.txt 2>&1 &
         standin=$!
-        trap "kill $emulator $standin 2>/dev/null || true" EXIT
         sleep 1
         kill -0 $standin 2>/dev/null || fail "the stand-in HERE server did not start: $(cat /out/here-standin.txt)"
         log "stand-in HERE server on 127.0.0.1:8765, scenario $first"
@@ -1282,6 +1307,10 @@ https://osmand.net/map?pin=30.50860,-97.67880#16/30.50860/-97.67880"
         log "after the flicker: projection_focused=false twice, dropped_not_streaming held at $d1"
     fi
     if [ "$SCRIPT" = traffic ] && [ "$TRAFFIC_MODE" != off ]; then
+        # The plain OsmAnd search, which every search with traffic points takes, needs the
+        # large heap of the app on the lab trip (docs/navigation.md): with LARGE_HEAP the
+        # Runtime.maxMemory of the app is dalvik.vm.heapsize, without it heapgrowthlimit.
+        log "heap: dalvik.vm.heapsize=$(adb shell getprop dalvik.vm.heapsize | tr -d "\r") heapgrowthlimit=$(adb shell getprop dalvik.vm.heapgrowthlimit | tr -d "\r") large_heap=$(adb shell dumpsys package $package | grep -q "LARGE_HEAP" && echo true || echo false)"
         # Off until the receiver has the route and its picture without traffic (the colour
         # before, and the cluster time before), then on: the first fetch is at the next fix.
         sleep 15
@@ -2172,6 +2201,30 @@ https://osmand.net/map?pin=30.50860,-97.67880#16/30.50860/-97.67880"
         need "dashboard_traffic_delay_min=$minutes" $a
         need "dashboard_offer_layout=$OFFER_LAYOUT" $final
         log "traffic offer: delay ${delay} s (host ${want} s), +${minutes} min on the trip panel"
+        # The first offer against what the same code finds on the host: made on the engine
+        # own way round as soon as that one search returns, within a minute of its saving there.
+        offer1=$(grep -m 1 -oE "traffic offer: [0-9]+ min faster" $final | grep -oE "[0-9]+" || true)
+        want1=$(( ($(expect a_way_round_saving_s) + 30) / 60 ))
+        [ -n "$offer1" ] && [ $(( offer1 > want1 ? offer1 - want1 : want1 - offer1 )) -le 1 ] \
+            || fail "the first traffic offer was ${offer1:-none} min faster, the host way round $want1 min"
+        # And early, whatever its saving: in the event log the offer is followed by the note
+        # of the look whose way round made it ("way round ... (look N); offered", nothing of
+        # any look in between), and that look had not ended before ("looked for other
+        # routes ... (look N)"; render ends the run while look 1 still searches). An offer
+        # held back until its look is over fails here.
+        awk "
+            !offer && /looked for other routes/ { n = \$0; sub(/.*\\(look /, \"\", n); sub(/\\).*/, \"\", n); ended[n] = 1; next }
+            !offer && /traffic offer: [0-9]+ min faster/ { offer = NR; next }
+            offer && /looked for other routes/ { exit 1 }
+            offer && /way round the traffic found in/ {
+                if (\$0 !~ /; offered\$/) exit 1
+                n = \$0; sub(/.*\\(look /, \"\", n); sub(/\\).*/, \"\", n)
+                if (n in ended) exit 1
+                early = 1; exit 0
+            }
+            END { exit !early }
+        " $final || fail "the first traffic offer did not come from the way round of a look before that look ended: $(grep -E "traffic offer:|way round the traffic found|looked for other routes" $final | tr "\n" ";")"
+        log "traffic offer: first ${offer1} min faster (host ${want1} min), before its look ended; $(grep -oE "way round the traffic found in [0-9]+ ms \(look [0-9]+\)[^;]*|looked for other routes (in|for) [0-9]+ ms \(look [0-9]+\)(: stopped)?" $final | tr "\n" ";")"
     fi
     if [ "$SCRIPT" = traffic ] && [ "$TRAFFIC_MODE" = render ]; then
         for want in "traffic_offers_kept=1" "dashboard_offers_kept=1"; do
@@ -2193,6 +2246,14 @@ https://osmand.net/map?pin=30.50860,-97.67880#16/30.50860/-97.67880"
         at_least dashboard_offer_refollows 2 $final
         at_least live_alternatives_traffic_looks 2 $final
         at_least traffic_fetches 2 $final
+        # The offer taken: the engine way round on a2, or the better way the bubbles found
+        # (expected.txt has both), within a minute.
+        taken=$(grep -m 1 -oE "traffic offer taken: [0-9]+ min faster" $final | grep -oE "[0-9]+" || true)
+        low2=$(( ($(expect a2_way_round_saving_s) + 30) / 60 - 1 ))
+        high2=$(( ($(expect a2_saving_s) + 30) / 60 + 1 ))
+        [ -n "$taken" ] && [ "$taken" -ge "$low2" ] && [ "$taken" -le "$high2" ] \
+            || fail "the offer taken was ${taken:-none} min faster, the host ways round on a2 $low2 to $high2 min"
+        log "traffic offer: taken ${taken} min faster (host $low2 to $high2 min)"
         report_requests=$(field traffic_requests_session $final)
         [ "$(standin requests)" = "$report_requests" ] || fail "the stand-in answered $(standin requests) requests, the app counted $report_requests"
         [ "$(standin refused)" = 0 ] || fail "the stand-in refused $(standin refused) requests"
@@ -2322,6 +2383,7 @@ https://osmand.net/map?pin=30.50860,-97.67880#16/30.50860/-97.67880"
     fi
     ! grep -q "PRIVATE KEY" /out/app-report.txt || fail "key material in the report"
 
+    [ -n "${toplog:-}" ] && kill "$toplog" 2>/dev/null || true
     timeout 60 adb logcat -d > /out/logcat.txt
     if grep -E "JNI DETECTED ERROR|UnsatisfiedLinkError|Process: $package|Fatal signal .*\\($package|>>> $package <<<" /out/logcat.txt; then
         fail "app crash or JNI error in logcat"

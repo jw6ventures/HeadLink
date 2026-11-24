@@ -12,7 +12,7 @@ import kotlin.math.max
 /**
  * HERE's roads laid on our route (P9), and the delay they add.
  *
- * HERE describes each stretch by its own geometry and the route is BRouter's OSM geometry,
+ * HERE describes each stretch by its own geometry and the route is OsmAnd's OSM geometry,
  * so matching is by shape: the route is cut into pieces of at most [PIECE_M], and each
  * piece takes the flow of the closest HERE stretch that passes within [NEAR_M] of its
  * middle **and** runs the same way to within [HEADING_DEG]. Direction is what keeps a jam
@@ -64,9 +64,9 @@ object TrafficMatch {
      * with no data make no run.
      *
      * **Delay**: a run's [TrafficRun.delaySeconds] is its length at HERE's speed,
-     * less BRouter's own time for the same metres from [Route.pointSeconds], and never less
+     * less the router's own time for the same metres from [Route.pointSeconds], and never less
      * than 0 — on [Congestion.SLOW] and [Congestion.QUEUING] runs only. A free-flowing run
-     * has no delay even where HERE's free-flow speed is below BRouter's model: on P9.0's
+     * has no delay even where HERE's free-flow speed is below the router's model: on P9.0's
      * real Dallas routes that difference alone came to 17 and 36 s on empty roads, which
      * would have shown "+1 min traffic" with no traffic at all (docs/navigation.md, "Live traffic (HERE)").
      * This departs from an earlier formula, which counted every matched stretch; the
@@ -212,7 +212,7 @@ object TrafficMatch {
         return lo.coerceAtMost(along.size - 2).coerceAtLeast(0)
     }
 
-    /** BRouter's own time at a place along the route, interpolated as [RouteFollower] does. */
+    /** The router's own time at a place along the route, interpolated as [RouteFollower] does. */
     private class RouteClock(private val route: Route, private val along: DoubleArray) {
         private val total = along.last()
 
@@ -238,7 +238,7 @@ object TrafficMatch {
         private var fromM = 0.0
         private var toM = 0.0
         private var hereSeconds = 0.0
-        private var brouterSeconds = 0.0
+        private var routedSeconds = 0.0
 
         fun piece(segment: Int, from: Double, to: Double, stretchIndex: Int, span: FlowSpan?, closed: Boolean) {
             val congestion = when {
@@ -255,16 +255,16 @@ object TrafficMatch {
                 fromSegment = segment
                 fromM = from
                 hereSeconds = 0.0
-                brouterSeconds = 0.0
+                routedSeconds = 0.0
             }
             toSegment = segment
             toM = to
             val own = clock.secondsAt(to) - clock.secondsAt(from)
-            brouterSeconds += own
+            routedSeconds += own
             val speed = span?.speedMps
             val waiting = congestion == Congestion.SLOW || congestion == Congestion.QUEUING
             // An open span without a speed (not seen, but optional in HERE's schema) says
-            // nothing about time: it takes BRouter's. A slow or queuing one at 0 m/s is a
+            // nothing about time: it takes the router's. A slow or queuing one at 0 m/s is a
             // queue that has stopped, not no data: it is taken at [STOPPED_MPS], so it adds
             // its delay rather than none.
             hereSeconds += when {
@@ -291,9 +291,10 @@ object TrafficMatch {
                 congestion = level,
                 speedMps = if (closedRun || hereSeconds <= 0.0) null else length / hereSeconds,
                 // Only a slow or queuing run is a wait (see [match]): free flow slower than
-                // BRouter's model is the model's error, not traffic.
-                delaySeconds = if (level == Congestion.SLOW || level == Congestion.QUEUING) max(0.0, hereSeconds - brouterSeconds) else 0.0,
+                // the router's model is the model's error, not traffic.
+                delaySeconds = if (level == Congestion.SLOW || level == Congestion.QUEUING) max(0.0, hereSeconds - routedSeconds) else 0.0,
                 road = if (stretch >= 0) flow[stretch].description else null,
+                functionalClass = if (stretch >= 0) flow[stretch].functionalClass else 3,
             )
         }
     }

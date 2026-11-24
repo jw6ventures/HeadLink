@@ -30,9 +30,6 @@ interface TrafficHost {
     /** Runs [task] on the main thread, later, in order. */
     fun main(task: () -> Unit)
 
-    /** The top speed of the Routing settings in force now, which the points' weights are priced at. */
-    fun topSpeedKmh(): Int
-
     /**
      * Whether a dashboard projects now. A vehicle stopped in a queue sends the same fix over
      * and over, and the session passes on only fixes that change, so while projecting the
@@ -69,7 +66,7 @@ interface TrafficHost {
  * Main-thread state, like [Guide] and [LiveAlternatives], which feed it: every public
  * function is called on the main thread. The fetch runs on the host's [TrafficHost.network]
  * thread, and matching and placing points on its [TrafficHost.compute] thread, never on the
- * routing thread, which is BRouter's. Their answers come back through [TrafficHost.main]
+ * routing thread, which is the router's. Their answers come back through [TrafficHost.main]
  * and are used only if nothing was dropped or replaced in the meantime.
  *
  * **When it fetches**. Only while a route is being followed: a route,
@@ -97,14 +94,16 @@ interface TrafficHost {
  * asks again at the next refresh.
  *
  * **The time** (P9.4): [delaySeconds] is the followed route's delay ahead of the
- * vehicle ([RouteTraffic.delayAheadSeconds]), which [Guide] adds to BRouter's time after
+ * vehicle ([RouteTraffic.delayAheadSeconds]), which [Guide] adds to the router's time after
  * the pace factor ([ArrivalTime]); the display's delay is the same number.
  *
  * **Routing** (P9.5): [withNogos] puts the points on every new route, re-route and
  * alternatives search while traffic is on and a response is held ([TrafficNogos.forRoute],
- * priced at the request's own top speed). A closure matched on the route ahead starts a
- * re-route at once, once for each closure a trip, and never on a route BRouter could only
- * find by opening the closures ([Route.closuresOpened]), which would loop.
+ * weighed in seconds of delay, [TrafficCost]). A closure matched on the route ahead starts a
+ * re-route at once, once for each closure a trip, and never on a route the router could only
+ * find by opening the closures ([Route.closuresOpened]), which would loop; nor for a closure
+ * the route enters at its start or destination ([Route.endClosures]), though any other
+ * closure on that route still re-routes.
  *
  * **The offer** (P9.6): see [assess].
  *
@@ -132,8 +131,12 @@ class TrafficFeed(private val host: TrafficHost) {
     private var traffic: RouteTraffic? = null
     private var nogos: List<Nogo> = emptyList()
     private var nogosOnRoute = 0
-    /** The top speed [nogos] were priced at. */
-    private var nogoSpeedKmh = RouteOptions.DEFAULT_TOP_SPEED_KMH
+    /**
+     * Bumped whenever [nogos] are replaced or dropped: a look searched with older points is
+     * told apart by it ([assess]), so its routes never decide the offer.
+     */
+    var pointsRevision = 0L
+        private set
     /** Bumped whenever everything is dropped: an answer for an older one is not used. */
     private var generation = 0L
 
@@ -293,22 +296,18 @@ class TrafficFeed(private val host: TrafficHost) {
     fun delaySeconds(route: Route): Int = if (route === this.route) delaySeconds else 0
 
     /**
-     * [request] with the points for the traffic held (P9.5), priced at its own top
-     * speed; [request] itself when traffic is off or nothing is held.
+     * [request] with the points for the traffic held (P9.5); [request] itself when traffic
+     * is off or nothing is held.
      */
     fun withNogos(request: RouteRequest): RouteRequest {
-        val points = nogos(request.options)
+        val points = nogos()
         if (points.isEmpty()) return request
         requestsWithNogos++
         return request.withNogos(points)
     }
 
-    /** The points for a search made with [options], or none. */
-    fun nogos(options: RouteOptions): List<Nogo> {
-        if (nogos.isEmpty() || !host.settings().usable) return emptyList()
-        val scale = TrafficCost.secondPrice(options.topSpeedKmh) / TrafficCost.secondPrice(nogoSpeedKmh)
-        return if (scale == 1.0) nogos else nogos.map { it.copy(weight = it.weight?.times(scale)) }
-    }
+    /** The points for a search made now, or none. */
+    fun nogos(): List<Nogo> = if (host.settings().usable) nogos else emptyList()
 
     /**
      * Whether the traffic on the followed route could make a way round worth offering: at
@@ -319,7 +318,8 @@ class TrafficFeed(private val host: TrafficHost) {
 
     /**
      * The live alternatives' search found [alternatives] from [ahead], the followed route
-     * from [aheadAlongM] metres along it on (P9.6). Each is laid on the traffic
+     * from [aheadAlongM] metres along it on (P9.6), searched with the points of
+     * [revision] ([pointsRevision] when the look began). Each is laid on the traffic
      * held, off the main thread; then, on the main thread, [done] is given each one's
      * traffic delay less [ahead]'s (for its bubble's "+N min", in seconds), and the
      * alternative now on offer if it is one of them, to be left out of the bubbles.
@@ -328,7 +328,7 @@ class TrafficFeed(private val host: TrafficHost) {
      * traffic delay, with its own:
      * - it saves at least [OFFER_SAVING_S];
      * - traffic is part of why (the followed route's delay ahead is more than its own), so
-     *   a route merely BRouter-faster is never called "faster" for traffic;
+     *   a route merely faster in the router's model is never called "faster" for traffic;
      * - it leaves the followed route ahead of the vehicle and has no closure of its own;
      * - it is not one the driver kept away from this trip ([answer]), unless its saving has
      *   grown by [OFFER_REGROW_S] since.
@@ -336,12 +336,41 @@ class TrafficFeed(private val host: TrafficHost) {
      * The best of those is offered. The same way round (splitting within [SAME_SPLIT_M] and
      * mostly the same route) keeps its offer's id, so the card is not re-fitted; another
      * replaces it. None withdraws the offer up. Nothing re-routes by itself for a jam.
+     *
+     * Routes searched with points since replaced (a newer response, or none held) decide
+     * nothing: the offer is left as it is, and only their delays are given.
      */
-    fun assess(followed: Route, ahead: Route, aheadAlongM: Double, alternatives: List<Route>, done: (IntArray, Route?) -> Unit) {
+    fun assess(revision: Long, followed: Route, ahead: Route, aheadAlongM: Double, alternatives: List<Route>, done: (IntArray, Route?) -> Unit) =
+        assess(revision, followed, ahead, aheadAlongM, alternatives, false, done)
+
+    /**
+     * A traffic look's way round, the engine's best route with the points of [revision],
+     * laid on the traffic as soon as it is found and before the bubbles' searches end
+     * ([LiveAlternatives]), and the whole decision when the bubbles are off; [done] is
+     * given it when it is now the offer. Offered as [assess] would offer it while no offer
+     * is up or the one up is the same way round. A different offer up is left for the
+     * look's own [assess] to keep or replace once the bubbles are in, and nothing is
+     * withdrawn here: the way round alone never swaps the card back from a better way an
+     * earlier look's bubbles found. Points since replaced decide nothing, as for [assess].
+     */
+    fun assessWayRound(revision: Long, followed: Route, ahead: Route, aheadAlongM: Double, wayRound: Route, done: (Route?) -> Unit) =
+        assess(revision, followed, ahead, aheadAlongM, listOf(wayRound), true) { _, offered -> done(offered) }
+
+    private fun assess(
+        revision: Long,
+        followed: Route,
+        ahead: Route,
+        aheadAlongM: Double,
+        alternatives: List<Route>,
+        wayRoundOnly: Boolean,
+        done: (IntArray, Route?) -> Unit,
+    ) {
         val none = IntArray(alternatives.size)
         val held = traffic
-        if (followed !== route || held == null || held.route !== followed || snapshots.isEmpty() || alternatives.isEmpty()) {
-            if (followed === route && held != null && alternatives.isEmpty() && offer != null) {
+        if (followed !== route || held == null || held.route !== followed || snapshots.isEmpty() || alternatives.isEmpty() ||
+            (wayRoundOnly && revision != pointsRevision)
+        ) {
+            if (followed === route && held != null && alternatives.isEmpty() && offer != null && revision == pointsRevision) {
                 withdraw()
                 publish()
             }
@@ -365,7 +394,8 @@ class TrafficFeed(private val host: TrafficHost) {
                     done(none, null)
                     return@main
                 }
-                done(extras(held, aheadAlongM, matched), decide(followed, held, ahead, aheadAlongM, alternatives, matched))
+                val current = revision == pointsRevision
+                done(extras(held, aheadAlongM, matched), if (current) decide(followed, held, ahead, aheadAlongM, alternatives, matched, wayRoundOnly) else null)
             }
         }
     }
@@ -497,6 +527,7 @@ class TrafficFeed(private val host: TrafficHost) {
                 traffic = null
                 nogos = emptyList()
                 nogosOnRoute = 0
+                pointsRevision++
                 rematch(update = true)
             }
             is TrafficFetch.Skipped -> {
@@ -537,17 +568,16 @@ class TrafficFeed(private val host: TrafficHost) {
         val gen = generation
         val flow = flow
         val incidents = incidents
-        val speed = host.topSpeedKmh()
         host.compute {
             val began = System.nanoTime()
             val result = try {
                 val matched = TrafficMatch.match(r, flow, incidents)
-                matched to TrafficNogos.forRoute(flow, incidents, matched, { fc -> TrafficCost.costPerSecond(fc, speed) })
+                matched to TrafficNogos.forRoute(flow, incidents, matched)
             } catch (e: RuntimeException) {
                 null
             }
             val took = (System.nanoTime() - began) / 1_000_000L
-            host.main { matched(gen, snaps, r, result, speed, took, update) }
+            host.main { matched(gen, snaps, r, result, took, update) }
         }
     }
 
@@ -556,7 +586,6 @@ class TrafficFeed(private val host: TrafficHost) {
         snaps: List<TrafficSnapshot>,
         r: Route,
         result: Pair<RouteTraffic, TrafficNogos.RouteNogos>?,
-        speed: Int,
         took: Long,
         update: Boolean,
     ) {
@@ -570,7 +599,7 @@ class TrafficFeed(private val host: TrafficHost) {
         // than failing a route request on the main thread.
         nogos = result.second.nogos.filter { RouteRequest.valid(it) }
         nogosOnRoute = result.second.onRoute
-        nogoSpeedKmh = speed
+        pointsRevision++
         matchMs = took
         updateDelay()
         // Counts and minutes only. It is also what brings the saved report up to date with
@@ -603,7 +632,8 @@ class TrafficFeed(private val host: TrafficHost) {
 
     /**
      * A closure matched on the followed route ahead of the vehicle: re-route now,
-     * unless this route was found only by opening closures, or this closure was already
+     * unless this route was found only by opening closures, the route enters this closure
+     * at its start or destination ([Route.endClosures]), or this closure was already
      * re-routed round this trip.
      */
     private fun checkClosure() {
@@ -611,7 +641,7 @@ class TrafficFeed(private val host: TrafficHost) {
         val t = traffic?.takeIf { it.route === r } ?: return
         if (r.closuresOpened) return
         if (state != FollowState.ON_ROUTE && state != FollowState.JOINING) return
-        val run = t.closureAhead(alongM) ?: return
+        val run = t.runs.firstOrNull { it.closes && it.toM > alongM && !enteredAtEnd(r, it) } ?: return
         val point = pointAt(r, routeAlong, (run.fromM + run.toM) / 2.0)
         if (closures.any { RouteFollower.distance(it[0], it[1], point[0], point[1]) < SAME_CLOSURE_M }) return
         host.main {
@@ -624,6 +654,16 @@ class TrafficFeed(private val host: TrafficHost) {
                 host.note("closure ahead on the route; re-routing round it")
             }
         }
+    }
+
+    /**
+     * Whether closed [run] of [r] is a closure [r] enters at its start or destination
+     * ([Route.endClosures]): one of those circles on the route within the run. A re-route
+     * from the vehicle on it, or to the destination in it, would only find it again.
+     */
+    private fun enteredAtEnd(r: Route, run: TrafficRun): Boolean = r.endClosures.any { nogo ->
+        val m = nearestAlong(r, routeAlong, nogo.latitude, nogo.longitude)
+        m >= run.fromM - nogo.radiusM && m <= run.toM + nogo.radiusM
     }
 
     // ---- the offer ---------------------------------------------------------------------
@@ -646,6 +686,7 @@ class TrafficFeed(private val host: TrafficHost) {
         aheadAlongM: Double,
         alternatives: List<Route>,
         matched: List<RouteTraffic>,
+        wayRoundOnly: Boolean,
     ): Route? {
         val aheadDelay = held.delayAheadSeconds(aheadAlongM)
         val candidates = alternatives.indices.mapNotNull { i ->
@@ -661,27 +702,29 @@ class TrafficFeed(private val host: TrafficHost) {
             val saving = (ahead.seconds + aheadDelay - alternative.seconds - ownDelay).roundToInt()
             // The pop-up is only for a way round faster *because of traffic*. The part
             // of the saving traffic accounts for (the delay it misses, but never more than it
-            // saves) must itself be worth an offer, so a route merely faster in BRouter's model,
+            // saves) must itself be worth an offer, so a route merely faster in the router's model,
             // with a little traffic besides, is left to the bubbles.
             if (minOf(saving.toDouble(), aheadDelay - ownDelay) < OFFER_SAVING_S) return@mapNotNull null
-            if (kept.any { same(it.splitLat, it.splitLon, it.route, splitLat, splitLon, alternative) && saving < it.saving + OFFER_REGROW_S }) {
+            if (kept.any { sameWay(it.splitLat, it.splitLon, it.route, splitLat, splitLon, alternative) && saving < it.saving + OFFER_REGROW_S }) {
                 return@mapNotNull null
             }
             Candidate(alternative, saving, splitLat, splitLon, splitM)
         }
         val best = candidates.maxByOrNull { it.saving }
         if (best == null) {
-            if (offer != null) {
+            if (offer != null && !wayRoundOnly) {
                 withdraw()
                 publish()
             }
             return null
         }
         val up = offer
-        val sameWay = up != null && same(up.splitLat, up.splitLon, up.route, best.splitLat, best.splitLon, best.route)
-        if (up != null && !sameWay) offersWithdrawn++
-        val id = if (sameWay) up!!.id else nextOfferId++
-        if (!sameWay) {
+        val same = up != null && sameWay(up.splitLat, up.splitLon, up.route, best.splitLat, best.splitLon, best.route)
+        // A look's way round alone never replaces another way up ([assessWayRound]).
+        if (wayRoundOnly && up != null && !same) return null
+        if (up != null && !same) offersWithdrawn++
+        val id = if (same) up!!.id else nextOfferId++
+        if (!same) {
             offersMade++
             host.note("traffic offer: ${(best.saving / 60.0).roundToInt()} min faster")
         }
@@ -690,11 +733,6 @@ class TrafficFeed(private val host: TrafficHost) {
         publish()
         return best.route
     }
-
-    /** Whether two ways round are the same one: splitting within [SAME_SPLIT_M], and mostly one route. */
-    private fun same(latA: Double, lonA: Double, routeA: Route, latB: Double, lonB: Double, routeB: Route): Boolean =
-        RouteFollower.distance(latA, lonA, latB, lonB) <= SAME_SPLIT_M &&
-            (RoutePreview.duplicate(routeA, listOf(routeB)) || RoutePreview.duplicate(routeB, listOf(routeA)))
 
     /**
      * Why, in words: what is ahead on the followed route past where the way round
@@ -736,6 +774,7 @@ class TrafficFeed(private val host: TrafficHost) {
         traffic = null
         nogos = emptyList()
         nogosOnRoute = 0
+        pointsRevision++
         delaySeconds = 0
         withdraw()
     }
@@ -784,6 +823,14 @@ class TrafficFeed(private val host: TrafficHost) {
 
         /** Two closures within this, metres, are one: the matcher's run ends move with the route. */
         const val SAME_CLOSURE_M = 150.0
+
+        /**
+         * Whether two ways round are the same one: splitting within [SAME_SPLIT_M], and mostly
+         * one route. The offer's own test, and the bubbles' ([LiveAlternative.withoutOffered]).
+         */
+        fun sameWay(latA: Double, lonA: Double, routeA: Route, latB: Double, lonB: Double, routeB: Route): Boolean =
+            RouteFollower.distance(latA, lonA, latB, lonB) <= SAME_SPLIT_M &&
+                (RoutePreview.duplicate(routeA, listOf(routeB)) || RoutePreview.duplicate(routeB, listOf(routeA)))
 
         /** The reason when the map names no road there. */
         const val GENERIC_REASON = "Traffic ahead"
@@ -839,12 +886,12 @@ class TrafficFeed(private val host: TrafficHost) {
 }
 
 /**
- * The time to the destination as shown everywhere (the cluster, the trip panel, Home): BRouter's
+ * The time to the destination as shown everywhere (the cluster, the trip panel, Home): the router's
  * time ahead, with the drive's pace when Learn my pace is on, and then the traffic delay
  * ahead (P9.4).
  *
- * The pace is learned from BRouter's own estimate only ([PaceTracker.onFix] is given
- * BRouter's seconds, never these), and the delay is added after it, not scaled by it: a jam
+ * The pace is learned from the router's own estimate only ([PaceTracker.onFix] is given
+ * the router's seconds, never these), and the delay is added after it, not scaled by it: a jam
  * ahead is in the delay, and once the vehicle is in it the pace sees it and the jam falls
  * behind, so the two never count the same stretch at the same time.
  */

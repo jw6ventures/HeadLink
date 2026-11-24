@@ -5,7 +5,7 @@
 // TrafficNogos and AlternativeSearch over Us_massachusetts_northamerica.obf, so the lab's
 // numbers can be checked against what the same code finds on the host:
 //
-//   java -Xmx256m -cp <host-test classpath> LabTraffic <OBF_DIR holding Us_massachusetts_northamerica.obf> <tools/here-standin/scenarios> <drive.csv>
+//   java -Xmx512m -cp <host-test classpath> LabTraffic <OBF_DIR holding Us_massachusetts_northamerica.obf> <tools/here-standin/scenarios> <drive.csv>
 //
 // Not a test: it prints what it chose, checks that each scenario does what the lab relies on
 // (a queue a real way round saves at least 3 minutes on, a heavier one saving 3 minutes
@@ -34,7 +34,6 @@ import com.jw6ventures.headlink.RoutePlanner;
 import com.jw6ventures.headlink.RouteRequest;
 import com.jw6ventures.headlink.RouteTraffic;
 import com.jw6ventures.headlink.TrafficArea;
-import com.jw6ventures.headlink.TrafficCost;
 import com.jw6ventures.headlink.TrafficIncident;
 import com.jw6ventures.headlink.TrafficJson;
 import com.jw6ventures.headlink.TrafficMatch;
@@ -52,10 +51,17 @@ public final class LabTraffic {
     private static final double SLOW_FROM_M = 120.0, SLOW_TO_M = 520.0;
     /** The queue: this long, on the first fast stretch at least this far along. */
     private static final double QUEUE_M = 2_500.0, QUEUE_AFTER_M = 2_000.0;
+    /** The most the way round the queue may add, so that A's queue (about 600 s) saves well over 3 minutes. */
+    private static final int MAX_WAY_ROUND_S = 330;
     /** Scenario A's queue speed, and scenario A2's heavier one (m/s). */
-    private static final double QUEUE_SPEED = 4.0, HEAVY_SPEED = 2.0;
-    /** The closure moved onto the route (scenario B): close enough to be in the picture. */
-    private static final double CLOSED_FROM_M = 250.0, CLOSED_TO_M = 480.0;
+    private static final double QUEUE_SPEED = 3.5, HEAVY_SPEED = 2.0;
+    /**
+     * The closure moved onto the route (scenario B), where the receiver sees it: at street
+     * zoom the OsmAnd route's first 120 m or so lie between the parked marker and the turn
+     * card, which hides the pane's top. At 250-480 m (the BRouter route's place) it was all
+     * under the card or past the pane's edge, and the receiver never saw its colour.
+     */
+    private static final double CLOSED_FROM_M = 30.0, CLOSED_TO_M = 130.0;
     /** A side road is this far from every route the lab drives or is offered, at least. */
     private static final double SIDE_CLEAR_M = 80.0;
     /** The drive the lab receiver plays for LAB_TRAFFIC=off: the route's first stretch. */
@@ -85,15 +91,32 @@ public final class LabTraffic {
         double total = along[along.length - 1];
         say("route %d m, %d s, %d points", route.getDistanceM(), route.getSeconds(), route.getPoints());
 
-        // The queue: the first QUEUE_M the router drives at motorway speed, past QUEUE_AFTER_M.
+        // The queue: QUEUE_M the router drives at motorway speed, past QUEUE_AFTER_M, the
+        // first such stretch with a way round no slower than MAX_WAY_ROUND_S (the stretch
+        // closed): the offer's search has to find one, and OsmAnd's runs out of memory
+        // looking for a way round a motorway with no exit for kilometres.
         double queueFrom = -1.0;
-        for (double m = QUEUE_AFTER_M; m + QUEUE_M < total - 3_000.0; m += 50.0) {
-            if (QUEUE_M / (seconds(route, along, m + QUEUE_M) - seconds(route, along, m)) >= 18.0) {
-                queueFrom = m;
-                break;
+        for (double m = QUEUE_AFTER_M; m + QUEUE_M < total - 3_000.0; m += 250.0) {
+            if (QUEUE_M / (seconds(route, along, m + QUEUE_M) - seconds(route, along, m)) < 18.0) continue;
+            List<Nogo> closed = new ArrayList<>();
+            for (double c = m + 30.0; c <= m + QUEUE_M - 30.0; c += 150.0) {
+                double[] p = at(route, along, c);
+                closed.add(new Nogo(p[0], p[1], TrafficNogos.RADIUS_M, null));
+            }
+            try {
+                Route round = router.compute(new RouteRequest(START_LAT, START_LON, DEST_LAT, DEST_LON, null, options, 0, null, null, closed),
+                        RoutePlanner.MAX_RUNNING_MS, e -> Unit.INSTANCE);
+                int extra = round.getSeconds() - route.getSeconds();
+                say("queue at %.0f m: way round +%d s%s", m, extra, round.getClosuresOpened() ? ", through the closure" : "");
+                if (!round.getClosuresOpened() && extra <= MAX_WAY_ROUND_S) {
+                    queueFrom = m;
+                    break;
+                }
+            } catch (Exception e) {
+                say("queue at %.0f m: no way round (%s)", m, e.getMessage());
             }
         }
-        if (queueFrom < 0) throw new IllegalStateException("no fast stretch for the queue");
+        if (queueFrom < 0) throw new IllegalStateException("no fast stretch with a way round for the queue");
         double queueTo = queueFrom + QUEUE_M;
         double routerQueueS = seconds(route, along, queueTo) - seconds(route, along, queueFrom);
         say("queue %.0f-%.0f m, the router %.0f s over it (%.1f m/s)", queueFrom, queueTo, routerQueueS, QUEUE_M / routerQueueS);
@@ -115,13 +138,17 @@ public final class LabTraffic {
         // What the app will see for A and A2, before any side road: the delay and the offer.
         Offer a = offer(router, route, options, flowJson(flowA), incidentsJson(List.of()));
         Offer a2 = offer(router, route, options, flowJson(flowA2), incidentsJson(List.of()));
-        say("A: delay %.0f s (queue %.0f, slow %.0f), %d nogos, %d ways round, best saves %d s, split %.0f m, its delay %.0f s, %d ms",
-                a.delay, a.queueDelay, a.slowDelay, a.nogos, a.found.size(), a.saving, a.splitM, a.ownDelay, a.ms);
+        say("A: delay %.0f s (queue %.0f, slow %.0f), %d nogos, %d ways round, best saves %d s, split %.0f m, its delay %.0f s, %d ms, failure %s",
+                a.delay, a.queueDelay, a.slowDelay, a.nogos, a.found.size(), a.saving, a.splitM, a.ownDelay, a.ms, a.failure);
+        say("A: the engine's way round, the first offer, saves %d s, found in %d ms; A2: %d s in %d ms", a.wayRoundSaving, a.wayRoundMs,
+                a2.wayRoundSaving, a2.wayRoundMs);
         say("A2: delay %.0f s, best saves %d s (A + %d), split %.0f m, same split %b", a2.delay, a2.saving, a2.saving - a.saving,
                 a2.splitM, a.best != null && a2.best != null && Math.abs(a.splitM - a2.splitM) < 200.0);
         say("A ways round: %s; A2: %s", String.join("; ", a.each), String.join("; ", a2.each));
-        if (a.saving < 180) throw new IllegalStateException("A offers no way round saving 3 minutes");
-        if (a2.saving < a.saving + 180) throw new IllegalStateException("A2 does not save 3 minutes more than A");
+        // The offer is made on the engine's own way round as soon as it is found
+        // (LiveAlternatives.wayRoundFound), and decided again once the bubbles' searches end.
+        if (a.wayRoundSaving < 180) throw new IllegalStateException("A's way round does not save 3 minutes");
+        if (a2.wayRoundSaving < a.wayRoundSaving + 180) throw new IllegalStateException("A2's way round does not save 3 minutes more than A's");
 
         // The side road: a piece of a street near the route that neither the route, nor any
         // way round A or A2 found, nor the drive comes within SIDE_CLEAR_M of.
@@ -132,7 +159,7 @@ public final class LabTraffic {
         String sideClosure = closure("lab-side", side);
         say("side road closure %d points, %.0f m from the route", side[0].length, nearest(route, side));
         Offer aSide = offer(router, route, options, flowJson(flowA), incidentsJson(List.of(sideClosure)));
-        if (aSide.saving < 180 || Math.abs(aSide.delay - a.delay) > 1.0 || aSide.closedRuns != 0) {
+        if (aSide.wayRoundSaving < 180 || Math.abs(aSide.delay - a.delay) > 1.0 || aSide.closedRuns != 0) {
             throw new IllegalStateException("the side closure changes A: saving " + aSide.saving + " delay " + aSide.delay);
         }
         say("A with the side closure: saves %d s, closed runs on the route %d, %d nogos (%d hard)", aSide.saving, aSide.closedRuns,
@@ -148,8 +175,7 @@ public final class LabTraffic {
         List<TrafficIncident> iB = TrafficJson.INSTANCE.incidents(new StringReader(incidentsB));
         RouteTraffic tB = TrafficMatch.INSTANCE.match(route, fB, iB);
         if (tB.closureAhead(0.0) == null) throw new IllegalStateException("B's closure does not match the route");
-        List<Nogo> nB = TrafficNogos.INSTANCE.forRoute(fB, iB, tB, fc -> TrafficCost.INSTANCE.costPerSecond(fc, options.getTopSpeedKmh()),
-                TrafficNogos.MAX_NOGOS).getNogos();
+        List<Nogo> nB = TrafficNogos.INSTANCE.forRoute(fB, iB, tB, TrafficNogos.MAX_NOGOS).getNogos();
         Route round = router.compute(new RouteRequest(START_LAT, START_LON, DEST_LAT, DEST_LON, null, options, 0, null, null, nB),
                 RoutePlanner.MAX_RUNNING_MS, e -> Unit.INSTANCE);
         double[] closed = at(route, along, (CLOSED_FROM_M + CLOSED_TO_M) / 2.0);
@@ -175,8 +201,9 @@ public final class LabTraffic {
             out.println("# Written by tools/jni-host-test/LabTraffic.java over " + MAP + "; what the app's own code finds on");
             out.println("# the host for each scenario, which the lab run checks the emulator against.");
             out.printf(Locale.ROOT, "route_m=%d route_s=%d%n", route.getDistanceM(), route.getSeconds());
-            out.printf(Locale.ROOT, "a_delay_s=%.0f a_queue_delay_s=%.0f a_slow_delay_s=%.0f a_saving_s=%d%n", a.delay, a.queueDelay, a.slowDelay, a.saving);
-            out.printf(Locale.ROOT, "a2_delay_s=%.0f a2_saving_s=%d%n", a2.delay, a2.saving);
+            out.printf(Locale.ROOT, "a_delay_s=%.0f a_queue_delay_s=%.0f a_slow_delay_s=%.0f a_way_round_saving_s=%d a_saving_s=%d%n",
+                    a.delay, a.queueDelay, a.slowDelay, a.wayRoundSaving, a.saving);
+            out.printf(Locale.ROOT, "a2_delay_s=%.0f a2_way_round_saving_s=%d a2_saving_s=%d%n", a2.delay, a2.wayRoundSaving, a2.saving);
             out.printf(Locale.ROOT, "side_delay_s=%.0f%n", s.delay);
             out.printf(Locale.ROOT, "b_closure_from_m=%.0f b_closure_to_m=%.0f%n", CLOSED_FROM_M, CLOSED_TO_M);
         }
@@ -199,9 +226,13 @@ public final class LabTraffic {
 
     private static final class Offer {
         double delay, queueDelay, slowDelay, ownDelay, splitM;
-        int saving = -1, nogos, hard, closedRuns;
-        long ms;
-        Route best;
+        /** The best saving of every way round found, and of the engine's own way round alone: the app's first offer. */
+        int saving = -1, wayRoundSaving = -1, nogos, hard, closedRuns;
+        /** The whole search, and the way round's search alone. */
+        long ms, wayRoundMs;
+        /** What the alternatives search said went wrong, or null. */
+        String failure;
+        Route best, wayRound;
         List<Route> found = new ArrayList<>();
         /** Each way round's saving and split, in the order found, for the log. */
         List<String> each = new ArrayList<>();
@@ -217,8 +248,7 @@ public final class LabTraffic {
         o.slowDelay = held.getRuns().stream().filter(r -> r.getToM() <= 1_000.0).mapToDouble(r -> r.getDelaySeconds()).sum();
         o.queueDelay = o.delay - o.slowDelay;
         o.closedRuns = (int) held.getRuns().stream().filter(r -> r.getCongestion().name().equals("CLOSED")).count();
-        List<Nogo> nogos = TrafficNogos.INSTANCE.forRoute(f, inc, held, fc -> TrafficCost.INSTANCE.costPerSecond(fc, options.getTopSpeedKmh()),
-                TrafficNogos.MAX_NOGOS).getNogos();
+        List<Nogo> nogos = TrafficNogos.INSTANCE.forRoute(f, inc, held, TrafficNogos.MAX_NOGOS).getNogos();
         o.nogos = nogos.size();
         o.hard = (int) nogos.stream().filter(Nogo::getHard).count();
         if (o.delay < 180.0) return o;
@@ -230,7 +260,13 @@ public final class LabTraffic {
         PreviewRequest trip = new PreviewRequest(1L, ahead.getLatitudes()[0], ahead.getLongitudes()[0], DEST_LAT, DEST_LON, null,
                 options, ahead, nogos);
         long begun = System.nanoTime();
-        AlternativeSearch.INSTANCE.find(router, trip, true, RoutePlanner.MAX_RUNNING_MS, e -> Unit.INSTANCE, () -> false,
+        o.failure = AlternativeSearch.INSTANCE.find(router, trip, true, RoutePlanner.MAX_RUNNING_MS, e -> Unit.INSTANCE, () -> false,
+                r -> {
+                    o.wayRoundMs = (System.nanoTime() - begun) / 1_000_000L;
+                    o.wayRound = r;
+                    o.found.add(r);
+                    return Unit.INSTANCE;
+                },
                 r -> { o.found.add(r); return Unit.INSTANCE; });
         o.ms = (System.nanoTime() - begun) / 1_000_000L;
         double aheadDelay = held.delayAheadSeconds(aheadAlongM);
@@ -243,8 +279,10 @@ public final class LabTraffic {
             double ownDelay = own.delayAheadSeconds(0.0);
             if (aheadDelay - ownDelay <= 0.0) continue;
             int saving = (int) Math.round(ahead.getSeconds() + aheadDelay - alternative.getSeconds() - ownDelay);
-            o.each.add(String.format(Locale.ROOT, "%d s (own delay %.0f, via %b, split %.0f m)", saving, ownDelay, alternative.getVia() != null,
-                    alongNearest(route, along, alternative.getLatitudes()[split], alternative.getLongitudes()[split])));
+            o.each.add(String.format(Locale.ROOT, "%d s (own delay %.0f, via %b, split %.0f m%s)", saving, ownDelay, alternative.getVia() != null,
+                    alongNearest(route, along, alternative.getLatitudes()[split], alternative.getLongitudes()[split]),
+                    alternative == o.wayRound ? ", the engine's way round" : ""));
+            if (alternative == o.wayRound) o.wayRoundSaving = saving;
             if (saving > o.saving) {
                 o.saving = saving;
                 o.best = alternative;

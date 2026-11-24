@@ -114,7 +114,7 @@ public final class DashboardTrafficTest {
 
     private static TrafficRun run(double fromM, double toM, Congestion congestion) {
         return new TrafficRun((int) (fromM / STEP_M), (int) Math.ceil(toM / STEP_M), fromM, toM, congestion,
-            congestion == Congestion.NONE ? null : 5.0, 0.0, "I-35E");
+            congestion == Congestion.NONE ? null : 5.0, 0.0, "I-35E", 1);
     }
 
     private static RouteTraffic traffic(Route route, TrafficRun... runs) {

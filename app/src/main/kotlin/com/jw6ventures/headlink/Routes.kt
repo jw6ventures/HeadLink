@@ -48,8 +48,8 @@ data class ExitSign(val number: String?, val toward: String?) {
  *
  * [nogos] (P9.5) are live traffic's closures and jams as no-go points ([TrafficNogos]): a
  * hard one is a circle the route may not enter, a weighted one charges the metres of road
- * inside it times its weight. The weights are priced at [options]' top speed
- * ([TrafficCost]). Empty, the default, is a route exactly as before P9.
+ * inside it times its weight, in seconds per metre ([TrafficCost]). Empty, the default, is
+ * a route exactly as before P9.
  */
 class RouteRequest @JvmOverloads constructor(
     val fromLat: Double,
@@ -188,6 +188,15 @@ class Route @JvmOverloads constructor(
      * 1 when none: [PaceBook] learns against the times as the router gave them.
      */
     val timeScale: Double = 1.0,
+    /**
+     * The closures (hard [Nogo]s) this route enters at its first or last step although it
+     * was found with them closed ([OsmAndRouter]): the vehicle is on a closed road, or the
+     * destination is, and OsmAnd joins the trip's ends to the road without pricing those
+     * pieces. Those closures, and only those, are no reason to re-route ([TrafficFeed]); it
+     * opened none ([closuresOpened]). Not saved with the route ([RoutePreview]): they are
+     * HERE's places, and after a restart the closure is re-routed round at most once more.
+     */
+    val endClosures: List<Nogo> = emptyList(),
 ) {
     val points: Int get() = latitudes.size
 
@@ -210,14 +219,18 @@ class Route @JvmOverloads constructor(
         return Route(
             latitudes, longitudes, distanceM, (seconds * factor).roundToInt(), maneuverIndices, exitNumbers, commands,
             FloatArray(pointSeconds.size) { (pointSeconds[it] * factor).toFloat() }, roadStarts, roadNames, topSpeedKmh, via,
-            nogoCount, closuresOpened, exitSigns, paceClasses, timeScale * factor,
+            nogoCount, closuresOpened, exitSigns, paceClasses, timeScale * factor, endClosures,
         )
     }
 
-    /** This route marked as made with [count] traffic nogos, and whether closures were opened for it. */
-    fun withNogos(count: Int, opened: Boolean): Route = Route(
+    /**
+     * This route marked as made with [count] traffic nogos, whether closures were opened for
+     * it, and the closures it enters at its ends ([endClosures]).
+     */
+    @JvmOverloads
+    fun withNogos(count: Int, opened: Boolean, endClosures: List<Nogo> = emptyList()): Route = Route(
         latitudes, longitudes, distanceM, seconds, maneuverIndices, exitNumbers, commands,
-        pointSeconds, roadStarts, roadNames, topSpeedKmh, via, count, opened, exitSigns, paceClasses, timeScale,
+        pointSeconds, roadStarts, roadNames, topSpeedKmh, via, count, opened, exitSigns, paceClasses, timeScale, endClosures,
     )
 
     /**
@@ -246,7 +259,7 @@ class Route @JvmOverloads constructor(
             topSpeedKmh, via, nogoCount, closuresOpened,
             if (exitSigns.size == maneuverIndices.size) Array(keep.size) { exitSigns[keep[it]] } else emptyArray(),
             if (paceClasses.size == points) paceClasses.copyOfRange(start, points) else ByteArray(0),
-            timeScale,
+            timeScale, endClosures,
         )
     }
 

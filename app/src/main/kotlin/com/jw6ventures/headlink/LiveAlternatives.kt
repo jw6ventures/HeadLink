@@ -98,6 +98,18 @@ class LiveAlternative(
             own(ahead, alternative).firstOrNull()?.let { (it - 1).coerceAtLeast(0) }
 
         /**
+         * [shown] less any bubble that is [offered]'s way: the same split and mostly the same
+         * route ([TrafficFeed.sameWay]), [offered] laid against [ahead] as the offer is. A
+         * way round is the offer on the turn card or a bubble with its grey line, never both.
+         */
+        fun withoutOffered(shown: List<LiveAlternative>, ahead: Route, offered: Route): List<LiveAlternative> {
+            val split = splitIndex(ahead, offered) ?: return shown
+            val lat = offered.latitudes[split]
+            val lon = offered.longitudes[split]
+            return shown.filter { !TrafficFeed.sameWay(it.splitLat, it.splitLon, it.route, lat, lon, offered) }
+        }
+
+        /**
          * [alternative] made to pass through the middle of its own stretch: a via point for
          * one found with no via of its own (live traffic's way round, [AlternativeSearch]),
          * so that following it from the vehicle keeps to it as a bubble's alternative does
@@ -115,7 +127,7 @@ class LiveAlternative(
                 alternative.roadStarts, alternative.roadNames, alternative.topSpeedKmh,
                 doubleArrayOf(alternative.latitudes[middle], alternative.longitudes[middle]),
                 alternative.nogoCount, alternative.closuresOpened, alternative.exitSigns,
-                alternative.paceClasses, alternative.timeScale,
+                alternative.paceClasses, alternative.timeScale, alternative.endClosures,
             )
         }
 
@@ -169,16 +181,21 @@ class LiveAlternative(
  */
 object AlternativeSearch {
     /**
-     * Alternatives to [trip]'s route, each given to [found] as it is chosen, none a
-     * [RoutePreview.duplicate] of another or of the route itself. [trip]'s points go into
-     * every search ([PreviewRequest.nogos]).
+     * Alternatives to [trip]'s route, none a [RoutePreview.duplicate] of another or of the
+     * route itself. [trip]'s points go into every search ([PreviewRequest.nogos]).
      *
      * With [aroundTraffic], the first search is the engine's own best route over the same trip
      * with the points: the way round the traffic that the engine would take, which the finder's
      * corridors, built to differ from the route on show, may not include. It is made to pass
      * through its own stretch ([LiveAlternative.throughOwn]) so that taking it from the
-     * vehicle keeps to it. One search more, asked only when the traffic ahead is heavy enough
-     * for a way round to be offered ([Traffic.worthLooking]). Returns the last failure, or null.
+     * vehicle keeps to it, and given to [wayRound] the moment it is found, so the traffic offer
+     * can be decided on it without waiting for the finder's searches (up to eight more, each
+     * as slow as this one). One search more, asked only when the traffic ahead is heavy enough
+     * for a way round to be offered ([Traffic.worthLooking]).
+     *
+     * Then [AlternativeFinder]'s alternatives, each given to [found] as it is chosen; with
+     * [aroundTraffic] only while the bubbles are on ([RouteOptions.showAlternatives]), since
+     * nothing else shows them. Returns the last failure, or null.
      */
     fun find(
         router: RouteEngine,
@@ -187,6 +204,7 @@ object AlternativeSearch {
         maxRunningMs: Long,
         started: (SearchHandle) -> Unit,
         cancelled: () -> Boolean,
+        wayRound: (Route) -> Unit,
         found: (Route) -> Unit,
     ): String? {
         val given = mutableListOf(trip.route)
@@ -196,13 +214,13 @@ object AlternativeSearch {
                 val around = router.compute(trip.alternative(0), maxRunningMs, started)
                 if (!RoutePreview.duplicate(around, given)) {
                     given += around
-                    found(LiveAlternative.throughOwn(trip.route, around))
+                    wayRound(LiveAlternative.throughOwn(trip.route, around))
                 }
             } catch (e: RoutingException) {
                 failure = e.message
             }
         }
-        if (cancelled()) return failure
+        if (cancelled() || (aroundTraffic && !trip.options.showAlternatives)) return failure
         val finderFailure = AlternativeFinder(router, trip, maxRunningMs, started, cancelled).find { route ->
             if (!RoutePreview.duplicate(route, given)) {
                 given += route
@@ -210,6 +228,39 @@ object AlternativeSearch {
             }
         }
         return finderFailure ?: failure
+    }
+}
+
+/**
+ * Stops one look's searches ([LiveAlternatives]) once a newer traffic update supersedes it:
+ * the search running is terminated at once, and every search the look starts after that is
+ * terminated as its handle arrives, the further searches inside one engine request too (an
+ * OsmAnd alternative *k* is *k* + 1 searches, each handing out its own). Local to its look,
+ * so stopping it never touches the look that follows. Any thread.
+ */
+class LookStop {
+    private var running: SearchHandle? = null
+
+    /** Whether [stop] was called; the look's `cancelled`. */
+    @Volatile
+    var stopped = false
+        private set
+
+    /** The look's `started`: [handle] is the search running now. */
+    fun started(handle: SearchHandle) {
+        val stop = synchronized(this) {
+            running = handle
+            stopped
+        }
+        if (stop) handle.terminate()
+    }
+
+    fun stop() {
+        val handle = synchronized(this) {
+            stopped = true
+            running
+        }
+        handle?.terminate()
     }
 }
 
@@ -237,7 +288,13 @@ object AlternativeSearch {
  * both routes' delays, and one that saves enough becomes the traffic offer on the divided
  * turn card, and is then not also a bubble. A traffic update heavy enough to be worth it
  * asks for one look at once ([lookNow]), whether or not the bubbles are on, in place of
- * the next timed one; that is the only extra search traffic makes.
+ * the next timed one; that is the only extra search traffic makes. Such a look searches
+ * the engine's own way round first and lays it on the traffic as soon as it is found, so
+ * the offer comes after one search, not after the bubbles' eight more; with the bubbles
+ * off those are not searched at all, and the way round alone decides the offer
+ * ([Traffic.assessWayRound]). A look carries the points it searched with, and its routes
+ * decide nothing once newer ones are held; one a newer traffic update supersedes is
+ * stopped ([LookStop]) and decides nothing at all.
  *
  * **Expiry.** An alternative goes once the vehicle is past the point where it leaves the
  * followed route: it is no longer a way the driver can go.
@@ -261,6 +318,8 @@ object LiveAlternatives {
     private var looking = false
     /** A traffic look was asked for while one was running: look again when it ends. */
     private var lookAgain = false
+    /** The running look's own stop ([lookNow]), or null. */
+    private var running: LookStop? = null
     /**
      * A traffic look was asked for before it could run: no fix had yet placed the vehicle on
      * the route it was asked for (the first fetch often lands while joining), or that route
@@ -316,12 +375,16 @@ object LiveAlternatives {
     /**
      * A traffic update found enough delay ahead to be worth a way round (P9.6): look now,
      * with the new points, bubbles on or off, and put the next timed look an interval off.
-     * One already running is followed by this one when it ends. Main thread.
+     * One already running is stopped at once, its search terminated ([LookStop]), and this
+     * one follows when it has unwound: otherwise the new way round waits for every bubble
+     * search of the old look (over a minute and a half in the lab). What the old one found
+     * was searched with the old points, so it is dropped ([finished]). Main thread.
      */
     fun lookNow(context: Context) {
         if (Navigation.destination == null) return
         if (looking && token == Routing.token) {
             lookAgain = true
+            running?.stop()
             return
         }
         // Guide follows the route now requested (a vehicle stopped in a queue sends no new
@@ -352,25 +415,33 @@ object LiveAlternatives {
 
     private fun look(context: Context, follower: RouteFollower, onRoute: FollowResult, nowMs: Long, traffic: Boolean) {
         val destination = Navigation.destination ?: return
+        val options = Routing.options(context)
+        val aroundTraffic = Traffic.worthLooking()
+        // With the bubbles off a look is only for the way round, and only worth it while
+        // the traffic is (a look asked again after the old one ends may find it eased).
+        if (!options.showAlternatives && !aroundTraffic) return
         // From a point a little way ahead, not from the vehicle: an alternative that leaves
         // at the very next junction is behind the vehicle before the search has finished.
         // The first lab drive's two both did, and were gone as soon as they were shown.
         val fromVehicle = follower.route.remainder(follower.indexAt(onRoute.alongM) + 1)
         val ahead = fromVehicle.remainder(LiveAlternative.leadIndex(fromVehicle))
         val aheadAlongM = follower.alongNearest(ahead.latitudes[0], ahead.longitudes[0])
-        val options = Routing.options(context)
         val bearing = Guide.fix()?.second
+        // The points and which response they came from, taken together: the routes found
+        // with them decide the offer only while they are still the points held.
+        val revision = Traffic.pointsRevision()
         val trip = PreviewRequest(
             token, ahead.latitudes[0], ahead.longitudes[0], destination.latitude, destination.longitude,
-            bearing, options, ahead, Traffic.nogos(options),
+            bearing, options, ahead, Traffic.nogos(),
         )
-        val aroundTraffic = Traffic.worthLooking()
-        val forToken = token
+        val stop = LookStop()
+        running = stop
         looking = true
         lookAgain = false
         lastLookMs = nowMs
         looks++
         if (traffic) trafficLooks++
+        val look = Look(looks, token, stop, revision, options.showAlternatives, follower, ahead, aheadAlongM)
         val app = context.applicationContext
         // Answered in done, which runs even when the planner skips the look for a route
         // request: a re-route that fails keeps the token, and nothing else would clear
@@ -378,51 +449,108 @@ object LiveAlternatives {
         val routes = ArrayList<Route>()
         var begun = System.nanoTime()
         var ran = false
+        var whole = false
         Routing.explore(
             context,
             done = {
                 val took = (System.nanoTime() - begun) / 1_000_000L
                 val looked = ran
-                main.post { finished(app, forToken, follower, ahead, aheadAlongM, routes, took, looked) }
+                val complete = whole
+                main.post { finished(app, look, routes, took, looked, complete) }
             },
         ) { router, started, cancelled ->
             ran = true
             begun = System.nanoTime()
-            AlternativeSearch.find(router, trip, aroundTraffic, RoutePlanner.MAX_RUNNING_MS, started, cancelled) { routes += it }
+            AlternativeSearch.find(
+                router, trip, aroundTraffic, RoutePlanner.MAX_RUNNING_MS,
+                { handle ->
+                    started(handle)
+                    stop.started(handle)
+                },
+                { cancelled() || stop.stopped },
+                wayRound = { route ->
+                    routes += route
+                    // The offer is decided on the way round now; with the bubbles on, again
+                    // with them once the finder is done.
+                    val took = (System.nanoTime() - begun) / 1_000_000L
+                    main.post { wayRoundFound(look, route, took) }
+                },
+                found = { routes += it },
+            )
+            // Stopped part way (a newer traffic update, a route request): what it found is
+            // not the look asked for.
+            whole = !cancelled() && !stop.stopped
         }
     }
 
-    private fun finished(
-        context: Context,
-        forToken: Long,
-        follower: RouteFollower,
-        ahead: Route,
-        aheadAlongM: Double,
-        routes: List<Route>,
-        tookMs: Long,
-        looked: Boolean,
-    ) {
+    /** One look, as its answers need it: which, for what route and points, and from where. */
+    private class Look(
+        val number: Int,
+        val token: Long,
+        val stop: LookStop,
+        val revision: Long,
+        val bubbles: Boolean,
+        val follower: RouteFollower,
+        val ahead: Route,
+        val aheadAlongM: Double,
+    )
+
+    /**
+     * A traffic look's way round ([AlternativeSearch.find]), found [tookMs] after the look
+     * began: laid on the traffic and offered if it saves enough ([Traffic.assessWayRound]).
+     * With the bubbles on, [finished] lays it again with them; with them off this is the
+     * look's only decision. A bubble already on the map for the way now offered goes at
+     * once, grey line and all ([LiveAlternative.withoutOffered]).
+     */
+    private fun wayRoundFound(look: Look, route: Route, tookMs: Long) {
+        if (!looking || running !== look.stop || look.stop.stopped || look.token != token || look.token != Routing.token) return
+        Traffic.assessWayRound(look.revision, look.follower.route, look.ahead, look.aheadAlongM, route) { offered ->
+            if (look.token != token || look.token != Routing.token) return@assessWayRound
+            if (offered != null) {
+                val left = LiveAlternative.withoutOffered(shown, look.ahead, offered)
+                if (left.size != shown.size) publish(left)
+            }
+            SessionController.note("way round the traffic found in $tookMs ms (look ${look.number})" + if (offered != null) "; offered" else "; not offered")
+        }
+    }
+
+    private fun finished(context: Context, look: Look, routes: List<Route>, tookMs: Long, looked: Boolean, complete: Boolean) {
         looking = false
+        if (running === look.stop) running = null
         if (!looked) {
             // Skipped for a route request: what is on show stays, and the next fix may look.
-            if (lookAgain && forToken == token && forToken == Routing.token) lookNow(context)
+            if (lookAgain && look.token == token && look.token == Routing.token) lookNow(context)
             return
         }
         lastLookMsTaken = tookMs
         // The same token is the same route, so the follower that was asked about is still the one following it.
-        if (forToken != token || forToken != Routing.token) return
+        if (look.token != token || look.token != Routing.token) return
+        if (!complete) {
+            // Stopped part way: its routes so far decide nothing and replace no bubbles. The
+            // look that stopped it follows ([lookNow]).
+            SessionController.note("looked for other routes for $tookMs ms (look ${look.number}): stopped")
+            if (lookAgain) lookNow(context)
+            return
+        }
+        if (!look.bubbles) {
+            // Only the way round was looked for, and [wayRoundFound] decided on it.
+            if (routes.isEmpty()) SessionController.note("looked for other routes in $tookMs ms (look ${look.number}): no way round")
+            if (shown.isNotEmpty()) publish(emptyList())
+            if (lookAgain) lookNow(context)
+            return
+        }
         // Laid on the traffic held, if any, before anything is shown; the offer is decided there.
-        Traffic.assess(follower.route, ahead, aheadAlongM, routes) { extras, offered ->
-            if (forToken != token || forToken != Routing.token) return@assess
+        Traffic.assess(look.revision, look.follower.route, look.ahead, look.aheadAlongM, routes) { extras, offered ->
+            if (look.token != token || look.token != Routing.token) return@assess
             val made = routes.indices
                 .filter { routes[it] !== offered }
-                .mapNotNull { LiveAlternative.of(nextId++, ahead, routes[it], extras[it]) }
+                .mapNotNull { LiveAlternative.of(nextId++, look.ahead, routes[it], extras[it]) }
             splitAlong.clear()
-            for (alternative in made) splitAlong[alternative.id] = follower.alongNearest(alternative.splitLat, alternative.splitLon)
+            for (alternative in made) splitAlong[alternative.id] = look.follower.alongNearest(alternative.splitLat, alternative.splitLon)
             found += made.size
             // How many and how much longer, never where: the event log is part of the report.
             SessionController.note(
-                "looked for other routes in $tookMs ms: ${made.size} shown" +
+                "looked for other routes in $tookMs ms (look ${look.number}): ${made.size} shown" +
                     made.joinToString("") { " ${it.label}" } + if (offered != null) "; one offered for traffic" else "",
             )
             publish(if (AppSettings.load(context).routing.showAlternatives) made else emptyList())

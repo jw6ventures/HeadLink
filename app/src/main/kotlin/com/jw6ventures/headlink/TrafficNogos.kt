@@ -5,7 +5,7 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * HERE's closures and jams as BRouter no-go points (P9), from a whole snapshot: an
+ * HERE's closures and jams as the router's no-go points (P9), from a whole snapshot: an
  * incident or a jam off the route still matters, because it is on the roads an alternative
  * might take.
  *
@@ -35,24 +35,19 @@ import kotlin.math.min
  *   short plain stretch is its middle. Blocking a road beside a closure is the safer
  *   mistake than routing into one. Weighted points get no such exception.
  *
- * **What a point cannot tell.** A BRouter circle has no direction. On a divided highway
+ * **What a point cannot tell.** A circle has no direction. On a divided highway
  * each carriageway is its own HERE stretch and 20 to 50 m from the other, beyond
  * [RADIUS_M]; on an undivided road both directions share the line, so a jam or closure one
  * way also charges or blocks the other.
  *
- * **How heavy.** The points on a span together charge roughly its delay, in BRouter cost:
- * a point charges (metres of road inside its circle) × weight, and a road through the
- * middle of a circle of [RADIUS_M] has 2 × [RADIUS_M] inside it, so each of n points weighs
- * delay × costPerSecond ÷ (n × 2 × [RADIUS_M]). A road passing off-centre has less inside,
- * so this is an upper figure. The delay of a span, which has no BRouter time of its own off
- * the route, is [delaySeconds]. `costPerSecond` is BRouter's cost per second of delay by
- * HERE functional class: [TrafficCost.costPerSecond], measured in P9.5, at the request's own
- * top speed; the default is the default top speed's.
- *
- * **Also in BRouter** (vendored `RoutingContext.calcDistance`): a segment of the OSM way
- * inside several circles is charged for the last one in the list only, not their sum, and
- * OSM segments on an interstate can be several hundred metres long. The calibration should
- * be measured with points placed this way, not worked out from the formula.
+ * **How heavy.** The points on a span together charge its delay in seconds, times its HERE
+ * functional class's [TrafficCost.classFactor]: a point charges (metres of road inside its
+ * circle) × weight, and a road through the middle of a circle of [RADIUS_M] has
+ * 2 × [RADIUS_M] inside it, so each of n points weighs delay × factor ÷ (n × 2 × [RADIUS_M])
+ * ([TrafficCost.pointWeight]). A road passing off-centre has less inside, so this is an
+ * upper figure. The delay of a span, which has no routed time of its own off the route, is
+ * [delaySeconds]. OsmAnd charges every step of its search for every circle it crosses, so
+ * points on one road add up.
  *
  * Pure Kotlin, no Android, no state: call it from any thread.
  */
@@ -75,9 +70,8 @@ object TrafficNogos {
     const val CLEAR_M = RADIUS_M + TrafficMatch.NEAR_M
 
     /**
-     * The most points handed to BRouter. `RoutingContext.calcDistance` checks every nogo for
-     * every segment the search weighs, so the search slows in proportion to their number.
-     * A first guess: P9.5 measures what they cost the search.
+     * The most points handed to the router. Every step of the search is checked against
+     * every point near it, so the search slows with their number.
      *
      * The cap is reached in practice. The whole 1° Dallas cell P9.0 captured gives about
      * 2,800 points, 1,200 of them hard: 333 closure incidents, most on side streets, and
@@ -85,9 +79,6 @@ object TrafficNogos {
      * roughly a tenth of that. Which points are kept is in [of].
      */
     const val MAX_NOGOS = 300
-
-    /** [TrafficCost.costPerSecond] at the default top speed: what [of] weighs a second of delay by when not told. */
-    private val DEFAULT_COST_PER_SECOND: (Int) -> Double = { functionalClass -> TrafficCost.costPerSecond(functionalClass) }
 
     /**
      * Consecutive slow or queuing runs of the followed route no further apart than this,
@@ -104,8 +95,6 @@ object TrafficNogos {
 
     /**
      * The no-go points for [flow] and [incidents], no more than [limit] ([MAX_NOGOS]).
-     * [costPerSecond] converts a second of delay into BRouter cost for a HERE functional
-     * class, 1 to 5.
      *
      * Points are kept a span (or a closure incident) at a time. With [route], the one being
      * followed, the spans nearest it are kept first, closures before jams at the same
@@ -121,7 +110,6 @@ object TrafficNogos {
         flow: List<FlowStretch>,
         incidents: List<TrafficIncident>,
         route: Route? = null,
-        costPerSecond: (functionalClass: Int) -> Double = DEFAULT_COST_PER_SECOND,
         limit: Int = MAX_NOGOS,
     ): List<Nogo> {
         if (flow.isEmpty() && incidents.isEmpty()) return emptyList()
@@ -146,7 +134,7 @@ object TrafficNogos {
                         if (delay <= 0.0) continue
                         val at = place(index, k, from, to, false)
                         if (at.isEmpty()) continue
-                        val weight = delay * costPerSecond(stretch.functionalClass) / (at.size * 2.0 * RADIUS_M)
+                        val weight = TrafficCost.pointWeight(delay, at.size, stretch.functionalClass)
                         if (weight.isFinite() && weight > 0.0) groups += Group(at.map { nogo(index, k, it, weight) }, delay)
                     }
                     else -> {}
@@ -203,9 +191,8 @@ object TrafficNogos {
     fun of(
         snapshot: TrafficSnapshot,
         route: Route? = null,
-        costPerSecond: (functionalClass: Int) -> Double = DEFAULT_COST_PER_SECOND,
         limit: Int = MAX_NOGOS,
-    ): List<Nogo> = of(snapshot.flow, snapshot.incidents, route, costPerSecond, limit)
+    ): List<Nogo> = of(snapshot.flow, snapshot.incidents, route, limit)
 
     /**
      * What every search around the followed route is given while traffic is on
@@ -226,28 +213,24 @@ object TrafficNogos {
      *   within [RADIUS_M] is left out.
      * - **Jams** (touching [Congestion.SLOW] and [Congestion.QUEUING] runs, as one) get
      *   weighted points on the route's line **in place of** HERE's own points within
-     *   [TrafficMatch.NEAR_M] of it, which are the same jam's. BRouter charges one circle per
-     *   link, the last it passed (docs/navigation.md, "Live traffic (HERE)"), so two sets on one road
-     *   would not add up; they would only cost the search, which slows by about 3 ms a point
-     *   on the host. Fewer points, each where the road is, is the better trade. Their weight
-     *   is the design's (delay × `costPerSecond` ÷ (points × 16 m)), with the run's own delay
-     *   against BRouter's time rather than HERE's free flow, and the class of the HERE
-     *   stretch it matched.
+     *   [TrafficMatch.NEAR_M] of it, which are the same jam's: the router adds up every
+     *   circle a road passes, so both sets would charge the jam twice. They are placed along
+     *   the whole jam, and each run's own delay (against the router's time rather than HERE's
+     *   free flow) is charged by the points nearest it, times the class factor of the HERE
+     *   stretch that run matched ([jamWeights]).
      *
      * Points for the route's own closures come first when [limit] bites, then its jams, then
-     * [of]'s. In the list handed on, [of]'s come first and the route's own after them, so
-     * that on a link both reach the route's own is the circle BRouter keeps.
+     * [of]'s, which the list handed on puts first.
      */
     fun forRoute(
         flow: List<FlowStretch>,
         incidents: List<TrafficIncident>,
         traffic: RouteTraffic,
-        costPerSecond: (functionalClass: Int) -> Double = DEFAULT_COST_PER_SECOND,
         limit: Int = MAX_NOGOS,
     ): RouteNogos {
         val route = traffic.route
         if (flow.isEmpty() && incidents.isEmpty()) return RouteNogos(emptyList(), 0)
-        if (route.points < 2 || traffic.runs.isEmpty()) return RouteNogos(of(flow, incidents, route, costPerSecond, limit), 0)
+        if (route.points < 2 || traffic.runs.isEmpty()) return RouteNogos(of(flow, incidents, route, limit), 0)
         val lats = ArrayList<DoubleArray>(flow.size + incidents.size)
         val lons = ArrayList<DoubleArray>(flow.size + incidents.size)
         flow.forEach { lats += it.latitudes; lons += it.longitudes }
@@ -276,36 +259,30 @@ object TrafficNogos {
                 continue
             }
             var last = i
-            var delay = runs[i].delaySeconds
-            while (last + 1 < runs.size && jam(runs[last + 1]) && runs[last + 1].fromM - runs[last].toM <= TOUCH_M) {
-                last++
-                delay += runs[last].delaySeconds
-            }
+            while (last + 1 < runs.size && jam(runs[last + 1]) && runs[last + 1].fromM - runs[last].toM <= TOUCH_M) last++
+            val touching = runs.subList(i, last + 1)
             val from = runs[i].fromM
             val to = runs[last].toM
             i = last + 1
-            if (delay <= 0.0) continue
+            if (touching.none { it.delaySeconds > 0.0 }) continue
             val at = placeOnLine(index, line, from, to, false)
             if (at.isEmpty()) continue
-            val weight = delay * costPerSecond(classAt(index, flow.size, flow, line, (from + to) / 2.0)) / (at.size * 2.0 * RADIUS_M)
-            if (!(weight.isFinite() && weight > 0.0)) continue
-            at.forEach { jamOwn += pointOn(route, along, it, weight) }
+            val weights = jamWeights(touching, at)
+            for (k in at.indices) {
+                if (weights[k].isFinite() && weights[k] > 0.0) jamOwn += pointOn(route, along, at[k], weights[k])
+            }
             jamLines += TrafficMatch.line(route, from, to)
         }
 
         val own = (hardOwn + jamOwn).take(limit)
-        val rest = of(flow, incidents, route, costPerSecond, (limit - own.size).coerceAtLeast(0)).filter { nogo ->
+        val rest = of(flow, incidents, route, (limit - own.size).coerceAtLeast(0)).filter { nogo ->
             if (nogo.hard) {
                 hardOwn.none { RouteFollower.distance(it.latitude, it.longitude, nogo.latitude, nogo.longitude) < RADIUS_M }
             } else {
                 jamLines.none { (la, lo) -> fromLine(la, lo, nogo.latitude, nogo.longitude) <= TrafficMatch.NEAR_M }
             }
         }
-        // Weighted before hard, the route's own after HERE's of the same kind: Router keeps
-        // weighted points first and hard last, in this order otherwise.
-        val ownWeighted = own.filter { !it.hard }
-        val ownHard = own.filter { it.hard }
-        return RouteNogos(rest.filter { !it.hard } + ownWeighted + rest.filter { it.hard } + ownHard, own.size)
+        return RouteNogos(rest + own, own.size)
     }
 
     /** Whether a run of the followed route is part of a jam: slow or queuing. */
@@ -375,23 +352,32 @@ object TrafficNogos {
     }
 
     /**
-     * The functional class of the HERE stretch running along [line] at [at] metres: the
-     * nearest within [TrafficMatch.NEAR_M] the same way, as [TrafficMatch] chose it. 3 (no
-     * link factor) if none is found, which a matched run should never be.
+     * The weights of [at] (metres along the route, in order), the points on one jam of
+     * touching [runs]. Each point takes the part of the jam nearest it, from halfway to the
+     * point before to halfway to the next (the jam's ends for the first and last), and that
+     * part's share of each run's delay times the run's own [TrafficCost.classFactor], spread
+     * evenly along the run. A road through every point's middle is then charged each run's
+     * delay times its own factor: a queue running off an interstate onto its ramp is priced
+     * as the interstate for the interstate's delay and as a road for the ramp's.
      */
-    private fun classAt(index: ShapeIndex, flowCount: Int, flow: List<FlowStretch>, line: Polyline, at: Double): Int {
-        val heading = line.headingAt(at, TrafficMatch.HEADING_WINDOW_M)
-        var best = -1
-        var bestDistance = Double.MAX_VALUE
-        index.near(line.xAt(at), line.yAt(at), TrafficMatch.NEAR_M) { shape, distance, shapeAlong ->
-            if (shape < flowCount && distance < bestDistance &&
-                TrafficMatch.agrees(heading, index.headingAt(shape, shapeAlong, TrafficMatch.HEADING_WINDOW_M))
-            ) {
-                best = shape
-                bestDistance = distance
+    private fun jamWeights(runs: List<TrafficRun>, at: List<Double>): DoubleArray {
+        val n = at.size
+        val charge = DoubleArray(n)
+        for (run in runs) {
+            val price = run.delaySeconds * TrafficCost.classFactor(run.functionalClass)
+            if (!(price > 0.0)) continue
+            val length = run.toM - run.fromM
+            for (k in 0 until n) {
+                val lo = if (k == 0) Double.NEGATIVE_INFINITY else (at[k - 1] + at[k]) / 2.0
+                val hi = if (k == n - 1) Double.POSITIVE_INFINITY else (at[k] + at[k + 1]) / 2.0
+                charge[k] += when {
+                    length > 0.0 -> price * (min(hi, run.toM) - max(lo, run.fromM)).coerceAtLeast(0.0) / length
+                    run.fromM >= lo && run.fromM < hi -> price
+                    else -> 0.0
+                }
             }
         }
-        return if (best >= 0) flow[best].functionalClass else 3
+        return DoubleArray(n) { TrafficCost.circleWeight(charge[it]) }
     }
 
     /** A point [at] metres along [route], interpolated as [TrafficMatch.line] cuts it. */
@@ -457,7 +443,7 @@ object TrafficNogos {
     /**
      * Seconds [span] costs over driving it at free flow: its length at HERE's speed less its
      * length at HERE's free-flow speed, never below 0, and 0 when either is missing. Off the
-     * route there is no BRouter time to compare with, so free flow is the reference.
+     * route there is no routed time to compare with, so free flow is the reference.
      */
     fun delaySeconds(span: FlowSpan): Double {
         val given = span.speedMps ?: return 0.0

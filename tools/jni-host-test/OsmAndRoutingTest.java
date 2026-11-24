@@ -56,6 +56,7 @@ import com.jw6ventures.headlink.RouteRequest;
 import com.jw6ventures.headlink.RoutingException;
 import com.jw6ventures.headlink.SearchHandle;
 import com.jw6ventures.headlink.SpokenText;
+import com.jw6ventures.headlink.TrafficCost;
 import com.jw6ventures.headlink.TurnCommand;
 
 public final class OsmAndRoutingTest {
@@ -296,11 +297,11 @@ public final class OsmAndRoutingTest {
     }
 
     private static void aJamMovesItOnlyWhenItCostsEnough(OsmAndRouter router) throws Exception {
-        // Cost per metre: a few seconds' delay over the circle does not beat the
-        // longer way round; an hour's does.
-        Route cheap = route(router, trip(List.of(new Nogo(RAMP_LAT, RAMP_LON, 40, 1.0)), 0));
+        // Seconds per metre (TrafficCost): five seconds' delay over the circle does not beat
+        // the longer way round; an hour's does.
+        Route cheap = route(router, trip(List.of(new Nogo(RAMP_LAT, RAMP_LON, 40, TrafficCost.INSTANCE.pointWeight(5, 1, 3, 40))), 0));
         check(passesNear(cheap, RAMP_LAT, RAMP_LON, 10), "a slight jam leaves the route on the ramp");
-        Route costly = route(router, trip(List.of(new Nogo(RAMP_LAT, RAMP_LON, 40, 100_000.0)), 0));
+        Route costly = route(router, trip(List.of(new Nogo(RAMP_LAT, RAMP_LON, 40, TrafficCost.INSTANCE.pointWeight(3600, 1, 3, 40))), 0));
         check(!passesNear(costly, RAMP_LAT, RAMP_LON, 10), "a bad one sends it round");
         check(costly.getNogoCount() == 1 && costly.getTrafficShaped(), "and the route says traffic shaped it");
     }
@@ -507,7 +508,7 @@ public final class OsmAndRoutingTest {
         OsmAndRouter router = new OsmAndRouter(() -> List.of(OsmAndRouter.MapFile.of(austin.toFile())));
         try {
             RouteRequest request = new RouteRequest(30.5698, -97.4097, 30.2672, -97.7431, null, new RouteOptions(), 0, null, null,
-                List.of(new Nogo(30.5083, -97.6789, 200, 2.0)));
+                List.of(new Nogo(30.5083, -97.6789, 200, TrafficCost.INSTANCE.pointWeight(40, 1, 3, 200))));
             Route route = route(router, request);
             check(route.getDistanceM() > 50_000 && route.getDistanceM() < 70_000, "the whole way: " + route.getDistanceM() + " m");
             check(near(route.getLatitudes()[route.getPoints() - 1], route.getLongitudes()[route.getPoints() - 1], 30.2672, -97.7431, 250),
