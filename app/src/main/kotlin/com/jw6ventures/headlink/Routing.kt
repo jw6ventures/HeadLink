@@ -107,6 +107,32 @@ object Routing {
     var line: Route? = null
         private set
 
+    /**
+     * Debug builds only, set through the lab intent's `lab_routes_fail` extra: while that
+     * attempt runs, every search fails with an ordinary routing error, never a coverage
+     * reason, so the emulator lab's failed re-route (LAB_REROUTE=fail) is one [Guide] keeps
+     * on asking for and the vehicle rejoins the old route by itself, as where OsmAnd cannot
+     * place it. Moving the lab's map away instead would read as "outside the maps", which
+     * stops re-routes. The attempt it was set for, so it never outlives it ([labFailExpired]).
+     */
+    private var labFailAttempt: Attempt? = null
+
+    /** Read on the routing thread; set and cleared on the main thread with [labFailAttempt]. */
+    @Volatile
+    private var labFail = false
+
+    /** Makes every search fail while [attempt], the current lab attempt, runs; null restores routing. */
+    fun labFailFor(attempt: Attempt?) {
+        labFailAttempt = attempt
+        labFail = attempt != null
+    }
+
+    /** Drops the lab hook once its attempt is over, before any search is handed to the routing thread. */
+    private fun labFailExpired() {
+        val attempt = labFailAttempt ?: return
+        if (!SessionController.isCurrent(attempt)) labFailFor(null)
+    }
+
     /** The saved route preferences, as a request uses them. */
     fun options(context: Context): RouteOptions = AppSettings.load(context).routing
 
@@ -116,6 +142,7 @@ object Routing {
      * are that destination's.
      */
     fun request(context: Context, request: RouteRequest, from: String, startFrom: String, trip: Boolean = false) {
+        labFailExpired()
         val planner = planner(context)
         requests++
         origin = from
@@ -133,6 +160,7 @@ object Routing {
         done: () -> Unit = {},
         work: (RouteEngine, (SearchHandle) -> Unit, () -> Boolean) -> Unit,
     ) {
+        labFailExpired()
         planner(context).explore(done, work)
     }
 
@@ -150,6 +178,7 @@ object Routing {
         // readers keep their own handles once opened, so letting go afterwards is safe.
         val engine = object : RouteEngine {
             override fun compute(request: RouteRequest, maxRunningMs: Long, started: (SearchHandle) -> Unit): Route {
+                if (labFail) throw RoutingException("lab: routing failed on purpose (debug build)")
                 ObfLibrary.hold(MAPS_HOLDER, true)
                 try {
                     return router.compute(request, maxRunningMs, started)

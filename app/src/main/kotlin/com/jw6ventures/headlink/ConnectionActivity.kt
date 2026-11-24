@@ -386,6 +386,23 @@ class ConnectionActivity : Activity() {
             RouteRequest.parse(route)?.let { Routing.request(this, it, "lab", "lab") }
                 ?: SessionController.note("lab route \"$route\" is not lat,lon lat,lon; ignored")
         }
+        // The lab's failed re-route (LAB_REROUTE=fail): every search fails with an ordinary
+        // error for the rest of the attempt running now, and no longer ([Routing.labFailFor]).
+        // Debug builds only; a release build does not even take the intent as a lab one.
+        val routesFail = intent?.hasExtra(EXTRA_LAB_ROUTES_FAIL) == true &&
+            applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
+        if (routesFail) {
+            val wanted = intent.getBooleanExtra(EXTRA_LAB_ROUTES_FAIL, false)
+            val attempt = SessionController.attempt?.takeIf { SessionController.isCurrent(it) }
+            Routing.labFailFor(if (wanted) attempt else null)
+            SessionController.note(
+                when {
+                    !wanted -> "lab routing restored (debug build)"
+                    attempt != null -> "lab routing fails every search until this attempt ends (debug build)"
+                    else -> "lab routing failure asked for with no attempt running; ignored"
+                },
+            )
+        }
         // Saved places for the favorites tile, `name@lat,lon;name@lat,lon`, replacing the
         // list: how the lab gets a tile with rows in it to draw and scroll. A recent
         // destination, `name@lat,lon`, goes above them, or none: the tile lists only what
@@ -432,7 +449,7 @@ class ConnectionActivity : Activity() {
         }
         val socket = intent?.getStringExtra(EXTRA_LAB_SOCKET)
         if (socket == null) {
-            if (route == null && favorites == null && !speechGate && !trafficLab && !weatherLab && offerLayout == null && !reportNow && !wirelessObserve) return false
+            if (route == null && !routesFail && favorites == null && !speechGate && !trafficLab && !weatherLab && offerLayout == null && !reportNow && !wirelessObserve) return false
             setIntent(Intent(this, ConnectionActivity::class.java))
             return true
         }
@@ -3242,6 +3259,8 @@ class ConnectionActivity : Activity() {
         const val EXTRA_LAB_SOCKET = "lab_socket"
         const val EXTRA_LAB_WIRELESS_TCP = "lab_wireless_tcp"
         const val EXTRA_LAB_ROUTE = "lab_route"
+        /** Lab: every route search fails with an ordinary error until the current attempt ends (boolean; [Routing.labFailFor]). */
+        const val EXTRA_LAB_ROUTES_FAIL = "lab_routes_fail"
         const val EXTRA_LAB_FAVORITES = "lab_favorites"
         const val EXTRA_LAB_RECENT = "lab_recent"
         const val EXTRA_LAB_STOP_AFTER = "lab_stop_after"

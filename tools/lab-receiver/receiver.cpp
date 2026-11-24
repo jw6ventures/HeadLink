@@ -2324,6 +2324,24 @@ int main(int argc, char** argv)
     // static half changes nothing but encoder noise.
     const double TRACK_MOVED_MIN = 0.10;
     const double TRACK_STATIC_MAX = 0.02;
+    // When the parked map counts as settled (the track and daynight scripts): it has drawn
+    // something since the first sample, and then stayed quiet for TRACK_QUIET_SAMPLES samples
+    // in a row. Tiles land on worker threads well after the first picture (an OsmAnd map in
+    // the emulator debug build takes 2-3 s), and an empty pane is as quiet as a finished
+    // one: one quiet sample once took the empty pane for the day map. Past TRACK_SETTLE_TRIES
+    // the script goes on regardless, and the checks after it say what the pane was.
+    const int TRACK_QUIET_SAMPLES = 3;
+    int trackQuiet = 0;
+    bool trackDrawn = false;
+    auto trackSettling = [&](double change) {
+        if (change >= TRACK_STATIC_MAX) {
+            trackDrawn = true;
+            trackQuiet = 0;
+        } else {
+            ++trackQuiet;
+        }
+        return (!trackDrawn || trackQuiet < TRACK_QUIET_SAMPLES) && trackSettleTries < TRACK_SETTLE_TRIES;
+    };
     // How long a parked vehicle at the end of the guidance drive waits for the source to
     // say it has arrived.
     const int GUIDE_ARRIVAL_MS = 15000;
@@ -3219,7 +3237,7 @@ int main(int argc, char** argv)
                 ++trackSettleTries;
                 if (change < 0.0)
                     return; // the first sample has nothing to compare against
-                if (change >= TRACK_STATIC_MAX && trackSettleTries < TRACK_SETTLE_TRIES)
+                if (trackSettling(change))
                     return;
                 out << "receiver_track=parked map_changed=" << change
                     << " settle_s=" << trackSettleTries << " fixes=" << labSensors->fixes
@@ -3579,7 +3597,7 @@ int main(int argc, char** argv)
                 ++trackSettleTries;
                 if (change < 0.0)
                     return;
-                if (change >= TRACK_STATIC_MAX && trackSettleTries < TRACK_SETTLE_TRIES)
+                if (trackSettling(change))
                     return;
                 double mean = 0.0, spread = 0.0;
                 lumaStats(map, mean, spread);

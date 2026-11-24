@@ -46,17 +46,33 @@
 #
 # The track script (P6.1) plays a moving synthetic position into the sensor channel and
 # checks that the projected map pane follows it while the static half of the dashboard
-# does not. It needs LAB_MAP: with no map data the pane draws a message instead of a
-# map, and a message does not move. LAB_TRACK=1 drives the same track under any other
-# script and checks nothing, which is how to watch a long drive in the captured frames.
+# does not. It needs map data (LAB_OBF, installed by default): with no map data the pane
+# draws a message instead of a map, and a message does not move. LAB_TRACK=1 drives the
+# same track under any other script and checks nothing, which is how to watch a long drive
+# in the captured frames.
 #
-# LAB_ROUTING=<dir holding W75_N40.rd5> (P6.3) installs that BRouter tile the way LAB_MAP
-# installs a map, and once the app is projecting asks it for a cross-town route through a
-# debug intent. It works under any script. The checks are the app's own: the route came
-# back, on the routing thread, and the projection it ran beside still passed its own.
-# LAB_ROUTE="lat,lon lat,lon" changes the route; both points must be inside the tile.
+# LAB_OBF="<file.obf>[:<file.obf>...]" (P11), colon-separated as PATH is, chooses the OsmAnd
+# maps the lab installs: they are mounted read-only and moved into the debug app's
+# files/lab-obf/, which a debug build reads beside the maps folder (a folder grant cannot be
+# scripted). OsmAnd maps are the app's only map and routing data. Unset, the region's own file
+# goes in ($OPENAUTO_CACHE/obf/Us_massachusetts_northamerica.obf, or
+# Us_texas_austin_northamerica.obf with LAB_REGION=austin) for every script and switch that
+# needs a map or a route: track, guidance, daynight, controls, endroute, voice, traffic,
+# osmand, LAB_ROUTE, LAB_DESTINATION, LAB_POI and LAB_POI_AHEAD, and by default for every
+# Austin run. Every other script runs map-less unless LAB_OBF is given (the first-run check);
+# LAB_OBF=none forces that, Austin included, wherever no map is needed. With two files or
+# more the report must say the engine opened them all (data=obf:N) and that no map failed:
+# the app draws every installed map as one.
 #
-# LAB_DESTINATION=1 (P6.4, needs LAB_ROUTING) replaces that debug intent with the two ways
+# LAB_ROUTE (P6.3) asks the app for a cross-town route through a debug intent once it is
+# projecting: LAB_ROUTE=1 for the region's (the lab position to Boston Common, about 14 km of
+# town streets and one motorway; in Austin, downtown to the university, about 3 km), or
+# LAB_ROUTE="lat,lon lat,lon" for those two points, both inside the installed maps. It works
+# under any script that does not share a destination of its own. The checks are the app's
+# own: the route came back, on the routing thread, and the projection it ran beside still
+# passed its own.
+#
+# LAB_DESTINATION=1 (P6.4) replaces that debug intent with the two ways
 # a destination really arrives: an ACTION_VIEW geo: URI, as OsmAnd's "Geo" share item
 # sends, and then an ACTION_SEND text in OsmAnd's "Message" format, which supersedes it.
 # An address-only geo: goes first and must be refused. The checks: both routes started
@@ -64,7 +80,7 @@
 # label or coordinate reached the report, and the decoded picture shows the line — route
 # colour absent from the first frames and present in the last.
 #
-# The guidance script (P6.5, needs LAB_ROUTING and LAB_MAP) is the whole loop: the app is
+# The guidance script (P6.5, needs OBF data) is the whole loop: the app is
 # sent a destination as an OsmAnd text share while the vehicle is parked, routes to it,
 # and puts it on the receiver cluster; the receiver then drives LAB_DRIVE (default
 # tools/lab-receiver/drives/lexington.csv, written by tools/jni-host-test/LabDrive.java) -
@@ -76,12 +92,15 @@
 # enough to have some); the arrival and re-route checks then fail by design.
 #
 # LAB_REROUTE=fail (guidance only) is the re-route that finds nothing: once the first route
-# is computed the routing tile is moved out of the app's reach, so every re-route fails as
-# a real one does where BRouter cannot place the vehicle, and LAB_DRIVE defaults to
+# is computed the lab intent's lab_routes_fail makes every search fail with an ordinary
+# routing error for the rest of that attempt (Routing.labFailFor, debug builds only), as a
+# real one does where OsmAnd cannot place the vehicle, and not as "outside the maps", which
+# would stop re-routes altogether. LAB_DRIVE defaults to
 # tools/lab-receiver/drives/lexington-return.csv, which misses the same turn, turns round
 # and rejoins the route it had. The cluster must go REROUTING and then ACTIVE again on the
-# old route, with no new route, and arrive; the app side checks the failures were counted,
-# none was computed, and that it said it was back on the route.
+# old route, with no new route, and arrive; the app side checks the failures were counted
+# as that error, none was computed, and that it said it was back on the route. Once the
+# attempt is over a lab route must be computed again: the hook ends with its attempt.
 #
 # LAB_FAVORITES="name@lat,lon;name@lat,lon" seeds the dashboard's favorites tile through
 # the lab intent before the attempt starts, so the captured frames show the list drawn
@@ -94,11 +113,7 @@
 # handle on the phone's Home tab down one row and checks that the two rows changed places
 # on the screen and that the app said it moved one. It works under any script.
 #
-# LAB_MAP_EXTRA=<file.map> installs a second map beside LAB_MAP. The app draws every
-# installed map as one, so this checks that the pane still renders and follows the
-# vehicle with more than one file behind it, and that the report names both.
-#
-# The daynight script (P7.6, needs LAB_MAP) parks the vehicle, starts the head unit in
+# The daynight script (P7.6, needs OBF data) parks the vehicle, starts the head unit in
 # day (NIGHT_DATA is_night=false), and once the map has settled flips it to night, back
 # to day, and to night again. The receiver watches the map pane in every decoded picture
 # across each flip: it must change theme (most of the pane, darker for night, lighter for
@@ -107,7 +122,7 @@
 # its own switch counters: three switches, none of which gave up waiting for its tiles.
 # Frames of each theme are in frames/; the receiver prints the video second of each flip.
 #
-# The controls script (P7.2, P7.3, needs LAB_MAP) presses the dashboard's own controls
+# The controls script (P7.2, P7.3, needs OBF data) presses the dashboard's own controls
 # on the projected picture: +, +, -, the notification pause and day/night, each on a
 # settled picture. The receiver checks each press changed what it should (the map pane,
 # the pause icon, a header gone light); the app side checks its report says zoom 17, three
@@ -115,7 +130,7 @@
 # choices were saved to the settings file.
 #
 # LAB_MARKER=<colour> and LAB_DIAGNOSTICS=1 (P7.2, P7.3) seed the app's saved settings
-# before its first launch, the way LAB_MAP installs a map: the marker colour and the
+# before its first launch, the way LAB_OBF installs a map: the marker colour and the
 # header's debug line are display choices the session reads from the settings, never
 # from the lab intent, so this is how a lab frame shows a non-default one.
 #
@@ -123,7 +138,7 @@
 # night is what every run before P7.6 sent and stays the default; flip starts in day and
 # sends night that long after the app subscribes. It needs LAB_SENSORS=all (the default).
 #
-# The endroute script (P7.4, P7.5, needs LAB_ROUTING and LAB_MAP) shares the guidance
+# The endroute script (P7.4, P7.5, needs OBF data) shares the guidance
 # destination while parked, and once the cluster has the route presses End route on the
 # trip panel. The receiver checks the cluster went INACTIVE and heard no route after it,
 # and that the trip panel and the turn card left the picture; the app side checks it was
@@ -181,7 +196,7 @@
 # dumpsys); then the lab Bluetooth override is withdrawn and the phone must say there is
 # no Bluetooth audio. screen-maps-voice-session.png, screen-voice-sample-*.png.
 #
-# The voice script (P8.2, needs LAB_ROUTING, LAB_MAP and the lab player) is the guidance
+# The voice script (P8.2, needs OBF data and the lab player) is the guidance
 # drive with turn prompts: the same destination, drive and checks as the guidance script,
 # with the speech script's engine (LAB_SPEECH_ENGINE, the lab player's silent stand-in by
 # default) and Bluetooth override. On the way the receiver presses the trip panel's voice
@@ -197,7 +212,7 @@
 # The lab player is also what the endroute script's Resume press plays: the emulator image
 # has no launchable player, and since part 2b only launchable apps are listed.
 #
-# The traffic script (P9, needs LAB_ROUTING and LAB_MAP; LAB_TRAFFIC set with no
+# The traffic script (P9, needs OBF data; LAB_TRAFFIC set with no
 # script names it too) runs live traffic against a stand-in HERE server,
 # tools/here-standin/here-standin.py, started in the pod beside the emulator on 127.0.0.1:8765,
 # which the emulator reaches as http://10.0.2.2:8765 (the debug build allows cleartext to that
@@ -275,25 +290,24 @@
 #     (2 s at most).
 # Every run checks that no place, condition, headline or fixture text reached the report.
 #
-# LAB_REGION=austin (P11, docs/verification.md, "Emulator lab") moves the lab to Texas: LAB_MAP
-# defaults to $OPENAUTO_CACHE/maps/texas.map, the routing tile is W100_N30.rd5 (LAB_ROUTING still
-# names its directory, normally $OPENAUTO_CACHE/rd5), the receiver's fixed fix and the track's
-# start are downtown Austin by I-35 (30.2660,-97.7360; --position: the spot near downtown with
-# the most gas stations, food and shops within the 800x480 pane), LAB_ROUTE and the guidance
-# destination default to Austin points, and $OPENAUTO_CACHE/obf/Us_texas_austin_northamerica.obf
-# is mounted read-only and moved into the debug app's files/lab-obf/, which a debug build reads
-# beside the maps folder. The Lexington drives do not fit it: give LAB_DRIVE for guidance.
+# LAB_REGION=austin (P11, docs/verification.md, "Emulator lab") moves the lab to Texas: LAB_OBF
+# defaults to $OPENAUTO_CACHE/obf/Us_texas_austin_northamerica.obf, installed for every script,
+# the receiver's fixed fix and the track's start are downtown Austin by I-35 (30.2660,-97.7360;
+# --position: the spot near downtown with the most gas stations, food and shops within the
+# 800x480 pane), and LAB_ROUTE and the guidance destination default to Austin points. The
+# Lexington drives do not fit it: give LAB_DRIVE for guidance.
 #
 # LAB_POI=gas,food,shop (P11.5) lights those map buttons when the projection starts (debug builds
-# read files/lab-poi, written here; the buttons are otherwise off at every start). Needs OBF data,
-# so LAB_REGION=austin. With the track script the receiver (--poi) waits, parked, for the lit
+# read files/lab-poi, written here; the buttons are otherwise off at every start). It installs
+# OBF data; the Austin position is the one chosen for it. With the track script the
+# receiver (--poi) waits, parked, for the lit
 # kinds' markers in the map pane, counted by colour, in the palette it starts in and then the
 # other, saves renders/poi-night.png and renders/poi-day.png, taps a marker (the first window of
 # a lit kind's colour), checks the flex tile shows its card (renders/poi-card-*.png), presses
 # Close, checks the tile is back, and only then drives. The app side
 # checks its report counted queries and markers, and that no OBF file name reached it.
 #
-# LAB_POI_AHEAD=gas|food|shop (P11.5a, the track script with LAB_REGION=austin and LAB_ROUTING) is
+# LAB_POI_AHEAD=gas|food|shop (P11.5a, the track script with LAB_REGION=austin) is
 # search ahead on the route. Once projecting, Round Rock (north up I-35) is shared as OsmAnd shares
 # a destination, from the parked vehicle downtown; once the route is computed this script writes
 # /out/poi-ahead-go and the receiver (--poi-ahead) presses that kind's button, laid out under the
@@ -419,35 +433,41 @@ out=$CACHE_ROOT/emulator-lab/$(date -u +%Y%m%dT%H%M%SZ)
 mkdir -p "$out" "$CACHE_ROOT/emulator-avd"
 # LAB_VIDEO_CONFIG=1920x1080 advertises the resolution the vehicle actually projects,
 # which is what the owned map's label density and frame cost should be judged at.
-# LAB_MAP=<file.map> renders the P5.5 owned map from real data. The region has to cover
-# the position LabSensorHandler reports (42.4242, -71.2121) or the pane draws an empty
+# The maps the lab installs (LAB_OBF, see the header) have to cover the position
+# LabSensorHandler reports (42.4242, -71.2121, or Austin's) or the pane draws an empty
 # map, which looks identical to a broken one.
 # Lab data is never copied into a run's results (once ~100 copies of a 201 MB map, 50 GB):
-# the map, the extra map and the routing tiles are mounted read-only into the emulator
-# container under /lab-data and pushed from there. The central copies live in
-# $OPENAUTO_CACHE/maps (massachusetts.map, monaco.map, texas.map) and $OPENAUTO_CACHE/rd5.
-# Scripts that cannot run without a map default LAB_MAP to the central Massachusetts one;
-# every other script still runs map-less unless LAB_MAP is given (the first-run check).
-LAB_DATA_MOUNTS=
-# P11: the Austin lab (LAB_REGION=austin): the Texas map, its routing tile, its OBF file, and the
-# receiver's fixed fix moved to downtown Austin.
+# the OsmAnd maps are mounted read-only into the emulator container under /lab-data/obf
+# and pushed from there. The central copies live in $OPENAUTO_CACHE/obf.
+# P11: the Austin lab (LAB_REGION=austin): its OBF file, and the receiver's fixed fix moved to
+# downtown Austin.
 REGION=${LAB_REGION:-massachusetts}
 case $REGION in massachusetts|austin) ;; *) echo "emulator-lab: LAB_REGION is massachusetts or austin" >&2; exit 1 ;; esac
-RD5_TILE=W75_N40
 POSITION_ARGS=
 if [ "$REGION" = austin ]; then
-    RD5_TILE=W100_N30
-    LAB_MAP=${LAB_MAP:-$CACHE_ROOT/maps/texas.map}
     POSITION_ARGS="--position 30.2660,-97.7360"
-    obf=${LAB_OBF:-$CACHE_ROOT/obf/Us_texas_austin_northamerica.obf}
-    [ -f "$obf" ] || { echo "emulator-lab: no OBF file at $obf" >&2; exit 1; }
-    LAB_DATA_MOUNTS="$LAB_DATA_MOUNTS -v $(realpath "$obf"):/lab-data/obf/$(basename "$obf"):ro"
+    REGION_OBF=$CACHE_ROOT/obf/Us_texas_austin_northamerica.obf
+else
+    REGION_OBF=$CACHE_ROOT/obf/Us_massachusetts_northamerica.obf
+fi
+# P6.3: the cross-town route asked for through the lab intent: LAB_ROUTE=1 the region own,
+# otherwise the two points given.
+ROUTE=
+if [ -n "${LAB_ROUTE:-}" ]; then
+    if [ "$LAB_ROUTE" != 1 ]; then ROUTE=$LAB_ROUTE
+    elif [ "$REGION" = austin ]; then ROUTE="30.2660,-97.7360 30.2849,-97.7341"
+    else ROUTE="42.4242,-71.2121 42.3551,-71.0656"; fi
+fi
+# The osmand script shares its own destinations and checks the route it gets for each; a
+# lab route or the destination shares beside it would answer for one and spoil the other.
+if [ "$SCRIPT" = osmand ] && { [ -n "$ROUTE" ] || [ -n "${LAB_DESTINATION:-}" ]; }; then
+    echo "emulator-lab: LAB_ROUTE and LAB_DESTINATION do not combine with the osmand script" >&2
+    exit 1
 fi
 # P11.5: the POI buttons lit at the start, through files/lab-poi (debug builds).
 POI_ARGS=
 if [ -n "${LAB_POI:-}" ]; then
     echo "$LAB_POI" | grep -Eq "^(gas|food|shop)(,(gas|food|shop))*$" || { echo "emulator-lab: LAB_POI is a list of gas, food and shop" >&2; exit 1; }
-    [ "$REGION" = austin ] || [ -n "${LAB_OBF:-}" ] || { echo "emulator-lab: LAB_POI needs OBF data: LAB_REGION=austin" >&2; exit 1; }
     echo "$LAB_POI" > "$out/lab-poi"
     [ "$SCRIPT" != track ] || POI_ARGS="--poi $LAB_POI"
 fi
@@ -457,18 +477,48 @@ if [ -n "${LAB_POI_AHEAD:-}" ]; then
     case $LAB_POI_AHEAD in gas|food|shop) ;; *) echo "emulator-lab: LAB_POI_AHEAD is gas, food or shop" >&2; exit 1 ;; esac
     [ "$SCRIPT" = track ] || { echo "emulator-lab: LAB_POI_AHEAD is for the track script" >&2; exit 1; }
     [ "$REGION" = austin ] || { echo "emulator-lab: LAB_POI_AHEAD needs LAB_REGION=austin" >&2; exit 1; }
-    [ -n "${LAB_ROUTING:-}" ] || { echo "emulator-lab: LAB_POI_AHEAD needs LAB_ROUTING" >&2; exit 1; }
     case ${LAB_POI:-} in *$LAB_POI_AHEAD*) echo "emulator-lab: LAB_POI must not light the LAB_POI_AHEAD button: the press would turn it off" >&2; exit 1 ;; esac
     POI_AHEAD=$LAB_POI_AHEAD
     POI_ARGS="$POI_ARGS --poi-ahead $LAB_POI_AHEAD"
 fi
-if [ -z "${LAB_MAP:-}" ] && { [ "$SCRIPT" = track ] || [ "$SCRIPT" = guidance ] || [ "$SCRIPT" = daynight ] \
-    || [ "$SCRIPT" = controls ] || [ "$SCRIPT" = endroute ] || [ "$SCRIPT" = voice ] || [ "$SCRIPT" = traffic ]; }; then
-    LAB_MAP=$CACHE_ROOT/maps/massachusetts.map
+# Which runs need OsmAnd maps (a map to draw, a route to compute, places to find), and which
+# get the region own map by default: those, and every Austin run. LAB_OBF names others, a
+# colon-separated list as PATH is (Podman mounts cannot name a path with a colon anyway);
+# LAB_OBF=none runs map-less, which only a run that needs no map may do.
+NEEDS_OBF=0
+case $SCRIPT in track|guidance|daynight|controls|endroute|voice|traffic|osmand) NEEDS_OBF=1 ;; esac
+if [ -n "$ROUTE" ] || [ -n "${LAB_DESTINATION:-}" ] || [ -n "${LAB_POI:-}" ] || [ -n "$POI_AHEAD" ]; then NEEDS_OBF=1; fi
+if [ -n "${LAB_OBF:-}" ]; then OBF_FILES=$LAB_OBF
+elif [ "$NEEDS_OBF" = 1 ] || [ "$REGION" = austin ]; then OBF_FILES=$REGION_OBF
+else OBF_FILES=; fi
+if [ "$OBF_FILES" = none ]; then
+    [ "$NEEDS_OBF" = 0 ] || { echo "emulator-lab: LAB_OBF=none, but the $SCRIPT run needs map data" >&2; exit 1; }
+    OBF_FILES=
 fi
-if [ -n "${LAB_MAP:-}" ]; then
-    [ -f "$LAB_MAP" ] || { echo "emulator-lab: no map file at $LAB_MAP" >&2; exit 1; }
-    LAB_DATA_MOUNTS="$LAB_DATA_MOUNTS -v $(realpath "$LAB_MAP"):/lab-data/region.map:ro"
+# Each file is its own Podman argument (the positional parameters, unused from here on), so
+# a path may hold spaces; the name it keeps on the phone may not hold anything the Android
+# shell would read (the container script quotes it with double quotes).
+set --
+OBF_COUNT=0
+OBF_NAMES=/
+if [ -n "$OBF_FILES" ]; then
+    set -f
+    old_ifs=$IFS
+    IFS=:
+    for obf in $OBF_FILES; do
+        [ -n "$obf" ] || continue
+        name=$(basename "$obf")
+        case $name in *.obf) ;; *) echo "emulator-lab: LAB_OBF names $obf, not an .obf file" >&2; exit 1 ;; esac
+        case $name in *[!A-Za-z0-9\ ._+-]*) echo "emulator-lab: LAB_OBF file name $name: letters, digits, space and ._+- only" >&2; exit 1 ;; esac
+        [ -f "$obf" ] || { echo "emulator-lab: no OBF file at $obf" >&2; exit 1; }
+        case $OBF_NAMES in *"/$name/"*) echo "emulator-lab: LAB_OBF names two files called $name" >&2; exit 1 ;; esac
+        OBF_NAMES="$OBF_NAMES$name/"
+        set -- "$@" -v "$(realpath "$obf"):/lab-data/obf/$name:ro"
+        OBF_COUNT=$((OBF_COUNT + 1))
+    done
+    IFS=$old_ifs
+    set +f
+    [ "$OBF_COUNT" -ge 1 ] || { echo "emulator-lab: LAB_OBF lists no file" >&2; exit 1; }
 fi
 DRIVE_ARGS=
 REROUTE_MODE=${LAB_REROUTE:-ok}
@@ -477,12 +527,7 @@ if [ "$REROUTE_MODE" = fail ] && [ "$SCRIPT" != guidance ]; then
     echo "emulator-lab: LAB_REROUTE=fail is for the guidance script" >&2
     exit 1
 fi
-if [ "$SCRIPT" = endroute ] && [ -z "${LAB_ROUTING:-}" ]; then
-    echo "emulator-lab: the endroute script needs LAB_ROUTING" >&2
-    exit 1
-fi
 if [ "$SCRIPT" = guidance ] || [ "$SCRIPT" = voice ] || [ "$SCRIPT" = traffic ]; then
-    [ -n "${LAB_ROUTING:-}" ] || { echo "emulator-lab: the $SCRIPT script needs LAB_ROUTING" >&2; exit 1; }
     if [ "$SCRIPT" = traffic ]; then drive=${LAB_DRIVE:-tools/lab-receiver/drives/traffic.csv}
     elif [ "$REROUTE_MODE" = fail ]; then drive=${LAB_DRIVE:-tools/lab-receiver/drives/lexington-return.csv}
     else drive=${LAB_DRIVE:-tools/lab-receiver/drives/lexington.csv}; fi
@@ -506,11 +551,6 @@ MARGIN_ARGS=
 if [ -n "${LAB_MARGINS:-}" ]; then
     echo "$LAB_MARGINS" | grep -Eq "^[0-9]+x[0-9]+$" || { echo "emulator-lab: LAB_MARGINS is WxH" >&2; exit 1; }
     MARGIN_ARGS="--margins $LAB_MARGINS"
-fi
-if [ -n "${LAB_MAP_EXTRA:-}" ]; then
-    [ -f "$LAB_MAP_EXTRA" ] || { echo "emulator-lab: no map file at $LAB_MAP_EXTRA" >&2; exit 1; }
-    [ -n "${LAB_MAP:-}" ] || { echo "emulator-lab: LAB_MAP_EXTRA needs LAB_MAP" >&2; exit 1; }
-    LAB_DATA_MOUNTS="$LAB_DATA_MOUNTS -v $(realpath "$LAB_MAP_EXTRA"):/lab-data/extra.map:ro"
 fi
 # P7.6: what NIGHT_DATA says. Unset leaves the receiver at its default, night.
 NIGHT_ARGS=
@@ -598,20 +638,8 @@ if [ -n "${LAB_MARKER:-}" ] || [ -n "${LAB_DIAGNOSTICS:-}" ] || [ "$SCRIPT" = ca
         echo "</map>"
     } > "$out/settings.xml"
 fi
-ROUTE=
-if [ -n "${LAB_ROUTING:-}" ]; then
-    [ -f "$LAB_ROUTING/$RD5_TILE.rd5" ] || { echo "emulator-lab: no $RD5_TILE.rd5 in $LAB_ROUTING" >&2; exit 1; }
-    LAB_DATA_MOUNTS="$LAB_DATA_MOUNTS -v $(realpath "$LAB_ROUTING/$RD5_TILE.rd5"):/lab-data/$RD5_TILE.rd5:ro"
-    # The lab position to Boston Common: about 14 km of town streets and one motorway. In
-    # Austin, downtown to the university, about 3 km.
-    if [ "$REGION" = austin ]; then ROUTE=${LAB_ROUTE:-30.2660,-97.7360 30.2849,-97.7341}
-    else ROUTE=${LAB_ROUTE:-42.4242,-71.2121 42.3551,-71.0656}; fi
-fi
 DESTINATION=0
-if [ -n "${LAB_DESTINATION:-}" ]; then
-    [ -n "${LAB_ROUTING:-}" ] || { echo "emulator-lab: LAB_DESTINATION needs LAB_ROUTING" >&2; exit 1; }
-    DESTINATION=1
-fi
+if [ -n "${LAB_DESTINATION:-}" ]; then DESTINATION=1; fi
 pod=openauto-lab-$$
 trap 'podman pod rm -f "$pod" > /dev/null 2>&1 || true' EXIT
 # Only loopback, shared by the receiver and the emulator; the telecom calls run adds the
@@ -675,16 +703,15 @@ podman run --rm --pod "$pod" --name "$name" --security-opt label=disable \
   -e LAB_SENSORS="${LAB_SENSORS:-all}" -e SCRIPT="$SCRIPT" -e ROUTE="$ROUTE" -e OSMAND_EXPECT="$OSMAND_EXPECT" \
   -e DESTINATION="$DESTINATION" -e NAVIGATION_SCRIPT="$NAVIGATION_SCRIPT" \
   -e GUIDE_DEST="${LAB_GUIDE_DEST:-$(if [ "$REGION" = austin ]; then echo 30.28490,-97.73410; elif [ "$SCRIPT" = traffic ]; then echo 42.35510,-71.06560; else echo 42.44950,-71.23100; fi)}" \
-  -e RD5_TILE="$RD5_TILE" -e POI_AHEAD="$POI_AHEAD" \
+  -e POI_AHEAD="$POI_AHEAD" -e OBF_COUNT="$OBF_COUNT" \
   -e LAB_FAVORITES="${LAB_FAVORITES:-}" -e LAB_RECENT="${LAB_RECENT:-}" -e LAB_SCREENS="${LAB_SCREENS:-}" \
   -e LAB_REORDER="${LAB_REORDER:-}" -e LAB_WIRELESS_TCP="${LAB_WIRELESS_TCP:-}" \
-  -e MAPS_EXPECTED="$([ -n "${LAB_MAP_EXTRA:-}" ] && echo 2 || echo 1)" \
   -e CALL_ROUTE="$CALL_ROUTE" -e MODEM="$MODEM" -e SPEECH_ENGINE="$SPEECH_ENGINE" \
   -e TRAFFIC_MODE="$TRAFFIC_MODE" -e OFFER_LAYOUT="$OFFER_LAYOUT" -e TRAFFIC_KEY="$TRAFFIC_KEY" \
   -e WEATHER_MODE="$WEATHER_MODE" -e WEATHER_VOICE="$WEATHER_VOICE" -e SPEAKS="$SPEAKS" \
   -e CONGESTION_EXPECT="$CONGESTION_EXPECT" -e CONGESTION_RESTART="$CONGESTION_RESTART" \
   $LAB_APK_MOUNT $LAB_NATIVE_MOUNT \
-  $LAB_DATA_MOUNTS -v "$out:/out" "$EMULATOR_IMAGE" sh -eu -c '
+  "$@" -v "$out:/out" "$EMULATOR_IMAGE" sh -eu -c '
     package=com.jw6ventures.headlink
     log() { echo "emulator-lab: $*"; }
     # The newest *session* report. Wireless probe and link reports share the folder and
@@ -840,50 +867,20 @@ with zipfile.ZipFile(sys.argv[1], \"a\") as apk:
             && rm -f /data/local/tmp/settings.xml" || fail "settings install"
         log "settings seeded: $(tr -d "\n" < /out/settings.xml)"
     fi
-    # The owned map reads operator-supplied data out of app-private storage; there is no
-    # download path (APP10), so the lab supplies it the same way an operator would.
-    if [ -f /lab-data/region.map ]; then
-        adb push /lab-data/region.map /data/local/tmp/region.map > /dev/null 2>&1 || fail "map push"
-        uid=$(adb shell stat -c %u /data/data/$package | tr -d "\r")
-        adb shell "mkdir -p /data/data/$package/files/maps \
-            && cp /data/local/tmp/region.map /data/data/$package/files/maps/region.map \
-            && chown $uid:$uid /data/data/$package/files/maps/region.map \
-            && restorecon -R /data/data/$package/files \
-            && rm -f /data/local/tmp/region.map" || fail "map install"
-        log "map installed: $(adb shell stat -c %s /data/data/$package/files/maps/region.map | tr -d "\r") bytes"
-    fi
-    if [ -f /lab-data/extra.map ]; then
-        adb push /lab-data/extra.map /data/local/tmp/extra.map > /dev/null 2>&1 || fail "extra map push"
-        uid=$(adb shell stat -c %u /data/data/$package | tr -d "\r")
-        adb shell "cp /data/local/tmp/extra.map /data/data/$package/files/maps/extra.map \
-            && chown $uid:$uid /data/data/$package/files/maps/extra.map \
-            && restorecon -R /data/data/$package/files \
-            && rm -f /data/local/tmp/extra.map" || fail "extra map install"
-        log "extra map installed: $(adb shell stat -c %s /data/data/$package/files/maps/extra.map | tr -d "\r") bytes"
-    fi
-    # P6.3: the routing tile goes where the connection screen import would put it.
-    if [ -f /lab-data/$RD5_TILE.rd5 ]; then
-        adb push /lab-data/$RD5_TILE.rd5 /data/local/tmp/$RD5_TILE.rd5 > /dev/null 2>&1 || fail "routing tile push"
-        uid=$(adb shell stat -c %u /data/data/$package | tr -d "\r")
-        adb shell "mkdir -p /data/data/$package/files/routing/segments \
-            && cp /data/local/tmp/$RD5_TILE.rd5 /data/data/$package/files/routing/segments/$RD5_TILE.rd5 \
-            && chown -R $uid:$uid /data/data/$package/files/routing \
-            && restorecon -R /data/data/$package/files \
-            && rm -f /data/local/tmp/$RD5_TILE.rd5" || fail "routing tile install"
-        log "routing tile installed: $(adb shell stat -c %s /data/data/$package/files/routing/segments/$RD5_TILE.rd5 | tr -d "\r") bytes"
-    fi
-    # P11: OsmAnd maps for a debug build, in files/lab-obf/ (a folder grant cannot be
-    # scripted). Moved, not copied, from the staging push: one copy on the small data partition.
+    # P11: the OsmAnd maps, the app only map and routing data, in files/lab-obf/: a debug
+    # build reads them beside the maps folder, whose grant cannot be scripted. There is no
+    # download path (APP10), so the lab supplies them as the operator would supply the folder.
+    # Moved, not copied, from the staging push: one copy on the small data partition.
     for obf in /lab-data/obf/*.obf; do
         [ -f "$obf" ] || continue
         name=$(basename "$obf")
         adb push "$obf" "/data/local/tmp/$name" > /dev/null 2>&1 || fail "OBF push"
         uid=$(adb shell stat -c %u /data/data/$package | tr -d "\r")
         adb shell "mkdir -p /data/data/$package/files/lab-obf \
-            && mv /data/local/tmp/$name /data/data/$package/files/lab-obf/$name \
+            && mv \"/data/local/tmp/$name\" \"/data/data/$package/files/lab-obf/$name\" \
             && chown -R $uid:$uid /data/data/$package/files/lab-obf \
             && restorecon -R /data/data/$package/files" || fail "OBF install"
-        log "OBF installed: $(adb shell stat -c %s /data/data/$package/files/lab-obf/$name | tr -d "\r") bytes"
+        log "OBF installed: $(adb shell stat -c %s "\"/data/data/$package/files/lab-obf/$name\"" | tr -d "\r") bytes"
     done
     # P11.5: the POI buttons the projection lights at its start (debug builds).
     if [ -f /out/lab-poi ]; then
@@ -1052,10 +1049,18 @@ https://osmand.net/map?pin=$glat,$glon#16/$glat/$glon"
         [ -n "$routed" ] || fail "no route came back for the shared destination"
         log "route computed; the receiver drives once the cluster is active"
         if [ "$REROUTE_MODE" = fail ]; then
-            # Every request opens the tile afresh, so from here on each re-route fails.
-            segments=/data/data/$package/files/routing/segments
-            adb shell "mv $segments/$RD5_TILE.rd5 $segments/$RD5_TILE.rd5.away" || fail "routing tile move"
-            log "routing tile moved away: every re-route from here fails"
+            # The debug build own hook (Routing.labFailFor): to the end of this attempt every
+            # search fails with an ordinary error, never a coverage refusal, which would stop
+            # re-routes.
+            adb shell am start -n $package/.ConnectionActivity --ez lab_routes_fail true \
+                > /out/lab-routes-fail.txt 2>&1 || fail "lab intent: routes fail"
+            failing=
+            for _ in $(seq 20); do
+                if report | grep -q "lab routing fails every search"; then failing=1; break; fi
+                sleep 1
+            done
+            [ -n "$failing" ] || fail "the app never said its searches fail"
+            log "every route search fails from here: each re-route fails"
         fi
         if [ "$SCRIPT" = endroute ]; then
             # P7.4a: the next route after End route. Once the app has noted the press, and
@@ -1181,6 +1186,7 @@ https://osmand.net/map?pin=30.50860,-97.67880#16/30.50860/-97.67880"
     elif [ -n "$ROUTE" ]; then
         adb shell am start -n $package/.ConnectionActivity --es lab_route "\"$ROUTE\"" \
             > /out/lab-route.txt 2>&1 || fail "lab route intent"
+        labroute=1
         log "route requested while projecting"
     fi
 
@@ -1585,11 +1591,35 @@ https://osmand.net/map?pin=30.50860,-97.67880#16/30.50860/-97.67880"
         if report | grep -qx "stage=IDLE"; then idle=1; break; fi
         sleep 1
     done
+    # P6.3: the lab route runs on the routing thread whatever the attempt does. A short
+    # script can end before an OsmAnd search across town is done in the emulator debug build,
+    # and its result still reaches the saved report, so it is waited for here.
+    if [ -n "${labroute:-}" ]; then
+        for _ in $(seq 180); do
+            if report | grep -qE "route (computed in|failed after)"; then break; fi
+            sleep 1
+        done
+    fi
     adb exec-out screencap -p > /out/after.png
     name=$(session_report)
     [ -n "$name" ] || fail "no saved report"
     adb exec-out run-as $package cat "files/reports/$name" > /out/app-report.txt
     [ -n "$idle" ] || fail "the attempt did not finish"
+    if [ "$REROUTE_MODE" = fail ]; then
+        # The hook ends with its attempt: in the same app process, the attempt over, a lab
+        # route (the parked position to the Battle Green) must be computed again.
+        adb shell am start -n $package/.ConnectionActivity --es lab_route "\"42.4242,-71.2121 42.4495,-71.2310\"" \
+            > /out/lab-route-after.txt 2>&1 || fail "lab route intent after the attempt"
+        after=
+        for _ in $(seq 120); do
+            after=$(report | sed -n "/^+[0-9]*ms stage=IDLE final_category=/,\$p" | grep -E "route (computed in|failed after)" | head -n 1)
+            [ -z "$after" ] || break
+            sleep 1
+        done
+        report > /out/app-report-after.txt
+        echo "$after" | grep -q "route computed in" || fail "no route once the attempt with the hook was over: ${after:-none}"
+        log "after the attempt: $after"
+    fi
 
     if [ "$SCRIPT" = osmand ]; then
         # A share with nothing holding the maps open: the projection has ended and Home
@@ -1832,6 +1862,11 @@ https://osmand.net/map?pin=30.50860,-97.67880#16/30.50860/-97.67880"
         grep -Eq "navigation_arrivals=[1-9]" /out/app-report.txt || fail "the cluster was never told the drive arrived"
         if [ "$REROUTE_MODE" = fail ]; then
             # Asked for and failed, never computed; back on the old route by the drive alone.
+            # Failed as the lab hook fails them, an ordinary error: no coverage refusal.
+            grep -q "re-route failed after [0-9]* ms: lab: routing failed on purpose" /out/app-report.txt \
+                || fail "no re-route failed with the lab hook error: $(grep "re-route failed" /out/app-report.txt | tail -n 1)"
+            ! grep -q "outside the OsmAnd maps\|its mirror inside" /out/app-report.txt \
+                || fail "a re-route was refused for coverage, which stops re-routes"
             grep -Eq "guidance_reroutes=[1-9][0-9]* guidance_reroutes_done=0 guidance_reroute_failures=[1-9]" \
                 /out/app-report.txt \
                 || fail "re-routes were not asked for and failed: $(grep "^guidance_reroutes" /out/app-report.txt)"
@@ -2091,11 +2126,11 @@ https://osmand.net/map?pin=30.50860,-97.67880#16/30.50860/-97.67880"
         grep "^routing_" /out/app-report.txt | while read -r line; do log "$line"; done
         grep -E "route (computed|failed)|stage=IDLE" /out/app-report.txt | while read -r line; do log "$line"; done
     fi
-    # Every installed map is drawn: the engine line names both files, and no map failed.
-    if [ "${MAPS_EXPECTED:-1}" = 2 ]; then
-        grep -Eq "data=(region\.map,extra\.map|extra\.map,region\.map) .*error=-" /out/app-report.txt \
-            || fail "the map engine did not open both maps: $(grep "map_engine=" /out/app-report.txt)"
-        log "maps: both files drawn as one"
+    # Every installed map is drawn: the engine opened every OsmAnd file as one, and no map failed.
+    if [ "${OBF_COUNT:-0}" -ge 2 ]; then
+        grep -Eq "data=obf:$OBF_COUNT .*error=-" /out/app-report.txt \
+            || fail "the map engine did not open all $OBF_COUNT maps: $(grep "map_engine=" /out/app-report.txt)"
+        log "maps: all $OBF_COUNT files drawn as one"
     fi
     # P9: the traffic runs, by the app report, its snapshots and the stand-in counts.
     if [ "$SCRIPT" = traffic ]; then
@@ -2342,7 +2377,7 @@ def field(text, name):
 
 trip = int(field(report, "dashboard_trip_seconds"))
 delay = int(field(report, "traffic_delay_s"))
-brouter = int(field(report, "routing_seconds"))
+routed = int(field(report, "routing_seconds"))
 cluster = None
 for line in (out / "receiver-eta.txt").read_text().splitlines():
     parts = line.split(" ")
@@ -2350,10 +2385,10 @@ for line in (out / "receiver-eta.txt").read_text().splitlines():
         cluster = int(parts[1])
 rise = re.search(r"eta_first_rise=(-?\d+)->(-?\d+)", (out / "receiver.txt").read_text())
 before, after = (int(rise.group(1)), int(rise.group(2))) if rise else (-1, -1)
-ok = cluster is not None and abs(cluster - trip) <= 2 and abs((after - before) - delay) <= 60 and abs(trip - brouter - delay) <= 60
-print("emulator-lab: time to the destination: cluster %s s, trip panel %s s, BRouter %s s + traffic %s s; "
+ok = cluster is not None and abs(cluster - trip) <= 2 and abs((after - before) - delay) <= 60 and abs(trip - routed - delay) <= 60
+print("emulator-lab: time to the destination: cluster %s s, trip panel %s s, route %s s + traffic %s s; "
       "the cluster rose %s -> %s (+%s s) when traffic arrived: %s"
-      % (cluster, trip, brouter, delay, before, after, after - before, "ok" if ok else "FAIL"))
+      % (cluster, trip, routed, delay, before, after, after - before, "ok" if ok else "FAIL"))
 sys.exit(0 if ok else 1)
 EOF
 fi
