@@ -3,7 +3,7 @@ HeadLink is an independent, open-source app that drives a car's Android Auto hea
 <b>What it does</b>
 <ul>
 <li>Projects over USB, or wirelessly over the head unit's own Wi-Fi, started from the phone, automatically when the car connects, or from the car's Android Auto button.</li>
-<li>Its own offline map and turn-by-turn navigation (Mapsforge maps, BRouter routing), with turn instructions on the instrument cluster where the car supports it.</li>
+<li>Its own offline map and turn-by-turn navigation from the maps you download in OsmAnd, used read-only, with turn instructions on the instrument cluster where the car supports it.</li>
 <li>Media controls and now-playing for whatever is playing on the phone; phone audio stays on Bluetooth.</li>
 <li>Destinations shared from OsmAnd or any app, address search from OsmAnd map files, saved places.</li>
 <li>Optional live traffic with your own HERE key, and weather from Breezy Weather. Both are off by default.</li>

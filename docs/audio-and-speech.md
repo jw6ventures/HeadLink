@@ -281,7 +281,7 @@ in [navigation.md](navigation.md).
 
 **Speed** comes from the head unit's validated `car_speed`, else its validated
 `gps_speed`, else the phone's `Location.speed` (`Dashboard.guidanceSpeed`). With none,
-the step's own pace (BRouter's metres over seconds) is used. Speed is used for timing
+the step's own pace (the route's metres over seconds) is used. Speed is used for timing
 only and never reported.
 
 **When.** Each maneuver has up to three stages. Each is said at most once per step. A
@@ -529,9 +529,9 @@ logcat. `Transcript.Text.toString()` shows the length, not the words.
 through the Storage Access Framework, and the model is read in place through that
 document's file descriptor: never copied, never downloaded, never bundled. The card says
 "a whisper.cpp model file (ggml format, usually ending in .bin)" and nothing about where to
-get one. The grant is told apart from the OsmAnd maps folder and the drop folder by being
-on a document rather than a folder (`ObfRules.isSpeechModelGrant`), so choosing one never
-drops another.
+get one. The grant is told apart from the OsmAnd maps folder by being on a document
+rather than a folder (`ObfRules.isSpeechModelGrant`), so choosing one never drops the
+other.
 
 `SpeechModel.engine` loads it on first use and keeps it loaded (about 150 MB of memory
 for base.en) until `release`, a new file or Remove. Before reading, the loader refuses a

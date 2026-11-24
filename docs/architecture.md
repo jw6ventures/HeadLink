@@ -28,7 +28,7 @@ the car screen in [dashboard.md](dashboard.md), maps and routing in
  │   │             v                            │ now-playing/guidance│
  │   └─> ProjectionPipeline: Dashboard ─> DashboardRenderer (EGL)     │
  │         MapEngine (VTM) ─┘        └─> VideoEncoder (MediaCodec) ───┘
- │       AudioSource, MediaControl, Guide/Routing (BRouter), Traffic   │
+ │       AudioSource, MediaControl, Guide/Routing (OsmAnd), Traffic    │
  │                                                                    │
  │ WirelessLinkService, WirelessCompanionService, MediaAccessService, │
  │ CallCompanionService, DestinationActivity, WeatherNotifierReceiver │
@@ -123,8 +123,7 @@ against a host build of the library. Spec §5.3 is the contract.
   `IdentityImport` validates a supplied identity the same way before swapping it in.
 
 Release builds are not minified, so `app/proguard-rules.pro` is inert today. It keeps
-everything looked up by name: the natives, the callback, and BRouter's path models,
-which profiles name as strings. It also needs `-dontwarn javax.annotation.**`, or R8
+everything looked up by name: the natives and the callback. It also needs `-dontwarn javax.annotation.**`, or R8
 refuses to build at all, because VTM references `CheckReturnValue`. A one-off minified
 build showed those names survive. That is all it showed: no minified APK has run, and
 VTM's own reflection is unaudited. If minification is turned on, test a route and a
@@ -133,9 +132,7 @@ projection on a device first.
 ## The Android app
 
 Package `com.jw6ventures.headlink`, all in
-`app/src/main/kotlin/com/jw6ventures/headlink/` plus one file,
-`app/src/main/kotlin/btools/router/VoiceHintReader.kt`, which sits in BRouter's package
-to reach package-private state without modifying the vendored tree. minSdk 33,
+`app/src/main/kotlin/com/jw6ventures/headlink/`. minSdk 33,
 target/compileSdk 36.
 
 ### Processes
@@ -204,12 +201,12 @@ a head unit is waiting.
 | `aap-encoder` | `VideoEncoder` | drains MediaCodec into `submitVideo` |
 | `aap-audio` | `AudioSource` | PCM pump into `submitAudio` |
 | `aap-media`, `aap-players` | `MediaControl`, `MediaPlayers` | now-playing polling, player list |
-| `aap-route` | `RoutePlanner` | BRouter searches, at lowered priority; a new request terminates the running one |
+| `aap-route` | `RoutePlanner` | OsmAnd route searches, at lowered priority; a new request terminates the running one |
 | `traffic-fetch`, `traffic-match` | `Traffic` | HERE requests and matching, lowered priority |
 | `aap-poi`, `aap-weather`, `obf-library`, `phone-search` | various | POI queries, weather reads, OsmAnd file reads, search |
 | `wireless-link` and `wireless-*` | `WirelessLink`, `WirelessKeepAwake` | Bluetooth bootstrap, RFCOMM reader and watchdogs, Wi-Fi keep-awake pings |
 | `source-identity` | `IdentityWork` | identity load/create/import and TLS self-test |
-| `report-store`, `navigation-store`, `drop-folder`, `map-import`, `routing-import` | various | file I/O |
+| `report-store`, `navigation-store`, `legacy-data` (0.12's idempotent cleanup on every main-process start; read+write tree grants are released synchronously before it, old files and settings keys removed on this thread) | various | file I/O |
 
 Routing and traffic run at a lowered priority so they never compete with the scene and
 encoder. Time CPU work on the release build only: a debuggable APK ran routing about 30
@@ -268,10 +265,11 @@ code rule) and are enforced in the build where possible, mostly by
 - **No Google or AndroidX libraries.** No Play services, no Google Android Auto
   (gearhead), no AndroidX, no Google account. Platform APIs only. The APK's runtime
   dependencies are VTM, its one transitive dependency `androidsvg`, the vendored
-  BRouter, and the Kotlin standard library. `verify-apk.sh` fails on any `gms` or
+  OsmAnd-java with its Maven dependencies (`trove4j`, `jts-core`, `openlocationcode`,
+  `gson`), and the Kotlin standard library. `verify-apk.sh` fails on any `gms` or
   `gearhead` reference in the dex.
 - **Offline by default.** The handshake and projection need no network, no certificate
-  issuance and no attestation. Map, routing and OsmAnd data are supplied by the operator
+  issuance and no attestation. Map and routing data are the operator's own OsmAnd maps
   (see [data.md](data.md)), never downloaded; VTM's networked module `vtm-http` is
   deliberately not a dependency. Weather reads Breezy Weather's provider on the phone.
 - **`INTERNET` only for opt-in live traffic and the Home Assistant button.** Both are off
@@ -334,10 +332,10 @@ code rule) and are enforced in the build where possible, mostly by
 - **Third-party source held unmodified.** Vendored code is copied whole at a recorded
   pin and never edited, so provenance stays a diff against that pin and a re-sync is a
   directory copy:
-  - `vendor/brouter/`: BRouter v1.7.10 (`4d2639af`), five runtime modules, 101 files,
-    compiled as a plain Java library so no Android API can creep in. Vendored because
-    BRouter publishes no Maven Central artifact, so there is nothing for
-    `verification-metadata.xml` to pin. Warnings are suppressed, not fixed.
+  - `vendor/osmand/`: OsmAnd-java's router and `.obf` reader at a recorded commit (see
+    its README), vendored because OsmAnd publishes no Maven Central artifact. Until 0.12
+    `vendor/brouter/` (BRouter v1.7.10) sat beside it; it was removed with the BRouter
+    router.
   - `protocol/upstream/open-android-auto/`: 132 `.proto` files from open-android-auto
     `61eab61`, the input to `aap-proto`.
   - `protocol/upstream/osmand/OBF.proto`: reference only; nothing is generated from it

@@ -143,14 +143,16 @@ OsmAnd's source (`IntentHelper.parseNavigationIntent`, October 2026).
   arrive 6:40 · +7 min traffic". While a route is being followed, the distance and time
   are what is left to go (`RouteClock.figures`); otherwise they are the route's totals. The
   arrival uses the saved Clock setting and is left out when it isn't known. Waiting for a
-  position, finding a route, and no route found each have their own wording.
+  position, finding a route, and no route found each have their own wording. A
+  destination no map covers shows the coverage refusal instead ("No OsmAnd map with roads
+  in your maps folder covers …", or the mirrored-longitude hint).
 - **Destination box.** It takes `lat,lon`, two points `lat,lon lat,lon` (a route between
   them), a `geo:` URI or an OsmAnd link. From three characters, typed text that isn't
   coordinates searches the OsmAnd maps (250 ms after the last keystroke) and lists up to
   eight suggestions. Tapping one routes there. The search is ranked from the vehicle's
   position while projecting, otherwise the phone's last cached fix. With no OsmAnd folder
   chosen, it says where to choose one.
-- **Compute route** (needs routing data), **Clear route**, and **Preview route and
+- **Compute route** (needs an OsmAnd maps folder), **Clear route**, and **Preview route and
   alternatives**, which opens `PreviewActivity` in its own `:preview` process. That
   process keeps VTM's statics apart from the car's map. If the route changed while the
   preview was open (a re-route or a new destination), the choice is not applied.
@@ -197,17 +199,14 @@ marked optional are listed last under their own heading and don't keep Setup fro
 | Item | Listed when | Button |
 | --- | --- | --- |
 | No head unit trusted yet | No head unit is pinned | Trust and connect |
-| No OsmAnd maps folder chosen | The map or routing is set to OsmAnd's files (the default since 0.9), no maps folder is chosen, and the Mapsforge map or `.rd5` tiles it would fall back to are missing. Listed once, in place of the two below. | Choose folder |
-| No map installed | Draw map from OsmAnd files is off and no Mapsforge map is installed | Import map |
-| No routing data installed | Route with OsmAnd maps is off and no `.rd5` tile is installed | Import routing data |
-| No routing data for where you are | BRouter is routing (OsmAnd routing off, or no maps folder), tiles are installed, but none covers the 5° square of the phone's last cached fix. The fix can be any age, since the square only changes over hundreds of km. The detail names the tile needed. Needs location. | Import routing data |
+| No OsmAnd maps folder chosen | No maps folder is chosen. The map, routes and address search all read OsmAnd's maps, so nothing navigates without one. | Choose folder |
 | Notification access is off | Something you turned on reads notifications (Media controls, Notifications on the dashboard, or Call controls without the adb grant) and access isn't granted | Grant access: the consent text, then Android's notification-access screen |
 | Weather permission not granted | Show weather is on and Breezy Weather's permission isn't held | Grant |
 | Location is off | Neither location grant is held. Optional. | Allow location: an explanation, then Android's prompt |
 | Notifications are blocked | `POST_NOTIFICATIONS` is not granted. The session still runs, but its Stop may be hidden. Optional. | Opens the app's notification settings |
 
-- The import and trust buttons are enabled only when their own controls are (idle, no
-  route being computed).
+- Trust and connect is enabled only while idle with no identity work running. Choose
+  folder is always enabled, even during a projection or a route computation.
 - Location is asked for only from this button. The app never asks for it on its own
   (APP09).
 - If Android won't show a prompt again because it was refused for good, Allow location,
@@ -217,37 +216,52 @@ marked optional are listed last under their own heading and don't keep Setup fro
 
 ## Maps
 
+The cards, in order:
+
 | Card | What it holds |
 | --- | --- |
-| Maps | The installed maps and their total size; **Import map**, **Where to get maps** (opens the Mapsforge download page in the browser) |
-| Routing data | The installed tiles; **Import routing data**, **Where to get routing data** (opens the BRouter tile page) |
-| Drop folder | The chosen folder and its last check; **Choose drop folder**, **Check folder now** |
+| OsmAnd maps | The maps folder grant and the search and places settings (below). Moved here from the Settings tab in 0.12 |
 | Route preferences | Below |
 | Live traffic | Below |
 | Voice guidance | Below |
-| (last) | **Remove a map or tile** |
 
-- Import, the drop folder and what each file is are covered in [data.md](data.md).
-- The drop folder is checked every time the screen comes to the front.
-- Import map is disabled during a session.
-- **Remove a map or tile** lists every installed file with its size and deletes the one
-  you pick, after a confirmation that names it. It is one file at a time, because each is
-  a long transfer to put back. It is enabled only while idle, with no route being
-  computed and no drop-folder check running: a session reads its maps and the router
-  reads the tiles.
+There is nothing to import: the map, routes and search read the OsmAnd maps folder in
+place (see [data.md](data.md)). Until 0.12 this tab also had Mapsforge map and BRouter
+tile import, the drop folder, download links, **Remove a map or tile** and the "Route with
+OsmAnd maps" switch, and Settings → Map had "Draw map from OsmAnd files"; all are gone.
+On every start 0.12 releases any drop-folder grant and deletes leftover imported files.
+
+### OsmAnd maps
+
+`OsmAndMapsCard`, its own `poi` preferences file.
+
+| Setting | Default | Effect |
+| --- | --- | --- |
+| Choose folder | none | A read-only folder grant to OsmAnd's maps. A caption says where OsmAnd keeps them (Documents/osmand when set to "Manually specified") and that the map and routes come from these files too. A status line counts the readable maps. |
+| Markers per category | 25 | Gas, Food and Shop markers drawn at once (5–100) |
+| Look ahead | 50 miles | How far along the route search-ahead looks |
+| Corridor width | 0.5 mile | How far either side of the route still counts |
+| Candidates to check | 5 | Places whose detour is routed (1–10) |
+
+Distances are stored in miles and shown in the Speed unit. A value set elsewhere (the lab)
+that isn't in the list is added to the list rather than lost. **Verified:** emulator lab.
+The folder picker on the real phone has not been tried.
 
 ### Route preferences
 
 A change saves at once and recomputes the route being shown, from where you are now
-(`Navigation.optionsChanged`). Avoided roads cost more but are never closed outright, so
-a place that can only be reached that way is still reached. Mechanics and BRouter traps
-are in [navigation.md](navigation.md).
+(`Navigation.optionsChanged`). Avoid highways and Avoid toll roads make roads cost more
+without closing them, so a place reachable only that way is still reached; Avoid unpaved
+roads closes tracks and unpaved surfaces, so a place reachable only that way gets no
+route. Mechanics are in
+[navigation.md](navigation.md).
 
 | Setting | Default | Effect |
 | --- | --- | --- |
 | Avoid highways | off | Motorways and their ramps made much more costly |
 | Avoid toll roads | off | Toll-tagged roads and booths all but closed |
-| Avoid unpaved roads | off | Unpaved surfaces and rough tracks timed even slower |
+| Avoid unpaved roads | off | Tracks and unpaved or very rough surfaces closed |
+<!-- wave3: Bypass towns / Allow tracks rows pending the OsmAnd RouteOptions work -->
 | Bypass towns | off | Prefers roads outside cities and large towns |
 | Allow tracks | off | Opens farm and forest tracks and unclassified roads |
 | Top speed | 75 mph (121 km/h) | The profile's top speed, from 56 to 85 mph. It changes routes as well as times. |
@@ -255,7 +269,8 @@ are in [navigation.md](navigation.md).
 | Learn my pace | on | Corrects the time left by your pace learned across drives (per road kind, surroundings and 15 mile area) and by how this drive compares; Forget learned pace clears it |
 | Show other routes on the map | on | Up to two grey alternatives with "+N min" while a route is followed |
 
-The 75 mph default was chosen because BRouter's own 56 mph timed Austin to Dallas at
+<!-- wave3: top speed default and its 56 mph basis were BRouter measurements; recheck against OsmAnd -->
+The 75 mph default was chosen in P6 because BRouter's own 56 mph timed Austin to Dallas at
 3 h 42 min. James has not confirmed it. **Verified:** host tests and the emulator lab.
 
 ### Live traffic
@@ -395,19 +410,7 @@ address, token and service are saved, and reaches a running projection at once. 
 [data.md](data.md#home-assistant-button) and [dashboard.md](dashboard.md#header).
 **Verified:** host tests (`HomeAssistantTest`). Not yet tried against a real server.
 
-**OsmAnd maps** (`OsmAndMapsCard`, its own `poi` preferences file)
-
-| Setting | Default | Effect |
-| --- | --- | --- |
-| Choose folder | none | A read-only folder grant to OsmAnd's maps, kept apart from the drop folder's read and write grant. The same folder can't be both. A caption says where OsmAnd keeps them (Documents/osmand when set to "Manually specified"). A status line counts the readable maps. |
-| Markers per category | 25 | Gas, Food and Shop markers drawn at once (5–100) |
-| Look ahead | 50 miles | How far along the route search-ahead looks |
-| Corridor width | 0.5 mile | How far either side of the route still counts |
-| Candidates to check | 5 | Places whose detour is routed (1–10) |
-
-Distances are stored in miles and shown in the Speed unit. A value set elsewhere (the lab)
-that isn't in the list is added to the list rather than lost. **Verified:** emulator lab.
-The folder picker on the real phone has not been tried.
+The OsmAnd maps card moved to the Maps tab in 0.12; see [OsmAnd maps](#osmand-maps).
 
 **Speech**
 
@@ -423,7 +426,7 @@ switch is on. The microphone is described in [audio and speech](audio-and-speech
 
 | Control | Default | Effect |
 | --- | --- | --- |
-| Choose speech model | none | A read grant on one file, a whisper.cpp model in ggml format, picked with the system file picker and read in place. Kept apart from the maps and drop folder grants. The card names the format and nothing about where to get one. |
+| Choose speech model | none | A read grant on one file, a whisper.cpp model in ggml format, picked with the system file picker and read in place. Kept apart from the maps folder grant. The card names the format and nothing about where to get one. |
 | Check model | — | Loads the model and recognises 5 s of silence, then says the model's size, whether it is English-only, the load time and the 5 s time. A model loaded only for the check is let go after it. Says why when it can't: no file, unreadable, not a usable model (including all-F32 ones), a processor without Armv8.2 FP16 and dot product, or the library missing |
 | Remove model | — | Gives up the grant and frees a loaded model |
 

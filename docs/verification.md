@@ -68,7 +68,7 @@ against `hu-sim` as unproven on a real head unit.
 ### JVM host tests (`tools/jni-host-test/`)
 
 `tools/jni-host-test.sh` compiles every `*Test.java` against the app's **release** Kotlin
-classes, the vendored BRouter jar and VTM, and runs them on HotSpot. `android-build.sh`
+classes, the vendored OsmAnd-java classes and VTM, and runs them on HotSpot. `android-build.sh`
 runs them after every build, and so does CI. They cover the app's pure logic: dashboard
 layout and hit-testing at 1080p, 800x480 and Ford's 726x480 content area, settings and
 their repair, routing, guidance, voice prompts, traffic, weather, OsmAnd reading and
@@ -79,8 +79,8 @@ key or digit reaches a report.
 `WARNING in native method` or `FATAL ERROR` fails the build.
 
 Some tests take real data when you point them at it, and skip that part otherwise (the
-summary line says so): `ROUTING_SEGMENTS=<dir of .rd5>`, `MAP_FILE=<.map>`,
-`OBF_DIR=<dir of OsmAnd .obf>`. The files are too big for the repository, so CI runs only
+summary line says so): `OBF_DIR=<dir of OsmAnd .obf>`, the only real data since 0.12
+(`ROUTING_SEGMENTS` and `MAP_FILE` went with BRouter and Mapsforge). The files are too big for the repository, so CI runs only
 the data-free checks. `LabDrive.java` and `LabTraffic.java` are compiled but not run: they
 generate lab drive fixtures and HERE stand-in scenarios.
 
@@ -184,11 +184,12 @@ position), `guidance`, `daynight`, `controls`, `endroute`, `calls`, `speech`, `v
 
 | Switch | Effect |
 | --- | --- |
+<!-- wave3: LAB_* table pending the emulator-lab rework (OBF lab data replaces LAB_MAP/LAB_ROUTING) -->
 | `LAB_MAP`, `LAB_MAP_EXTRA` | install one or two Mapsforge maps (mounted read-only; the default lab position 42.4242,-71.2121 needs Massachusetts) |
 | `LAB_ROUTING` | install BRouter tiles and ask for a route once projecting |
 | `LAB_DESTINATION=1` | deliver destinations the real way: a `geo:` VIEW, then an OsmAnd text share; checks the route line appears in the decoded picture |
 | `LAB_DRIVE`, `LAB_GUIDE_DEST`, `LAB_DRIVE_SPEED` | drive a recorded street route that misses a turn (default `tools/lab-receiver/drives/lexington.csv`) |
-| `LAB_REROUTE=fail` | removes the routing tile after the first route so re-routes really fail; the cluster must go REROUTING, then ACTIVE on the old route |
+| `LAB_REROUTE=fail` | <!-- wave3: LAB_REROUTE mechanism --> removes the routing tile after the first route so re-routes really fail; the cluster must go REROUTING, then ACTIVE on the old route |
 | `LAB_TRACK=1` | adds the synthetic drive to any script, without checks |
 | `LAB_REGION=austin`, `LAB_POI`, `LAB_POI_AHEAD` | Texas data, OsmAnd places on the map, search ahead on a route |
 | `osmand` script (`LAB_REGION=austin`) | OsmAnd routing with traffic held: a HERE stand-in jam on I-35, then downtown to Taylor (57 km) shared; passes when the route comes back traffic-priced with no coordinate in the report. After the projection ends it presses Home and shares the university again, so nothing holds the maps open; that route must come back too (0.10.0 failed "no OsmAnd maps open" there on the Pixel; the lab does not reproduce that race). `LAB_OSMAND_EXPECT=fail` for a build from before the 2026-11-13 fix |
@@ -210,7 +211,7 @@ the destination run proves the line was drawn.
 
 Lessons that keep paying:
 
-- **Sometimes run without `LAB_MAP`.** A dashboard with no map data is what a new user sees,
+- **Sometimes run without map data** (no maps folder; until 0.12, without `LAB_MAP`). A dashboard with no map data is what a new user sees,
   and it once crashed on the first night signal.
 - **Auto-start in the emulator** (not part of `emulator-lab.sh`): link with
   `cmd companiondevice associate`, wake with `cmd companiondevice simulate-device-event <id> 2`,
@@ -267,9 +268,9 @@ Pixel lab. Most features also have host tests for their logic.
 | Touch input | Truck | Ford sends content-origin, frame-sized coordinates; a ~8 px vertical residual is accepted |
 | Pinch zoom on the map | Truck | James, by eye |
 | Vehicle sensors (position, speed, gear, night) | Truck | bearing scale 1e6 confirmed by eye on a drive; satellite fields look swapped, unconfirmed |
-| Owned map following position | Truck | by operator observation on a drive |
+| Owned map following position | Truck | by operator observation on a drive, drawn from Mapsforge; the OsmAnd-drawn map is not yet recorded on the truck |
 | Turn-by-turn on the instrument cluster | Truck | no image bytes needed; "send regardless" is required on Ford |
-| Offline routing and re-routing | Truck | by operator observation; release routing timed on the Pixel |
+| Offline routing and re-routing | Truck | by operator observation with BRouter; release routing timed on the Pixel. OsmAnd routing, the only router since 0.12, is host- and lab-tested and not yet recorded on the truck |
 | Media controls and now-playing on Ford's UI | Truck | wheel buttons work without any audio streaming |
 | App-owned audio over USB | Truck | off by default |
 | Phone audio over Bluetooth A2DP | Truck | survives USB projection in both connection orders, and wireless; "phone stays silent" is assumed, not measured |
@@ -280,10 +281,10 @@ Pixel lab. Most features also have host tests for their logic.
 | Standby for the truck's Android Auto button | Host | whether SYNC sends the button over a held link is unknown |
 | Congestion recovery and stream restart | Lab, truck (partly) | SYNC accepts a phone-sent restart, but the driver sees it as a blink; whether it cures a wired spiral is unknown |
 | Map pane resize after a layout change | Rust (`hu-sim`) | the lab receiver never sends the change; check `resizes>=1` in a truck report |
-| Toll roads drawn (`tl_yes`) | Host | theme rule checked against VTM's own rule builder |
-| Retry of badly read map tiles | Lab | `MapReadGuard`; a zero-filled map still reads as empty with no warning |
-| Several maps drawn as one | Lab | |
-| Map and routing import, drop folder | Pixel | import checks only the length against the header |
+| Toll roads drawn | Host | theme rule checked against VTM's own rule builder; matches `yes\|true` since 0.12 dropped Mapsforge's `tl_yes` |
+| Several maps drawn as one | Lab | with Mapsforge files, before 0.12; several OsmAnd files drawn together not yet checked on a real file |
+| Coverage refusal for a destination outside the maps | Host | turn card, trip panel and Home text not yet seen in the lab |
+| Upgrade cleanup of 0.11 data (`LegacyData`) | — | not yet run on a phone that had imported files or a drop folder |
 | Day/night themes and toggle | Lab | the truck's display is pinned dark, so Automatic has never flipped on it |
 | Header: compass, signal, battery | Lab | |
 | 12/24-hour clock | Host | not rendered anywhere |

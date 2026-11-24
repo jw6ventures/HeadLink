@@ -604,8 +604,9 @@ traffic colours and alternatives: [navigation.md](navigation.md).
 - **Theme lessons** (in the theme files):
   - **Order.** VTM assigns draw levels in file order, so every casing is declared before
     every carriageway. Declaring a road's casing and surface together scars every junction.
-  - **Toll tags.** The Mapsforge writer stores `toll=yes` as `tl_yes`, so toll rules match
-    `tl_yes|yes|true` and its exact complement. Before that, toll highways vanished.
+  - **Toll tags.** Toll rules match `yes|true` and its exact complement. (Until 0.12 the
+    Mapsforge writer stored `toll=yes` as `tl_yes`, and toll highways vanished until the
+    rules matched it; OsmAnd tiles pass the tag through unchanged, so that value is gone.)
   - **DPI.** `CanvasAdapter.dpi` is 240, not 320. VTM drops a street label wider than its
     way, and at 320 most residential streets lost their names.
   - **Label priority.** Street labels outrank place and water names.

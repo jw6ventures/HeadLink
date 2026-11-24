@@ -12,7 +12,7 @@ if you just want to install and use the app.
 | [Protocol](protocol.md) | The Android Auto session: versions, TLS, source identity and head-unit trust, discovery, channels, video and congestion recovery, input, sensors, and what SYNC 4.0 does differently |
 | [Connecting](connecting.md) | Getting a transport: USB accessory and plug-in start; wireless bootstrap over Bluetooth, the car's Wi-Fi, auto-start, standby and keep-awake |
 | [Dashboard](dashboard.md) | What the car screen shows and how it is drawn: layouts, header, media, favorites, notifications, calls, weather, day and night, the map pane |
-| [Navigation](navigation.md) | Maps, offline routing with BRouter, destinations and favorites, guidance and re-routing, the instrument cluster, route preferences and preview, live traffic, OsmAnd search and places |
+| [Navigation](navigation.md) | OsmAnd maps and offline routing, destinations and favorites, guidance and re-routing, the instrument cluster, route preferences and preview, live traffic, OsmAnd search and places |
 | [Audio and speech](audio-and-speech.md) | Why phone audio goes over Bluetooth, the USB audio channel, spoken turn prompts and read-aloud |
 | [Phone app](phone-app.md) | The phone screen: every tab and setting, the Setup checklist, diagnostic reports, and permissions |
 | [Verification](verification.md) | How each layer is tested, what is proven on the truck versus only in the lab, the gates, and open items |

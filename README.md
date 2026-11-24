@@ -20,8 +20,8 @@ Assistant button, both off by default.
 - **Projects to the car's screen** over USB, or wirelessly over the head unit's own Wi-Fi.
   A wireless session can start from the phone or automatically when the car connects.
   Starting from the car's own Android Auto button is built but not yet proven.
-- **Offline maps and navigation.** Your own map files (Mapsforge) and routing data
-  (BRouter), with no network needed. Turn-by-turn directions on the dashboard, spoken
+- **Offline maps and navigation.** The maps you download in OsmAnd, read in place for the
+  map, routes and search, with no network needed. Turn-by-turn directions on the dashboard, spoken
   turn prompts, automatic re-routing, and route preferences (avoid highways, tolls,
   unpaved roads).
 - **Turn-by-turn on the instrument cluster**, on cars whose cluster shows Android Auto
@@ -77,26 +77,22 @@ phone. Each release also has a `SHA256SUMS` file if you want to check the downlo
 Launch **HeadLink**. It has four tabs: **Home**, **Setup**, **Maps** and **Settings**. The
 **Setup** tab lists anything that still needs doing and has a button for each.
 
-### 2. Add maps and routing data
+### 2. Choose your OsmAnd maps
 
-The app contains no map data and never downloads any. You download the files once on a
-computer or the phone and import them:
+The app contains no map data and never downloads any. It reads the `.obf` maps you
+download in the OsmAnd app, read-only, for the map, routes, directions, address search
+and places:
 
-| What | Where to get it | Needed for |
-| --- | --- | --- |
-| A Mapsforge `.map` file | <https://download.mapsforge.org/maps/v5/> (for example `north-america/us/texas.map`) | The map |
-| BRouter `.rd5` tiles | <https://brouter.de/brouter/segments4/>, every 5°×5° tile your trips pass through | Routes and directions |
-| OsmAnd `.obf` maps (optional) | Downloaded in the OsmAnd app | Address search, places, and exit numbers and signs |
+1. In OsmAnd, download every region your trips pass through.
+2. In OsmAnd, move its data to a shared folder (**Settings → OsmAnd settings → Data
+   storage folder → Manually specified**, for example `Documents/osmand`). OsmAnd's
+   default folder is private, so other apps can't read it.
+3. In HeadLink, open the **Maps** tab and, on the **OsmAnd maps** card at the top, tap
+   **Choose folder** and pick that folder.
 
-Import them from the **Maps** tab, either one at a time with **Import map** and
-**Import routing data**, or by choosing a **drop folder** that HeadLink empties into its
-own storage. Keep the original `.rd5` file names: the name says which area a tile covers.
-The **Maps** tab also has **Where to get maps** and **Where to get routing data**, which
-open those download pages in the phone's browser.
-
-[Setting up maps, routing and the optional extras](docs/data.md) has the details,
-including how to pick tiles, how to point HeadLink at OsmAnd's maps, and how to turn on
-weather, traffic and the Home Assistant button.
+To add or update a map, do it in OsmAnd. [Setting up maps and the optional
+extras](docs/data.md) has the details, including how to turn on weather, traffic and the
+Home Assistant button.
 
 ### 3. Import your source identity (if your head unit needs one)
 

@@ -2,95 +2,52 @@
 
 [← Back to the README](../README.md)
 
-The APK contains no map or routing data. The app never downloads any either: you get the
-files yourself and give them to the app on the phone. Projection and the test scene work
-without them, but the dashboard's map pane, routes and favorites do not. The **Setup** tab
-lists anything missing.
+The APK contains no map or routing data. The app never downloads any either: it reads the
+maps you download in OsmAnd, in place and read-only. Projection and the test scene work
+without them, but the dashboard's map pane, routes, address search and favorites do not.
+The **Setup** tab lists anything missing.
 
 | What | File | Needed for | Required? |
 | --- | --- | --- | --- |
-| [Map](#map-mapsforge-map) | Mapsforge `.map` | The map pane | For the dashboard map |
-| [Routing data](#routing-data-brouter-rd5) | BRouter `.rd5` tiles | Routes, favorites, guidance on the cluster | For navigation |
-| [OsmAnd maps](#osmand-maps-obf) | OsmAnd `.obf`, read where they are | Address search, map places, search ahead | Optional |
+| [OsmAnd maps](#osmand-maps-obf) | OsmAnd `.obf`, read where they are | The map pane, routes and guidance, address search, map places, search ahead | For the map and navigation |
 | [Breezy Weather](#weather-breezy-weather) | An app | Weather in the dashboard header | Optional |
 | [HERE API key](#live-traffic-here-api-key) | A key | Live traffic | Optional |
 | [Source identity](#source-identity-pem) | A PEM file | Head units that reject the generated identity | Only if needed |
 
-## Getting files onto the phone
-
-You can install a `.map` or `.rd5` file in either of two ways:
-
-- **Import map** / **Import routing data** on the **Maps** tab opens the system file
-  picker. Pick one file. It is copied into the app's private storage and checked there.
-- **Choose drop folder** (also on the **Maps** tab) grants the app one folder, for
-  example `Download/HeadLink`. Each time HeadLink's screen comes to the front, it checks any `.map` or `.rd5` file directly in
-  that folder, moves it into its own storage, and deletes it from the folder, so the
-  phone never keeps two copies. A file changed in the last 30 seconds is left alone until
-  the next check, which covers a download that is still running. A file that fails its
-  check stays in the folder. **Check folder now** runs a check straight away. This is
-  the easier route for a large file copied over USB or synced from a computer.
-
-A file replaces an installed one with the same name. Different names are kept side by
-side. The app draws every installed map together and routes across every installed
-tile, so a trip that crosses regions needs no switching. **Remove a map or tile**
-lists the installed files and deletes the one you pick.
-
-## Map: Mapsforge `.map`
-
-A Mapsforge binary map: `mapsforge binary OSM`, rendered by VTM 0.25. Up to 4 GiB per
-file.
-
-- **Download:** ready-made maps by country and US state are at
-  <https://download.mapsforge.org/maps/v5/>, for example
-  `north-america/us/texas.map`.
-- **Or build one** from an OpenStreetMap `.osm.pbf` extract (for example from
-  <https://download.geofabrik.de/>) with Osmosis and the `mapsforge-map-writer` plugin.
-
-The import reads the header and refuses a file that is not a Mapsforge map, or one
-shorter than its header says it should be (a download that was cut off). The data is
-© OpenStreetMap contributors under ODbL 1.0. The dashboard shows that credit on screen.
-
-## Routing data: BRouter `.rd5`
-
-Each BRouter segment file covers one 5°×5° square. Download them from
-<https://brouter.de/brouter/segments4/>. Each tile is named after its south-west corner:
-`W100_N30.rd5` covers longitude 100°W–95°W and latitude 30°N–35°N, which includes
-Austin and Dallas–Fort Worth. Download every tile a trip passes through. All of Texas
-is eleven tiles, about 307 MB: `W110_N25`, `W110_N30`, `W105_N25`, `W105_N30`,
-`W105_N35`, `W100_N25`, `W100_N30`, `W100_N35`, `W95_N25`, `W95_N30` and `W95_N35`.
-The app accepts up to 512 MiB per tile.
-
-- **Keep the file name.** The name is the only thing that tells BRouter which square a
-  tile covers. The app finds the tile name anywhere in the file name, so
-  `W100_N30 (1).rd5` still works. It refuses a file whose name has no tile name in it.
-- The car profile (`car-vario.brf` and `lookups.dat`) comes with the APK. An import
-  checks the tile against that `lookups.dat`. BRouter regenerates its segments every few
-  weeks, and the app refuses a tile built for a different lookup version. This build
-  vendors lookup version 11
-  ([lookups.dat](../vendor/brouter/src/main/resources/btools/profiles/lookups.dat)). If
-  segments4 moves to a newer version, the vendored BRouter has to be re-synced first
-  (see [vendor/brouter](../vendor/brouter/README.md)).
-- If no installed tile covers the phone's last known position, the setup card says
-  "No routing data for where you are".
-
 ## OsmAnd maps: `.obf`
 
-Address search, map places (POIs), search ahead and highway exit numbers and signs read
-OsmAnd's own map files where OsmAnd keeps them. Nothing is copied.
+The map, routes and turn-by-turn guidance, address search, map places (POIs), search
+ahead and highway exit numbers and signs all come from OsmAnd's own map files, read where
+OsmAnd keeps them. Nothing is copied, and HeadLink never writes to them.
 
 1. Install OsmAnd (`net.osmand.plus` or `net.osmand`) and use it to download the regions
-   you need, for example `Us_texas_austin_northamerica.obf`.
+   you need, for example `Us_texas_austin_northamerica.obf`. Download every region a trip
+   passes through.
 2. In OsmAnd, go to **Settings → OsmAnd settings → Data storage folder → Manually
    specified** and choose a shared folder, for example `Documents/osmand`. OsmAnd's
    default folder is private to OsmAnd, so other apps can't open it.
-3. In HeadLink, go to the **Settings** tab, find **OsmAnd maps**, tap **Choose folder**,
-   and pick that folder.
-   The grant is read-only.
+3. In HeadLink, go to the **Maps** tab, find **OsmAnd maps** (the first card), tap
+   **Choose folder**, and pick that folder. The grant is read-only.
 
 The app reads only `.obf` files directly inside that folder. It skips contour lines
 (`.srtm.obf`, `.srtmf.obf`), Wikipedia (`.wiki.obf`), the world basemap, and downloads
-that are still in progress. To update a map, update it in OsmAnd. The drop folder is a
-separate grant: pick a different folder for it.
+that are still in progress. Every map in the folder is drawn and routed across together,
+so a trip that crosses regions needs no switching. To add or update a map, do it in
+OsmAnd.
+
+A destination that none of the maps covers is refused rather than searched for: the
+phone names the reason, and the car's turn card says "No map covers this place"; see
+[Navigation](navigation.md#coverage-refusal).
+
+### Upgrading from 0.11 or earlier
+
+Versions before 0.12 also used Mapsforge `.map` files for the map and BRouter `.rd5`
+tiles for routing, imported into the app or swept in from a drop folder. Those are gone.
+On startup 0.12 attempts the cleanup: it deletes the imported files from its own storage,
+releases the drop-folder permission, and forgets the old map and routing engine
+switches. It runs on every start and does nothing once there is nothing left. The files
+in your old drop folder, if any are left, are yours to delete. The
+OsmAnd maps folder grant is kept.
 
 ## Weather: Breezy Weather
 
