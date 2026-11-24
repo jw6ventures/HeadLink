@@ -896,14 +896,14 @@ class TrafficFeed(private val host: TrafficHost) {
  * behind, so the two never count the same stretch at the same time.
  */
 object ArrivalTime {
-    fun shown(brouterSeconds: Int, pace: PaceTracker, learnPace: Boolean, delaySeconds: Int): Int =
-        shown(brouterSeconds, brouterSeconds, pace, learnPace, delaySeconds)
+    fun shown(routeSeconds: Int, pace: PaceTracker, learnPace: Boolean, delaySeconds: Int): Int =
+        shown(routeSeconds, routeSeconds, pace, learnPace, delaySeconds)
 
     /**
      * With Learn my pace on, [learnedSeconds] (the same time to go at the pace learned
      * across drives, [PaceBook]) scaled by this drive's own [pace]; off, the router's
-     * [brouterSeconds] as they are.
+     * [routeSeconds] as they are.
      */
-    fun shown(brouterSeconds: Int, learnedSeconds: Int, pace: PaceTracker, learnPace: Boolean, delaySeconds: Int): Int =
-        (if (learnPace) pace.apply(learnedSeconds) else brouterSeconds) + delaySeconds.coerceAtLeast(0)
+    fun shown(routeSeconds: Int, learnedSeconds: Int, pace: PaceTracker, learnPace: Boolean, delaySeconds: Int): Int =
+        (if (learnPace) pace.apply(learnedSeconds) else routeSeconds) + delaySeconds.coerceAtLeast(0)
 }
