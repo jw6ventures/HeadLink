@@ -145,7 +145,8 @@ OsmAnd's source (`IntentHelper.parseNavigationIntent`, October 2026).
   arrival uses the saved Clock setting and is left out when it isn't known. Waiting for a
   position, finding a route, and no route found each have their own wording. A
   destination no map covers shows the coverage refusal instead ("No OsmAnd map with roads
-  in your maps folder covers …", or the mirrored-longitude hint).
+  in your maps folder covers …", or the mirrored-longitude hint), and one only a track
+  reaches with Allow tracks off says so and where to turn it on (`destination_track_only`).
 - **Destination box.** It takes `lat,lon`, two points `lat,lon lat,lon` (a route between
   them), a `geo:` URI or an OsmAnd link. From three characters, typed text that isn't
   coordinates searches the OsmAnd maps (250 ms after the last keystroke) and lists up to
@@ -261,17 +262,16 @@ route. Mechanics are in
 | Avoid highways | off | Motorways and their ramps made much more costly |
 | Avoid toll roads | off | Toll-tagged roads and booths all but closed |
 | Avoid unpaved roads | off | Tracks and unpaved or very rough surfaces closed |
-<!-- wave3: Bypass towns / Allow tracks rows pending the OsmAnd RouteOptions work -->
-| Bypass towns | off | Prefers roads outside cities and large towns |
-| Allow tracks | off | Opens farm and forest tracks and unclassified roads |
-| Top speed | 75 mph (121 km/h) | The profile's top speed, from 56 to 85 mph. It changes routes as well as times. |
+| Go around towns | off | Goes round each city (10 km circle) and town (4 km) on the way, except where the trip starts and ends; routes can get much longer (Austin to Temple: 109 km, 70 min → 132 km, 116 min) |
+| Allow tracks | off | Off, farm and forest tracks and roads of unknown class are not used at all; a destination only a track reaches says so ("Only a track goes there") |
+| Top speed | 75 mph (121 km/h) | The router's top speed, from 56 to 85 mph (OsmAnd's car profile alone allows up to 81 mph). It changes routes as well as times. |
 | Time adjustment | as estimated | −15% to +30% on every estimated time; changes no route |
 | Learn my pace | on | Corrects the time left by your pace learned across drives (per road kind, surroundings and 15 mile area) and by how this drive compares; Forget learned pace clears it |
 | Show other routes on the map | on | Up to two grey alternatives with "+N min" while a route is followed |
 
-<!-- wave3: top speed default and its 56 mph basis were BRouter measurements; recheck against OsmAnd -->
 The 75 mph default was chosen in P6 because BRouter's own 56 mph timed Austin to Dallas at
-3 h 42 min. James has not confirmed it. **Verified:** host tests and the emulator lab.
+3 h 42 min, and was kept for OsmAnd. James has not confirmed it. **Verified:** host tests
+and the emulator lab.
 
 ### Live traffic
 

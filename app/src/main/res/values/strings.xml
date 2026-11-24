@@ -89,7 +89,7 @@ Incomplete from a previous run: %3$s</string>
     <string name="destination_no_osmand_map">No OsmAnd map with roads in your maps folder covers %1$s. Download the map for that area in OsmAnd, or choose the folder it is in under Maps, OsmAnd maps.</string>
     <string name="destination_mirrored">No OsmAnd map covers %1$s. Did you mean %2$s? The longitude\'s sign may be missing.</string>
     <string name="stop_no_osmand_map">No OsmAnd map with roads in your maps folder covers the route\'s stop at %1$s. Download the map for that area in OsmAnd, or choose another route.</string>
-    <string name="destination_track_only">Only a track reaches %1$s, and Allow tracks is off. Turn it on under Maps &amp; routing, Routing, to route there.</string>
+    <string name="destination_track_only">Only a track reaches %1$s, and Allow tracks is off. Turn it on under Maps → Route preferences to route there.</string>
     <string name="route_line">Route: %1$s</string>
     <string name="favorites_none">None saved yet. Save the current destination, or add a place by its coordinates.</string>
     <string name="add_favorite">Add favorite</string>
@@ -220,13 +220,13 @@ Incomplete from a previous run: %3$s</string>
     <string name="preview_stale">The route changed while the preview was open (a re-route or a new destination), so the choice was not applied.</string>
     <!-- Maps & routing → Route preferences (docs/navigation.md, "Route preferences"). -->
     <string name="route_prefs_title">Route preferences</string>
-    <string name="route_prefs_caption">Avoided roads cost more rather than being closed, so a place only reachable that way is still reached. A change recomputes the route being shown, from where you are now.</string>
+    <string name="route_prefs_caption">Avoided highways and tolls cost more rather than being closed, so a place only reachable that way is still reached. Avoided unpaved roads, and tracks unless allowed, are closed. A change recomputes the route being shown, from where you are now.</string>
     <string name="route_avoid_highways">Avoid highways</string>
-    <string name="route_avoid_highways_help">Roads mapped as motorways, and their ramps, are made much more costly, so a route leaves them for almost any other way: Austin to Temple left I 35 and took 117 minutes instead of 65. That is the interstates and most freeways; a highway with junctions and traffic lights is not a motorway and is not avoided.</string>
+    <string name="route_avoid_highways_help">Roads mapped as motorways, and their ramps, are made much more costly, so a route leaves them for almost any other way and can take much longer. That is the interstates and most freeways; a highway with junctions and traffic lights is not a motorway and is not avoided.</string>
     <string name="route_avoid_tolls">Avoid toll roads</string>
     <string name="route_avoid_tolls_help">Roads tagged as toll roads, and toll booths, are all but closed. Around Austin this keeps a route off SH 130. A toll road missing its tag on OpenStreetMap is not avoided.</string>
     <string name="route_avoid_unpaved">Avoid unpaved roads</string>
-    <string name="route_avoid_unpaved_help">Roads mapped as gravel, dirt or other unpaved surfaces, and rough tracks, are timed as even slower than they already are, so a route takes them only where there is no paved way. Unpaved roads are already avoided where there is a good paved way; this makes the avoiding stronger. A road with no surface on the map is taken to be paved.</string>
+    <string name="route_avoid_unpaved_help">Roads mapped as gravel, dirt or other unpaved surfaces, and tracks, are closed to the route, so a place only such a road reaches gets no route. Unpaved roads are already avoided where there is a good paved way; this rules them out. A road with no surface on the map is taken to be paved.</string>
     <string name="route_bypass_towns">Go around towns</string>
     <string name="route_bypass_towns_help">Goes round the cities and towns on the way, each taken as a circle round its centre (10 km for a city, 4 km for a town), even when going through is much quicker. The towns where the trip starts and ends are driven through as usual. Routes can get much longer: Austin to Temple went from 109 km and 70 min to 132 km and 116 min.</string>
     <string name="route_allow_tracks">Allow tracks</string>

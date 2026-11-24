@@ -167,15 +167,42 @@ followed:
 on Home only; it does not mark the held trip uncovered.
 
 A new destination clears it. Choosing a new maps folder (`Navigation.mapsChanged`)
-re-sends the held destination at once, but only when the trip is uncovered, not yet
-arrived, and no request is pending. With no maps folder chosen there are no maps to cover
-anything, and Setup lists the folder.
+re-sends the held destination at once, but only when the trip is held (uncovered, or only
+a track reaches it), not yet arrived, and no request is pending. With no maps folder chosen
+there are no maps to cover anything, and Setup lists the folder.
+
+### Points the maps hold but no road joins
+
+Every point can be covered and still have no road between them: OsmAnd's Waco and Dallas
+maps stop 8 km apart (32.13 and 32.20 °N), the Tyler map holding the strip between, and
+Waco to Dallas failed with only the first two (2026-11-24). When OsmAnd's search runs out
+of road on a leg ("Route is not found…"), the request fails with `NOT_CONNECTED`, worded
+without places: "no road joins all the route's points in the OsmAnd maps; a map between
+them may be missing". OsmAnd does not say which leg, so neither does the app. It is an
+ordinary failure, not a held one: `Navigation.retry` asks again as for any other.
+
+### Track-only ends
+
+With Allow tracks off, a refused track is not loaded at all, so an end on one would be
+snapped to the nearest other road, possibly hundreds of metres off, and the follower would
+announce arrival there. When the route's start or end lands more than `END_SNAP_M` from
+the request's, `OsmAndRouter.trackOnlyEnd` compares it with the same request searched with
+tracks allowed (the hierarchy's route when there was one, else a diagnostic search); if
+allowing tracks brings that end much closer, the request fails:
+
+| Reason | Held? | What shows |
+| --- | --- | --- |
+| `DESTINATION_BY_TRACK` | Yes (`Navigation.trackOnly`): no retries or automatic re-routes until the route options, the maps or the destination change, or the trip is cleared or restored | Turn card "Only a track goes there", trip panel "track only", Home card `destination_track_only` (names the place and says to turn on Allow tracks) |
+| `START_BY_TRACK` | No: driving onto a road mends it, so it is retried like any failure | The failure on Home; the dashboard's usual no-route wording |
+
+If the diagnostic search fails or runs out of time, the refused route stands.
 
 Coordinates are always `lat,lon`; a swapped pair is still valid numbers.
 
 **Verified:** routing and re-routing on the phone during drives, release build, with
-BRouter; for OsmAnd see [Routing on OsmAnd maps](#routing-on-osmand-maps). The coverage
-refusal is host-tested only.
+BRouter; for OsmAnd see [Routing on OsmAnd maps](#routing-on-osmand-maps). The coverage,
+`NOT_CONNECTED` and track-only refusals are host-tested (`OsmAndRoutingTest`, Waco and
+Dallas maps for `NOT_CONNECTED`).
 
 ## Route preferences
 
@@ -189,19 +216,40 @@ destination reachable only that way can come back with no route.
 | Setting | Default | OsmAnd |
 | --- | --- | --- |
 | Avoid highways / toll roads / unpaved roads | off | `avoid_motorway`, `avoid_toll`, `avoid_unpaved` |
-<!-- wave3: Bypass towns / Allow tracks rows; the BRouter keys (consider_town, use_offroad) are gone and OsmAnd does not yet apply either -->
-| Go around towns | off | none yet |
-| Allow tracks | off | none yet |
-| Top speed | **75 mph** (121 km/h), 56 to 85 mph | `max_speed` |
+| Go around towns | off | none; `RequestRouter` prices city and town circles (below) |
+| Allow tracks | off | none; off, `RequestRouter` refuses `highway=track` and `highway=road` (below) |
+| Top speed | **75 mph** (121 km/h), 56 to 85 mph | `max_speed` (the car profile's own ceiling is 130 km/h, 81 mph) |
 | Time adjustment | as estimated, −15% to +30% | `Route.withTimeScale` on every time |
 | Learn my pace | **on** | `PaceTracker` |
 | Show other routes on the map | on | `LiveAlternatives` |
 
-<!-- wave3: the 75 mph default rests on a BRouter measurement; recheck against OsmAnd's max_speed -->
-**Why 75 mph** (measured with BRouter, P6). `car-vario` shipped with `vmax` 90 km/h
-(56 mph), which timed every untagged Texas interstate at 56 mph: Austin to Dallas came out
-at 3 h 42 min against about 3 h driven. At 121 km/h it was 2 h 56 min. A higher top speed
-also makes highways more attractive, so it changes routes too.
+**Why 75 mph** (measured with BRouter, P6, and kept for OsmAnd). `car-vario` shipped with
+`vmax` 90 km/h (56 mph), which timed every untagged Texas interstate at 56 mph: Austin to
+Dallas came out at 3 h 42 min against about 3 h driven. At 121 km/h it was 2 h 56 min.
+OsmAnd's car profile on its own allows up to 130 km/h; the setting replaces that with its
+own `max_speed`. A higher top speed also makes highways more attractive, so it changes
+routes too.
+
+**Allow tracks** (off by default). OsmAnd's car profile routes over tracks and
+`highway=road` (roads of unknown class); with the switch off `RequestRouter.acceptLine`
+does not load them at all. The highway hierarchy's shortcuts were built with them, so a
+hierarchy route is kept only when it drives none, and searched again plainly otherwise; a
+route that never goes near a track costs nothing more. A start or destination that only a
+track reaches is refused with its own reason rather than routed to a road well short of
+it ([Track-only ends](#track-only-ends)).
+
+**Go around towns** (off by default). OsmAnd's maps carry no per-road town class (BRouter's
+`estimated_town_class`), so every city and town in the maps' address index becomes a circle
+of the radius OsmAnd's own address search gives it, 10 km for a city and 4 km for a town,
+and each metre of road inside costs 0.63 s (city) or 0.26 s (town) on top of its own time:
+BRouter's lightest and middle town classes converted at its default top speed. Where
+circles overlap a step pays its dearest one only. Towns whose circle holds the start, the
+stop or the destination are driven through as usual, and only towns within 25 km of the
+trip's box are read. The plain search is used whenever towns are priced. On the Austin and
+Waco maps (2026-11-24, `OsmAndRoutingTest`), downtown Austin to downtown Temple went from
+109.2 km and 70 min, 42.8 km of it inside the circles, to 132.4 km and 116 min with none
+inside, in under a second, as BRouter's 109 to 132 km had; half those prices left 6.6 km
+inside on a 146.9 km route. A map whose address index will not read is skipped.
 
 **Learn my pace** compares, between on-route fixes, how far the route's time-to-go fell with
 how much time passed. It starts at the first fix where the estimate falls (parking with a
@@ -232,8 +280,8 @@ BRouter's two traps with these switches (a profile cache keyed on a hash sum tha
 `avoid_toll` and `avoid_motorways`, and long trips failing above 90 km/h, retried at lower
 top speeds by `Router.computeStepping`) went with BRouter in 0.12.
 
-<!-- wave3: "Not offered" reasons were BRouter profile limits; recheck for OsmAnd -->
-Not offered: avoid ferries, shortest route, turning re-routing off.
+Not offered: avoid ferries and shortest route (OsmAnd's car profile has `avoid_ferries`
+and `short_way`, but neither has a switch here), turning re-routing off.
 
 **Verified:** host tests. The 75 mph and Learn my pace defaults are not confirmed against
 real drives.
@@ -582,9 +630,9 @@ search ran first, found nothing open and failed "no OsmAnd maps open" (report:
 that race, so the lab step shows the fixed build routing, not the old one failing.
 The car profile is OsmAnd's `routing.xml`, unmodified; the top speed is its `max_speed`
 and Avoid motorways, Avoid toll roads and Avoid unpaved roads are its own parameters.
-<!-- wave3: Bypass towns / Allow tracks for OsmAnd -->
-Prefer bypassing towns and Allow tracks have no counterpart and do nothing here, which the
-switch's help text says. The starting bearing goes in as OsmAnd's initial direction.
+Go around towns and Allow tracks have no counterpart in the profile; `RequestRouter`
+applies them ([Route preferences](#route-preferences)). The starting bearing goes in as
+OsmAnd's initial direction.
 
 **Search mode and memory.** Every search runs in OsmAnd's COMPLEX mode: past 18 km it
 first routes over the maps' base roads, then searches the detail only within 3 km of that
@@ -594,6 +642,13 @@ anything much past 50 km, Taylor to downtown Austin included: a traffic-priced r
 work came back as no route while BRouter found one (2026-11-13). OsmAnd's memory error
 names the start and destination by coordinates; it becomes "out of routing memory", and
 OsmAnd's other errors lose their coordinates, because route errors reach the report.
+
+**Large heap.** The plain search still runs for every request the hierarchy cannot price
+(live traffic, alternatives, going round towns), and in a dense city it needs more than
+85 MB: the Lexington lab position to Boston Common, 21 km, ran out of the budget at a
+256 MB heap and routed in 4.9 s with 170 MB (2026-11-24). The app therefore asks for
+`android:largeHeap="true"`, and the budget stays a third of whatever heap the phone grants
+(`OsmAndRouter.memoryLimits`, at least 30 MB and at most 256 MB).
 
 **Mixed map builds.** Each OsmAnd build of the maps (one HH edition) carries its own
 highway hierarchy, and maps downloaded at different times are different builds: the Pixel

@@ -184,12 +184,11 @@ position), `guidance`, `daynight`, `controls`, `endroute`, `calls`, `speech`, `v
 
 | Switch | Effect |
 | --- | --- |
-<!-- wave3: LAB_* table pending the emulator-lab rework (OBF lab data replaces LAB_MAP/LAB_ROUTING) -->
-| `LAB_MAP`, `LAB_MAP_EXTRA` | install one or two Mapsforge maps (mounted read-only; the default lab position 42.4242,-71.2121 needs Massachusetts) |
-| `LAB_ROUTING` | install BRouter tiles and ask for a route once projecting |
+| `LAB_OBF="<file.obf>[:<file.obf>…]"` | the OsmAnd maps to install, colon-separated; mounted read-only and moved into the debug app's `files/lab-obf/`, which a debug build reads beside the maps folder (a folder grant cannot be scripted). Unset, the region's own file goes in for every run that needs a map, a route or places (Massachusetts, or `Us_texas_austin_northamerica.obf` with `LAB_REGION=austin`); `none` runs map-less. With two or more the report must say `data=obf:N` and no map failed |
+| `LAB_ROUTE=1` or `LAB_ROUTE="lat,lon lat,lon"` | asks for a cross-town route through the debug intent once projecting (lab position to Boston Common, or downtown Austin to the university); opt-in |
 | `LAB_DESTINATION=1` | deliver destinations the real way: a `geo:` VIEW, then an OsmAnd text share; checks the route line appears in the decoded picture |
 | `LAB_DRIVE`, `LAB_GUIDE_DEST`, `LAB_DRIVE_SPEED` | drive a recorded street route that misses a turn (default `tools/lab-receiver/drives/lexington.csv`) |
-| `LAB_REROUTE=fail` | <!-- wave3: LAB_REROUTE mechanism --> removes the routing tile after the first route so re-routes really fail; the cluster must go REROUTING, then ACTIVE on the old route |
+| `LAB_REROUTE=fail` | guidance only: after the first route, the debug-only `lab_routes_fail` intent extra makes every search fail with an ordinary routing error for the rest of that lab attempt (`Routing.labFailFor`), driving `lexington-return.csv`; the cluster must go REROUTING, then ACTIVE on the old route |
 | `LAB_TRACK=1` | adds the synthetic drive to any script, without checks |
 | `LAB_REGION=austin`, `LAB_POI`, `LAB_POI_AHEAD` | Texas data, OsmAnd places on the map, search ahead on a route |
 | `osmand` script (`LAB_REGION=austin`) | OsmAnd routing with traffic held: a HERE stand-in jam on I-35, then downtown to Taylor (57 km) shared; passes when the route comes back traffic-priced with no coordinate in the report. After the projection ends it presses Home and shares the university again, so nothing holds the maps open; that route must come back too (0.10.0 failed "no OsmAnd maps open" there on the Pixel; the lab does not reproduce that race). `LAB_OSMAND_EXPECT=fail` for a build from before the 2026-11-13 fix |
@@ -211,7 +210,7 @@ the destination run proves the line was drawn.
 
 Lessons that keep paying:
 
-- **Sometimes run without map data** (no maps folder; until 0.12, without `LAB_MAP`). A dashboard with no map data is what a new user sees,
+- **Sometimes run without map data** (`LAB_OBF=none`; until 0.12, without `LAB_MAP`). A dashboard with no map data is what a new user sees,
   and it once crashed on the first night signal.
 - **Auto-start in the emulator** (not part of `emulator-lab.sh`): link with
   `cmd companiondevice associate`, wake with `cmd companiondevice simulate-device-event <id> 2`,
@@ -282,8 +281,10 @@ Pixel lab. Most features also have host tests for their logic.
 | Congestion recovery and stream restart | Lab, truck (partly) | SYNC accepts a phone-sent restart, but the driver sees it as a blink; whether it cures a wired spiral is unknown |
 | Map pane resize after a layout change | Rust (`hu-sim`) | the lab receiver never sends the change; check `resizes>=1` in a truck report |
 | Toll roads drawn | Host | theme rule checked against VTM's own rule builder; matches `yes\|true` since 0.12 dropped Mapsforge's `tl_yes` |
-| Several maps drawn as one | Lab | with Mapsforge files, before 0.12; several OsmAnd files drawn together not yet checked on a real file |
+| Several maps drawn as one | Lab | two OsmAnd files, `data=obf:2` with no map failing (20261124T191525Z); before 0.12, Mapsforge files |
 | Coverage refusal for a destination outside the maps | Host | turn card, trip panel and Home text not yet seen in the lab |
+| `NOT_CONNECTED`, track-only ends, Allow tracks, Go around towns | Host | `OsmAndRoutingTest` on the Austin, Waco and Dallas maps; the track-only turn card and Home text not yet seen in the lab |
+| Maps, guidance and routing in the emulator lab on OsmAnd maps | Lab | 2026-11-24: track 20261124T183639Z, guidance 20261124T182715Z, guidance with `LAB_REROUTE=fail` 20261124T191016Z, navigation 20261124T185705Z, endroute 20261124T180643Z, daynight 20261124T183548Z (`map_theme_hold_timeouts=0`, longest hold 225 ms), `LAB_DESTINATION` 20261124T182501Z, osmand 20261124T185751Z, Austin places 20261124T180930Z and search ahead 20261124T181116Z |
 | Upgrade cleanup of 0.11 data (`LegacyData`) | — | not yet run on a phone that had imported files or a drop folder |
 | Day/night themes and toggle | Lab | the truck's display is pinned dark, so Automatic has never flipped on it |
 | Header: compass, signal, battery | Lab | |
@@ -292,7 +293,7 @@ Pixel lab. Most features also have host tests for their logic.
 | Turn card, trip panel, End route | Lab | how SYNC reacts to getting its cluster back mid-session is unseen |
 | Street names on maneuvers | Lab | which cluster line Ford shows them on is unknown |
 | Failed re-route recovery | Lab | `LAB_REROUTE=fail` |
-| Re-route avoids an instant U-turn | Host | the 180 s penalty is a guess to tune |
+| Re-route avoids an instant U-turn | Host | OsmAnd's car profile charges 300 s for setting off backwards; until 0.12 BRouter's 180 s no-go circle, a guess to tune |
 | Route preferences | Host | 75 mph default and Learn my pace not signed off |
 | Destinations shared from OsmAnd | Lab | a real OsmAnd share on the Pixel has not been read |
 | Long press on the map to route | Host | the receiver cannot hold a press |
