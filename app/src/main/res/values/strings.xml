@@ -89,6 +89,7 @@ Incomplete from a previous run: %3$s</string>
     <string name="destination_no_osmand_map">No OsmAnd map with roads in your maps folder covers %1$s. Download the map for that area in OsmAnd, or choose the folder it is in under Maps, OsmAnd maps.</string>
     <string name="destination_mirrored">No OsmAnd map covers %1$s. Did you mean %2$s? The longitude\'s sign may be missing.</string>
     <string name="stop_no_osmand_map">No OsmAnd map with roads in your maps folder covers the route\'s stop at %1$s. Download the map for that area in OsmAnd, or choose another route.</string>
+    <string name="destination_track_only">Only a track reaches %1$s, and Allow tracks is off. Turn it on under Maps &amp; routing, Routing, to route there.</string>
     <string name="route_line">Route: %1$s</string>
     <string name="favorites_none">None saved yet. Save the current destination, or add a place by its coordinates.</string>
     <string name="add_favorite">Add favorite</string>

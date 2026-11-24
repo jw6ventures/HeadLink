@@ -165,7 +165,13 @@
         <provider android:authorities="org.breezyweather.provider.weather" />
     </queries>
 
+    <!-- largeHeap: OsmAnd's plain search (every route that carries live traffic or looks
+         for an alternative, which the highway hierarchy cannot price) needs more than a
+         third of a 256 MB heap in a dense city: lab position to Boston Common, 21 km, ran
+         out of OsmAnd's 85 MB budget and routed in 4.9 s with 170 MB (2026-11-24). The
+         budget stays a third of whatever heap the phone grants (OsmAndRouter.memoryLimits). -->
     <application
+        android:largeHeap="true"
         android:name=".SourceApplication"
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"

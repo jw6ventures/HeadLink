@@ -86,6 +86,21 @@ object Navigation {
     var uncovered = false
         private set
 
+    /**
+     * The last request for [destination] failed because only a track reaches it and Allow
+     * tracks is off ([OsmAndRouter.DESTINATION_BY_TRACK]). Like [uncovered], moving the
+     * vehicle cannot change that, so neither [retry] nor [Guide]'s re-routes ask again.
+     * Cleared by a route, a new destination, a change to the route options
+     * ([optionsChanged]), new maps, or clearing or restoring the trip. A start only a track
+     * reaches ([OsmAndRouter.START_BY_TRACK]) is not this: driving onto a road mends it, so
+     * that failure is retried as any other is.
+     */
+    var trackOnly = false
+        private set
+
+    /** Whether asking again for [destination] cannot help until something else changes: [uncovered] or [trackOnly]. */
+    val stuck: Boolean get() = uncovered || trackOnly
+
     /** [Refusal.NO_ROUTING_DATA] was counted for [destination]: once per destination held. */
     private var refusalCounted = false
 
@@ -119,6 +134,7 @@ object Navigation {
         arrived = false
         failures = 0
         uncovered = false
+        trackOnly = false
         refusalCounted = false
         // A new trip: a way round the driver kept away from on the last one may be right now.
         Traffic.newTrip()
@@ -203,6 +219,7 @@ object Navigation {
     fun routed() {
         failures = 0
         uncovered = false
+        trackOnly = false
     }
 
     /**
@@ -218,12 +235,14 @@ object Navigation {
 
     /**
      * Notes [error], the reason a request for [destination] failed, whether or not a route
-     * is still followed: a coverage failure stops asking again ([uncovered]) and is counted
-     * as a refusal once per destination.
+     * is still followed: a coverage failure or a destination only a track reaches stops
+     * asking again ([uncovered], [trackOnly]), and a coverage failure is counted as a
+     * refusal once per destination.
      */
     fun coverage(error: String?) {
         if (destination == null || arrived) return
         uncovered = OsmAndRouter.coverage(error)
+        trackOnly = error == OsmAndRouter.DESTINATION_BY_TRACK
         if (uncovered && !refusalCounted) {
             refusalCounted = true
             refuse(Refusal.NO_ROUTING_DATA, source ?: DestinationSource.TYPED)
@@ -231,12 +250,14 @@ object Navigation {
     }
 
     /**
-     * The maps folder changed: a destination no map covered may be covered now, so it is
-     * asked for again at once rather than waiting for a new destination.
+     * The maps folder changed: a destination no map covered may be covered now, and one only
+     * a track reached may have a road to it, so it is asked for again at once rather than
+     * waiting for a new destination.
      */
     fun mapsChanged(context: Context) {
-        if (!uncovered) return
+        if (!stuck) return
         uncovered = false
+        trackOnly = false
         if (destination != null && !arrived && Routing.pending == 0L) route(context)
     }
 
@@ -248,6 +269,7 @@ object Navigation {
     fun searching(): String? = when {
         destination == null || arrived -> null
         uncovered && !waiting && Routing.pending == 0L -> UpcomingTurn.NO_MAP
+        trackOnly && !waiting && Routing.pending == 0L -> UpcomingTurn.TRACK_ONLY
         failures > 0 && !waiting -> UpcomingTurn.NO_ROUTE
         else -> UpcomingTurn.FINDING
     }
@@ -258,11 +280,12 @@ object Navigation {
      * where that request started, or after [RETRY_PARKED_MS] wherever it is. So a drive
      * that started off road is routed within seconds of reaching one, and a parked vehicle
      * asks once a minute rather than with every fix. [bearing] is the way it is travelling.
-     * Never for a destination no map covers ([uncovered]): only a new destination or a
-     * re-send after the maps change can help that.
+     * Never for a destination no map covers ([uncovered]) or only a track reaches
+     * ([trackOnly]): only a new destination, new maps or, for the track, new route options
+     * can help that.
      */
     fun retry(context: Context, latitude: Double, longitude: Double, bearing: Double?) {
-        if (failures == 0 || uncovered || destination == null || arrived || waiting || Routing.pending != 0L) return
+        if (failures == 0 || stuck || destination == null || arrived || waiting || Routing.pending != 0L) return
         val since = SystemClock.elapsedRealtime() - attemptAt
         if (since < RETRY_MS) return
         val moved = attemptFrom?.let { RouteFollower.distance(it.first, it.second, latitude, longitude) } ?: Double.MAX_VALUE
@@ -288,6 +311,8 @@ object Navigation {
         Guide.learnPace = options.learnPace
         if (!previous.routeDiffers(options) || destination == null || arrived) return
         SessionController.note("routing settings changed; recomputing the route")
+        // Allow tracks turned on is the usual mend for a destination only a track reaches.
+        trackOnly = false
         route(context)
     }
 
@@ -300,6 +325,7 @@ object Navigation {
         arrived = false
         failures = 0
         uncovered = false
+        trackOnly = false
         refusalCounted = false
         Routing.clear()
         Guide.clear()
@@ -370,6 +396,7 @@ object Navigation {
         arrived = false
         failures = 0
         uncovered = false
+        trackOnly = false
         refusalCounted = false
     }
 

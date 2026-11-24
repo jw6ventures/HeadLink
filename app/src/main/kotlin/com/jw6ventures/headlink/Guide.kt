@@ -321,8 +321,9 @@ object Guide {
      */
     fun onRouteFailed() {
         if (rerouting) rerouteFailures++
-        if (Navigation.uncovered) {
-            // No map covers the trip: no re-route is coming, so the card stops saying one is.
+        if (Navigation.stuck) {
+            // No map covers the trip, or only a track reaches it: no re-route is coming, so
+            // the card stops saying one is.
             rerouting = false
             closureRerouting = false
             publish()
@@ -357,7 +358,7 @@ object Guide {
      * destination. [Traffic] makes sure it is asked once a closure.
      */
     fun rerouteForClosure(context: Context): Boolean {
-        if (follower == null || rerouting || Navigation.destination == null || Navigation.uncovered) return false
+        if (follower == null || rerouting || Navigation.destination == null || Navigation.stuck) return false
         rerouting = true
         closureRerouting = true
         rerouteAt = SystemClock.elapsedRealtime()
@@ -558,8 +559,9 @@ object Guide {
 
     private fun reroute(context: Context, result: FollowResult, now: Long) {
         if (rerouting && now - rerouteAt < REROUTE_RETRY_MS) return
-        // No map covers the trip: a re-route would fail the same way until the maps change.
-        if (Navigation.uncovered) return
+        // No map covers the trip, or only a track reaches it: a re-route would fail the same
+        // way until the maps or the route options change.
+        if (Navigation.stuck) return
         if (Navigation.destination == null) return
         rerouting = true
         rerouteAt = now
@@ -692,7 +694,7 @@ object Guide {
  * `@JvmOverloads` so the host tests can build the plain two-argument form.
  */
 class UpcomingTurn @JvmOverloads constructor(
-    /** The instruction the cluster gets, or [REROUTING], [ARRIVED], [WAITING], [FINDING] or [NO_ROUTE]. */
+    /** The instruction the cluster gets, or [REROUTING], [ARRIVED], [WAITING], [FINDING], [NO_ROUTE], [NO_MAP] or [TRACK_ONLY]. */
     val text: String,
     /** Metres to the maneuver, or null when there is none to count down to. */
     val metres: Double?,
@@ -725,8 +727,14 @@ class UpcomingTurn @JvmOverloads constructor(
         /** A destination no OsmAnd map covers ([Navigation.uncovered], [Routing.coverageText]); not asked again. */
         const val NO_MAP = "No map covers this place"
 
+        /**
+         * A destination only a track reaches, with Allow tracks off ([Navigation.trackOnly],
+         * [Routing.coverageText]); not asked again until the route options change.
+         */
+        const val TRACK_ONLY = "Only a track goes there"
+
         /** Whether [text] says there is a destination and no route to it yet. */
-        fun searching(text: String): Boolean = text == FINDING || text == NO_ROUTE || text == NO_MAP
+        fun searching(text: String): Boolean = text == FINDING || text == NO_ROUTE || text == NO_MAP || text == TRACK_ONLY
 
         /** A route with no fix on it yet. Blank: the card draws nothing for it. */
         const val WAITING = ""

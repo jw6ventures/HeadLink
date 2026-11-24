@@ -74,12 +74,13 @@ object Routing {
     private var tripRequest = false
 
     /**
-     * The last answered request when no map covered it ([OsmAndRouter.coverage]), with the
-     * reason, or null: what [coverageText] words. Its own request's, never the held
-     * destination's, so a two-point request off the maps names its own end.
+     * The last answered request when no map covered it ([OsmAndRouter.coverage]) or only a
+     * track reaches its destination ([OsmAndRouter.DESTINATION_BY_TRACK]), with the reason,
+     * or null: what [coverageText] words. Its own request's, never the held destination's,
+     * so a two-point request off the maps names its own end.
      */
-    private var uncovered: Pair<RouteRequest, String>? = null
-    private var uncoveredTrip = false
+    private var refusal: Pair<RouteRequest, String>? = null
+    private var refusalTrip = false
 
     /**
      * Names the route on show: changes whenever [line] does. The route preview is handed
@@ -206,15 +207,16 @@ object Routing {
         pending = 0
         val route = result.route
         val request = lastRequest
-        val coverage = OsmAndRouter.coverage(result.error)
-        uncovered = if (coverage && request != null) request to result.error!! else null
-        uncoveredTrip = coverage && tripRequest
+        val refused = OsmAndRouter.coverage(result.error) || result.error == OsmAndRouter.DESTINATION_BY_TRACK
+        refusal = if (refused && request != null) request to result.error!! else null
+        refusalTrip = refused && tripRequest
         if (route == null && (origin == CLOSURE || origin == REROUTE) && line != null) {
             // A re-route that found nothing: the destination has not changed, so the route
             // the vehicle had is still the way there. It stays on the map and in guidance
             // rather than vanishing, so a driver who finds their own way back onto it is
             // guided along it again; one still off it is re-routed again on Guide's clock,
-            // unless no map covers the trip, which no re-route can mend ([Navigation.uncovered]).
+            // unless no map covers the trip or only a track reaches it, which no re-route can
+            // mend ([Navigation.stuck]).
             val what = if (origin == CLOSURE) "re-route round a closure" else "re-route"
             SessionController.note("$what failed after ${result.computeMs} ms: ${result.error}")
             if (tripRequest) Navigation.coverage(result.error)
@@ -262,7 +264,7 @@ object Routing {
         pending = 0
         last = null
         line = null
-        uncovered = null
+        refusal = null
         token++
         SessionController.note("route cleared")
     }
@@ -293,7 +295,7 @@ object Routing {
         val previous = last ?: return false
         alternativesChosen++
         last = RouteResult(previous.sequence, route, null, 0, "preview", false)
-        uncovered = null
+        refusal = null
         line = route
         token++
         Guide.onRoute(route)
@@ -322,7 +324,7 @@ object Routing {
         origin = "restored"
         start = "saved"
         last = RouteResult(0, route, null, 0, "restored", false)
-        uncovered = null
+        refusal = null
         line = route
         token++
         Guide.onRoute(route)
@@ -330,13 +332,14 @@ object Routing {
 
     /**
      * What the operator is told when the last request's destination or stop is outside
-     * every OsmAnd map, or null: the place and the map to get, or the mirrored longitude
-     * for a dropped minus sign. Names the place, so it is for the screen, never the report.
+     * every OsmAnd map, or only a track reaches its destination and Allow tracks is off, or
+     * null: the place and the map to get, the mirrored longitude for a dropped minus sign,
+     * or the switch to turn on. Names the place, so it is for the screen, never the report.
      */
     fun coverageText(context: Context): String? {
         if (pending != 0L) return null
-        val (request, error) = uncovered ?: return null
-        val held = Navigation.destination?.takeIf { uncoveredTrip }
+        val (request, error) = refusal ?: return null
+        val held = Navigation.destination?.takeIf { refusalTrip }
         val place = held?.let(Navigation::describe) ?: Navigation.coordinates(request.toLat, request.toLon)
         return when (error) {
             OsmAndRouter.MIRRORED -> context.getString(
@@ -345,13 +348,14 @@ object Routing {
             OsmAndRouter.STOP_NOT_COVERED -> context.getString(
                 R.string.stop_no_osmand_map, Navigation.coordinates(request.viaLat ?: return null, request.viaLon ?: return null),
             )
+            OsmAndRouter.DESTINATION_BY_TRACK -> context.getString(R.string.destination_track_only, place)
             else -> context.getString(R.string.destination_no_osmand_map, place)
         }
     }
 
     /**
      * One line for the connection screen, which is the operator's own and may say more:
-     * for a destination no map covers, the place and the map to get.
+     * for a destination no map covers or only a track reaches, the place and what to do.
      */
     fun summary(context: Context): String? {
         if (pending != 0L) return "computing…"

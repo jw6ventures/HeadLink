@@ -781,6 +781,7 @@ object DashboardDrawing {
                 trip.arrived -> "trip"
                 trip.rerouting -> "rerouting…"
                 trip.noMap -> "no map here"
+                trip.trackOnly -> "track only"
                 trip.searching -> "finding route…"
                 else -> "arrive"
             }

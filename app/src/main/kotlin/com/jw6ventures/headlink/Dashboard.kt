@@ -1162,10 +1162,12 @@ data class TripPanel(
     val later: List<TripStep>,
     val arrived: Boolean,
     val rerouting: Boolean,
-    /** A destination with no route yet ([UpcomingTurn.FINDING], [UpcomingTurn.NO_ROUTE], [UpcomingTurn.NO_MAP]): no figures, End route still shown. */
+    /** A destination with no route yet ([UpcomingTurn.FINDING], [UpcomingTurn.NO_ROUTE], [UpcomingTurn.NO_MAP], [UpcomingTurn.TRACK_ONLY]): no figures, End route still shown. */
     val searching: Boolean = false,
     /** Of [searching], the one no map covers ([UpcomingTurn.NO_MAP]): nothing is being looked for. */
     val noMap: Boolean = false,
+    /** Of [searching], the one only a track reaches, with Allow tracks off ([UpcomingTurn.TRACK_ONLY]): nothing is being looked for. */
+    val trackOnly: Boolean = false,
     /** A finger is on End route. */
     val endPressed: Boolean,
     /** Voice guidance is on (P8.2): the speaker glyph lit, else slashed. */
@@ -2986,7 +2988,7 @@ class Dashboard @JvmOverloads constructor(
         val turn = upcomingTurn ?: return null
         return when (turn.text) {
             UpcomingTurn.WAITING -> null
-            UpcomingTurn.REROUTING, UpcomingTurn.ARRIVED, UpcomingTurn.FINDING, UpcomingTurn.NO_ROUTE, UpcomingTurn.NO_MAP ->
+            UpcomingTurn.REROUTING, UpcomingTurn.ARRIVED, UpcomingTurn.FINDING, UpcomingTurn.NO_ROUTE, UpcomingTurn.NO_MAP, UpcomingTurn.TRACK_ONLY ->
                 TurnCard(turn.maneuver, turn.exit, null, turn.text)
             // The street on its own line, and the instruction when the map
             // names none: "Turn left" says more than an empty line under a left arrow.
@@ -3024,6 +3026,7 @@ class Dashboard @JvmOverloads constructor(
             rerouting = rerouting,
             searching = searching,
             noMap = turn.text == UpcomingTurn.NO_MAP,
+            trackOnly = turn.text == UpcomingTurn.TRACK_ONLY,
             endPressed = pressedEndRoute,
             voiceOn = voiceOn,
             voiceWarning = !speechAvailable,
