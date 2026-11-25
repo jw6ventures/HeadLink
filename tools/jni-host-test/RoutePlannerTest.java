@@ -314,31 +314,63 @@ public final class RoutePlannerTest {
         }
     }
 
-    /** Long enough to still be searching when the second request lands: Boston to Pittsfield. */
+    /**
+     * Boston to Pittsfield stopped by a second destination. The first search's handle is
+     * held, its search not yet begun, until the second request has been made, so the stop
+     * always lands on a running search however fast it would have been.
+     */
     private static void aSecondDestinationStopsTheFirstSearch(File massachusetts) throws Exception {
         LinkedBlockingQueue<RouteResult> results = new LinkedBlockingQueue<>();
-        CountDownLatch searching = new CountDownLatch(1);
+        CountDownLatch handed = new CountDownLatch(1);
+        CountDownLatch submitted = new CountDownLatch(1);
+        AtomicInteger requests = new AtomicInteger();
+        java.util.concurrent.atomic.AtomicBoolean firstTerminated = new java.util.concurrent.atomic.AtomicBoolean();
+        java.util.concurrent.atomic.AtomicReference<Boolean> firstStopped = new java.util.concurrent.atomic.AtomicReference<>();
         OsmAndRouter router = router(List.of(massachusetts));
-        // OsmAnd's own started callback, after the planner has its handle: only then can a
+        // The planner gets a handle that notes its stop. The first request's first search
+        // waits, after the planner has that handle, for the second request: only then can the
         // newer request stop this search rather than overtake it.
-        RouteEngine signalling = (request, maxRunningMs, started) -> router.compute(request, maxRunningMs, handle -> {
-            started.invoke(handle);
-            searching.countDown();
-            return Unit.INSTANCE;
-        });
+        RouteEngine signalling = (request, maxRunningMs, started) -> {
+            boolean first = requests.incrementAndGet() == 1;
+            AtomicInteger handles = new AtomicInteger();
+            try {
+                return router.compute(request, maxRunningMs, handle -> {
+                    if (!first) return started.invoke(handle);
+                    started.invoke((SearchHandle) () -> {
+                        firstTerminated.set(true);
+                        handle.terminate();
+                    });
+                    if (handles.incrementAndGet() == 1) {
+                        handed.countDown();
+                        try {
+                            if (!submitted.await(30, TimeUnit.SECONDS)) throw new AssertionError("the second request never came");
+                        } catch (InterruptedException e) {
+                            throw new AssertionError(e);
+                        }
+                    }
+                    return Unit.INSTANCE;
+                });
+            } catch (RoutingException e) {
+                if (first) firstStopped.set(e.getStopped());
+                throw e;
+            }
+        };
         RoutePlanner planner = new RoutePlanner(() -> signalling, 60_000, () -> Unit.INSTANCE);
         try {
             planner.request(new RouteRequest(COMMON_LAT, COMMON_LON, 42.4501, -73.2454), into(results));
-            check(searching.await(30, TimeUnit.SECONDS), "the long search began and handed out its handle");
+            check(handed.await(30, TimeUnit.SECONDS), "the long search handed out its handle");
             planner.request(labToCommon(), into(results));
+            submitted.countDown();
             RouteResult first = results.poll(120, TimeUnit.SECONDS);
             RouteResult second = results.poll(120, TimeUnit.SECONDS);
-            // OsmAnd answers a cancelled search with an InterruptedException, which OsmAndRouter words so.
-            check(first != null && first.getSuperseded() && first.getRoute() == null && "routing interrupted".equals(first.getError()),
-                "the first search was stopped through its handle, with no route: " + (first == null ? null : first.getError()));
+            check(firstTerminated.get(), "the second request stopped the first search through its handle");
+            check(first != null && first.getSuperseded() && first.getRoute() == null && Boolean.TRUE.equals(firstStopped.get()),
+                "the first request ended stopped, superseded and with no route, not failed: "
+                    + (first == null ? null : first.getError()) + ", stopped " + firstStopped.get());
             check(second != null && second.getRoute() != null && !second.getSuperseded(), "the second is answered");
             System.out.println("route-planner-test: stopped after ms=" + first.getComputeMs() + " error=" + first.getError());
         } finally {
+            submitted.countDown();
             planner.close();
             router.close();
         }

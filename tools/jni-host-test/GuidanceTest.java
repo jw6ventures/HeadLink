@@ -17,6 +17,7 @@ import com.jw6ventures.headlink.Maneuver;
 import com.jw6ventures.headlink.Maneuvers;
 import com.jw6ventures.headlink.OsmAndRouter;
 import com.jw6ventures.headlink.TurnCommand;
+import com.jw6ventures.headlink.UpcomingTurn;
 import com.jw6ventures.headlink.Route;
 import com.jw6ventures.headlink.RouteFollower;
 import com.jw6ventures.headlink.RouteRequest;
@@ -211,6 +212,12 @@ public final class GuidanceTest {
         check(r.getState() == FollowState.OFF_ROUTE, "off the route after driving on past the turn: " + r.getState());
         check(r.getOffsetM() > 100, "and says how far: " + r.getOffsetM());
 
+        // Off a route no re-route can replace, the card says why, never the old route's next turn.
+        check(r.getStep() != null, "the follower still has the old route's step off it");
+        check(UpcomingTurn.NO_MAP.equals(UpcomingTurn.stranded(r.getState(), true, false)), "off the route with no map: says so");
+        check(UpcomingTurn.TRACK_ONLY.equals(UpcomingTurn.stranded(r.getState(), false, true)), "off the route only a track reaches: says so");
+        check(UpcomingTurn.stranded(r.getState(), false, false) == null, "off the route, re-routable: the usual card");
+
         // Many fixes in one bad second are still one second.
         RouteFollower g = new RouteFollower(lShape(new int[] {TurnCommand.TURN_LEFT, TurnCommand.END}), 1);
         at(g, east(200), 0);
@@ -220,6 +227,7 @@ public final class GuidanceTest {
         // Coming back before a re-route lands is being on the route again.
         r = at(f, north(100), t + 1000);
         check(r.getState() == FollowState.ON_ROUTE, "back on the route");
+        check(UpcomingTurn.stranded(r.getState(), true, true) == null, "back on the route: guided along it again");
     }
 
     private static void aRouteAlwaysEndsAtADestination() {

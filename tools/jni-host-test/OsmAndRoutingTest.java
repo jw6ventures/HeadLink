@@ -14,11 +14,13 @@
 // the same data, kept through scaling and traffic marking, handed by RouteFollower to the
 // card, the cluster and the voice, and carried by the route file; a closure and a costly jam
 // move it, a cheap jam does not, and closures with no way round are opened rather than
-// failing; alternative 1 avoids alternative 0's roads; a handle stops a search; no maps is
-// an error, not a crash; OsmAnd's own errors lose their coordinates before they reach a
-// report; a destination or via point no map's routing data holds is refused before any
-// search, and a dropped minus sign is told apart; the track is driven only when tracks
-// are allowed.
+// failing; alternative 1 avoids alternative 0's roads; a handle stops a search, and a check
+// that runs out of time leaves the route it was checking; no maps is an error, not a crash;
+// OsmAnd's own errors lose their coordinates before they reach a report; a destination or
+// via point no map's routing data holds is refused before any search, and a dropped minus
+// sign is told apart; the track is driven only when tracks are allowed, and a start, stop or
+// destination only a track reaches is refused with tracks off; a jam of absurd length is
+// still weighed; an exit with no destination signs is named by its junction.
 //
 // With a directory of real OsmAnd maps as the argument (OBF_DIR), run under the phone's
 // 256 MB heap (jni-host-test.sh passes -Xmx256m), it also routes over them, each section
@@ -90,6 +92,9 @@ public final class OsmAndRoutingTest {
                 anOnRampDrivenBackwardsSaysWhereItGoes(router);
                 aTrackIsTakenOnlyWhenAllowed(router);
                 anEndOnlyATrackReachesIsRefused(router);
+                aStopOnlyATrackReachesIsRefused(router);
+                aCheckOutOfTimeLeavesTheRouteFound(router);
+                anAbsurdJamIsStillWeighed(router);
                 aStopOnAnIslandIsNotConnected(router);
                 aStopDuringALaterSearchStillStops(router);
             } finally {
@@ -105,6 +110,8 @@ public final class OsmAndRoutingTest {
         osmAndErrorsLoseTheirCoordinates();
         aDisplacedEndIsJudgedPerSnap();
         aBrokenTownListLeavesRoutingAlone();
+        anUnsignedExitIsNamedByItsJunction();
+        aPlaceNoRoadButATrackIsNearIsRefused();
         String dir = args.length > 0 ? args[0] : "";
         if (dir.isEmpty()) {
             System.out.println("jni-host-test: ok " + passed + " OsmAnd routing checks (real-file checks skipped: no OBF_DIR given)");
@@ -606,6 +613,148 @@ public final class OsmAndRoutingTest {
         check(near(to.getLatitudes()[last], to.getLongitudes()[last], midLat, midLon, 30), "tracks allowed, the destination is reached");
         Route from = route(router, trip(midLat, midLon, TO_LAT, TO_LON, options(false, true), List.of()));
         check(near(from.getLatitudes()[0], from.getLongitudes()[0], midLat, midLon, 30), "and the start set off from");
+    }
+
+    /**
+     * A stop at the track's middle, on the way from the motorway to the primary road. With
+     * tracks refused, OsmAnd would pass it 384 m off on the primary road and the follower
+     * clear it there; instead the route is refused. Allowed, the route goes to it.
+     */
+    private static void aStopOnlyATrackReachesIsRefused(OsmAndRouter router) throws Exception {
+        double midLat = LAT + 0.0075, midLon = LON + 0.016;
+        try {
+            route(router, new RouteRequest(FROM_LAT, FROM_LON, TO_LAT, TO_LON, null, options(false, false), 0, midLat, midLon, List.of()));
+            check(false, "a stop only a track reaches is not routed with tracks off");
+        } catch (RoutingException e) {
+            check(!e.getStopped() && OsmAndRouter.STOP_BY_TRACK.equals(e.getMessage()), "a stop only a track reaches, tracks off: " + e.getMessage());
+        }
+        Route allowed = route(router, new RouteRequest(FROM_LAT, FROM_LON, TO_LAT, TO_LON, null, options(false, true), 0, midLat, midLon, List.of()));
+        check(passesNear(allowed, midLat, midLon, 30), "tracks allowed, the route goes to the stop");
+    }
+
+    /**
+     * The track check is a diagnostic: when it runs out of time, the route already found
+     * stands. OsmAnd throws InterruptedException for a search out of time as for a stopped
+     * one, so only the handle tells them apart. The time runs from before a search hands
+     * out its handle, so holding the handle past it runs the search out of time.
+     */
+    private static void aCheckOutOfTimeLeavesTheRouteFound(OsmAndRouter router) throws Exception {
+        double midLat = LAT + 0.0075, midLon = LON + 0.016;
+        RouteRequest toTheTrack = trip(FROM_LAT, FROM_LON, midLat, midLon, options(false, false), List.of());
+        int[] handles = {0};
+        Route kept = router.compute(toTheTrack, 2_000, handle -> {
+            if (++handles[0] == 2) pause(2_500);
+            return kotlin.Unit.INSTANCE;
+        });
+        check(handles[0] == 2, "the route, then the check with tracks allowed: " + handles[0] + " handles");
+        int last = kept.getPoints() - 1;
+        check(!near(kept.getLatitudes()[last], kept.getLongitudes()[last], midLat, midLon, OsmAndRouter.END_SNAP_M),
+            "the check ran out of time, so the route found stands, ending short of the track");
+        handles[0] = 0;
+        try {
+            router.compute(toTheTrack, 30_000, handle -> {
+                if (++handles[0] == 2) handle.terminate();
+                return kotlin.Unit.INSTANCE;
+            });
+            check(false, "a request stopped during the track check returns no route");
+        } catch (RoutingException e) {
+            check(e.getStopped() && "routing stopped".equals(e.getMessage()) && handles[0] == 2,
+                "a stop during the track check stops the request: " + e.getMessage() + ", " + handles[0] + " handles");
+        }
+        try {
+            router.compute(trip(List.of(), 0), 2_000, handle -> {
+                pause(2_500);
+                return kotlin.Unit.INSTANCE;
+            });
+            check(false, "a route out of time returns none");
+        } catch (RoutingException e) {
+            check(e.getStopped() && "routing stopped".equals(e.getMessage()), "a route out of time is stopped, not interrupted: " + e.getMessage());
+        }
+        check(!Thread.currentThread().isInterrupted(), "and the thread is left uninterrupted");
+    }
+
+    private static void pause(long ms) {
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    /**
+     * A jam on the ramp so long its seconds pass any Float, and a dear but finite one on the
+     * on-ramp: each step's charge stays finite (a day at most), so the ramp is still the
+     * cheaper way. Unbounded, the ramp's steps cost infinity and the route went round.
+     */
+    private static void anAbsurdJamIsStillWeighed(OsmAndRouter router) throws Exception {
+        List<Nogo> jams = List.of(new Nogo(RAMP_LAT, RAMP_LON, 40, 1e300), new Nogo(ON_RAMP_LAT, ON_RAMP_LON, 40, 1e5));
+        Route route = route(router, trip(jams, 0));
+        check(passesNear(route, RAMP_LAT, RAMP_LON, 10), "an absurd jam is charged a finite price, and the dearer way is left");
+        check(route.getSeconds() >= 0 && route.getSeconds() < Integer.MAX_VALUE, "with a finite time: " + route.getSeconds());
+    }
+
+    /**
+     * The ramp without destination signs: its sign words fall back, as OsmAnd's own exit
+     * names do, to the ramp's junction:name, else the junction node's name. (OSM's exit_to
+     * is not kept in OsmAnd's maps.)
+     */
+    private static void anUnsignedExitIsNamedByItsJunction() throws Exception {
+        for (boolean junctionName : new boolean[] {false, true}) {
+            Path file = Files.createTempFile("osmand-unsigned", ".obf");
+            try {
+                Files.write(file, SyntheticObf.syntheticObfWithUnsignedRamp(junctionName));
+                OsmAndRouter router = new OsmAndRouter(() -> List.of(OsmAndRouter.MapFile.of(file.toFile())));
+                try {
+                    Route route = route(router, trip(List.of(), 0));
+                    check(route.getCommands().length >= 1 && route.getCommands()[0] == TurnCommand.EXIT_RIGHT, "the exit is still taken");
+                    ExitSign sign = route.exitSign(0);
+                    String expected = junctionName ? "Lamar Boulevard" : "Main Street";
+                    check(sign != null && "23A".equals(sign.getNumber()) && expected.equals(sign.getToward()),
+                        (junctionName ? "the ramp's junction:name" : "the junction's name") + " stands in for its signs: " + sign);
+                } finally {
+                    router.close();
+                }
+            } finally {
+                Files.deleteIfExists(file);
+            }
+        }
+    }
+
+    /**
+     * The far track's end is 3 km from any other road. With tracks refused OsmAnd locates no
+     * road there at all; that is the track's doing, said as for a place a track alone
+     * reaches, whether it is the destination, the start or the stop. Allowed, it is routed.
+     */
+    private static void aPlaceNoRoadButATrackIsNearIsRefused() throws Exception {
+        double farLat = LAT + 0.0075, farLon = LON + 0.085;
+        Path file = Files.createTempFile("osmand-far-track", ".obf");
+        try {
+            Files.write(file, SyntheticObf.syntheticObfWithFarTrack());
+            OsmAndRouter router = new OsmAndRouter(() -> List.of(OsmAndRouter.MapFile.of(file.toFile())));
+            try {
+                RouteRequest[] refused = {
+                    trip(FROM_LAT, FROM_LON, farLat, farLon, options(false, false), List.of()),
+                    trip(farLat, farLon, TO_LAT, TO_LON, options(false, false), List.of()),
+                    new RouteRequest(FROM_LAT, FROM_LON, TO_LAT, TO_LON, null, options(false, false), 0, farLat, farLon, List.of()),
+                };
+                String[] why = {OsmAndRouter.DESTINATION_BY_TRACK, OsmAndRouter.START_BY_TRACK, OsmAndRouter.STOP_BY_TRACK};
+                for (int i = 0; i < refused.length; i++) {
+                    try {
+                        route(router, refused[i]);
+                        check(false, "no route to a place only the far track is near, tracks off: " + why[i]);
+                    } catch (RoutingException e) {
+                        check(!e.getStopped() && why[i].equals(e.getMessage()), "located by the far track alone: " + e.getMessage());
+                    }
+                }
+                Route allowed = route(router, trip(FROM_LAT, FROM_LON, farLat, farLon, options(false, true), List.of()));
+                int last = allowed.getPoints() - 1;
+                check(near(allowed.getLatitudes()[last], allowed.getLongitudes()[last], farLat, farLon, 30), "tracks allowed, it is reached");
+            } finally {
+                router.close();
+            }
+        } finally {
+            Files.deleteIfExists(file);
+        }
     }
 
     /** A stop on the island, which no road joins: no route, said without blaming the start and destination alone. */

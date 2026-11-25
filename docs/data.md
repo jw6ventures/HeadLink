@@ -37,7 +37,8 @@ OsmAnd.
 
 A destination that none of the maps covers is refused rather than searched for: the
 phone names the reason, and the car's turn card says "No map covers this place"; see
-[Navigation](navigation.md#coverage-refusal).
+[Navigation](navigation.md#coverage-refusal). Once a map is added in OsmAnd, the next
+time HeadLink reads the folder it asks for that trip again.
 
 ### Upgrading from 0.11 or earlier
 

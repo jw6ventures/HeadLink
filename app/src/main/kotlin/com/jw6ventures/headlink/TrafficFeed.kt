@@ -1,5 +1,8 @@
 package com.jw6ventures.headlink
 
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -335,7 +338,12 @@ class TrafficFeed(private val host: TrafficHost) {
      *
      * The best of those is offered. The same way round (splitting within [SAME_SPLIT_M] and
      * mostly the same route) keeps its offer's id, so the card is not re-fitted; another
-     * replaces it. None withdraws the offer up. Nothing re-routes by itself for a jam.
+     * replaces it. None withdraws the offer up, and so does a look that found no way round
+     * at all ([alternatives] empty). Nothing re-routes by itself for a jam.
+     *
+     * This is a look's final decision: its bubbles' routes once their searches end, or, with
+     * the bubbles off, the engine's way round alone (or nothing, when it found none), since no
+     * further routes will come for that look. Only [assessWayRound] is provisional.
      *
      * Routes searched with points since replaced (a newer response, or none held) decide
      * nothing: the offer is left as it is, and only their delays are given.
@@ -344,31 +352,33 @@ class TrafficFeed(private val host: TrafficHost) {
         assess(revision, followed, ahead, aheadAlongM, alternatives, false, done)
 
     /**
-     * A traffic look's way round, the engine's best route with the points of [revision],
-     * laid on the traffic as soon as it is found and before the bubbles' searches end
-     * ([LiveAlternatives]), and the whole decision when the bubbles are off; [done] is
-     * given it when it is now the offer. Offered as [assess] would offer it while no offer
-     * is up or the one up is the same way round. A different offer up is left for the
-     * look's own [assess] to keep or replace once the bubbles are in, and nothing is
-     * withdrawn here: the way round alone never swaps the card back from a better way an
-     * earlier look's bubbles found. Points since replaced decide nothing, as for [assess].
+     * A traffic look's way round with the bubbles on: the engine's best route with the points
+     * of [revision], laid on the traffic as soon as it is found and before the bubbles'
+     * searches end ([LiveAlternatives]); [done] is given it when it is now the offer.
+     * Provisional: offered as [assess] would offer it while no offer is up or the one up is
+     * the same way round, but a different offer up is left for the look's own [assess] to
+     * keep, replace or withdraw once the bubbles are in, and nothing is withdrawn here: the
+     * way round alone never swaps the card back from a better way an earlier look's bubbles
+     * found. A look with the bubbles off has no later decision, so its way round goes to
+     * [assess] instead. Points since replaced decide nothing, as for [assess].
      */
     fun assessWayRound(revision: Long, followed: Route, ahead: Route, aheadAlongM: Double, wayRound: Route, done: (Route?) -> Unit) =
         assess(revision, followed, ahead, aheadAlongM, listOf(wayRound), true) { _, offered -> done(offered) }
 
+    /** [assess], or with [provisional] [assessWayRound]. */
     private fun assess(
         revision: Long,
         followed: Route,
         ahead: Route,
         aheadAlongM: Double,
         alternatives: List<Route>,
-        wayRoundOnly: Boolean,
+        provisional: Boolean,
         done: (IntArray, Route?) -> Unit,
     ) {
         val none = IntArray(alternatives.size)
         val held = traffic
         if (followed !== route || held == null || held.route !== followed || snapshots.isEmpty() || alternatives.isEmpty() ||
-            (wayRoundOnly && revision != pointsRevision)
+            (provisional && revision != pointsRevision)
         ) {
             if (followed === route && held != null && alternatives.isEmpty() && offer != null && revision == pointsRevision) {
                 withdraw()
@@ -395,7 +405,7 @@ class TrafficFeed(private val host: TrafficHost) {
                     return@main
                 }
                 val current = revision == pointsRevision
-                done(extras(held, aheadAlongM, matched), if (current) decide(followed, held, ahead, aheadAlongM, alternatives, matched, wayRoundOnly) else null)
+                done(extras(held, aheadAlongM, matched), if (current) decide(followed, held, ahead, aheadAlongM, alternatives, matched, provisional) else null)
             }
         }
     }
@@ -659,7 +669,10 @@ class TrafficFeed(private val host: TrafficHost) {
     /**
      * Whether closed [run] of [r] is a closure [r] enters at its start or destination
      * ([Route.endClosures]): one of those circles on the route within the run. A re-route
-     * from the vehicle on it, or to the destination in it, would only find it again.
+     * from the vehicle on it, or to the destination in it, would only find it again. The
+     * circle is placed where it is along the route's line ([nearestAlong]), not at the
+     * route's point nearest it, which on a long segment may be past it and inside another
+     * closure the circle never reaches.
      */
     private fun enteredAtEnd(r: Route, run: TrafficRun): Boolean = r.endClosures.any { nogo ->
         val m = nearestAlong(r, routeAlong, nogo.latitude, nogo.longitude)
@@ -686,7 +699,7 @@ class TrafficFeed(private val host: TrafficHost) {
         aheadAlongM: Double,
         alternatives: List<Route>,
         matched: List<RouteTraffic>,
-        wayRoundOnly: Boolean,
+        provisional: Boolean,
     ): Route? {
         val aheadDelay = held.delayAheadSeconds(aheadAlongM)
         val candidates = alternatives.indices.mapNotNull { i ->
@@ -697,14 +710,9 @@ class TrafficFeed(private val host: TrafficHost) {
             val splitLat = alternative.latitudes[split]
             val splitLon = alternative.longitudes[split]
             val splitM = nearestAlong(followed, routeAlong, splitLat, splitLon)
-            if (splitM <= alongM + LiveAlternatives.PASSED_M) return@mapNotNull null
             val ownDelay = own.delayAheadSeconds(0.0)
-            val saving = (ahead.seconds + aheadDelay - alternative.seconds - ownDelay).roundToInt()
-            // The pop-up is only for a way round faster *because of traffic*. The part
-            // of the saving traffic accounts for (the delay it misses, but never more than it
-            // saves) must itself be worth an offer, so a route merely faster in the router's model,
-            // with a little traffic besides, is left to the bubbles.
-            if (minOf(saving.toDouble(), aheadDelay - ownDelay) < OFFER_SAVING_S) return@mapNotNull null
+            val saving = offerSaving(ahead.seconds, aheadDelay, alternative.seconds, ownDelay)
+            if (!worthOffering(saving, aheadDelay, ownDelay, splitM, alongM)) return@mapNotNull null
             if (kept.any { sameWay(it.splitLat, it.splitLon, it.route, splitLat, splitLon, alternative) && saving < it.saving + OFFER_REGROW_S }) {
                 return@mapNotNull null
             }
@@ -712,7 +720,7 @@ class TrafficFeed(private val host: TrafficHost) {
         }
         val best = candidates.maxByOrNull { it.saving }
         if (best == null) {
-            if (offer != null && !wayRoundOnly) {
+            if (offer != null && !provisional) {
                 withdraw()
                 publish()
             }
@@ -720,8 +728,8 @@ class TrafficFeed(private val host: TrafficHost) {
         }
         val up = offer
         val same = up != null && sameWay(up.splitLat, up.splitLon, up.route, best.splitLat, best.splitLon, best.route)
-        // A look's way round alone never replaces another way up ([assessWayRound]).
-        if (wayRoundOnly && up != null && !same) return null
+        // A look's provisional way round never replaces another way up ([assessWayRound]).
+        if (provisional && up != null && !same) return null
         if (up != null && !same) offersWithdrawn++
         val id = if (same) up!!.id else nextOfferId++
         if (!same) {
@@ -832,6 +840,27 @@ class TrafficFeed(private val host: TrafficHost) {
             RouteFollower.distance(latA, lonA, latB, lonB) <= SAME_SPLIT_M &&
                 (RoutePreview.duplicate(routeA, listOf(routeB)) || RoutePreview.duplicate(routeB, listOf(routeA)))
 
+        /**
+         * Seconds a way round saves against the followed route from where it was searched:
+         * [aheadSeconds] and [aheadDelay], the router's time and the traffic delay of the
+         * followed route from there, against the way round's own [seconds] and [ownDelay].
+         */
+        fun offerSaving(aheadSeconds: Int, aheadDelay: Double, seconds: Int, ownDelay: Double): Int =
+            (aheadSeconds + aheadDelay - seconds - ownDelay).roundToInt()
+
+        /**
+         * Whether a way round saving [saving] ([offerSaving]), with [ownDelay] of traffic of
+         * its own against the followed route's [aheadDelay], and leaving the followed route
+         * [splitM] metres along it with the vehicle at [vehicleM], is worth an offer ([assess]).
+         * It must leave more than [LiveAlternatives.PASSED_M] ahead of the vehicle, and be
+         * faster *because of traffic*: the part of the saving traffic accounts for (the delay
+         * it misses, but never more than it saves) must itself be [OFFER_SAVING_S], so a route
+         * merely faster in the router's model, with a little traffic besides, is left to the
+         * bubbles. Kept ways round are the feed's own business, not this rule's.
+         */
+        fun worthOffering(saving: Int, aheadDelay: Double, ownDelay: Double, splitM: Double, vehicleM: Double): Boolean =
+            splitM > vehicleM + LiveAlternatives.PASSED_M && minOf(saving.toDouble(), aheadDelay - ownDelay) >= OFFER_SAVING_S
+
         /** The reason when the map names no road there. */
         const val GENERIC_REASON = "Traffic ahead"
 
@@ -869,19 +898,37 @@ class TrafficFeed(private val host: TrafficHost) {
             )
         }
 
-        /** Metres along [route] to its point nearest ([lat], [lon]), as [RouteFollower.alongNearest] finds it. */
-        internal fun nearestAlong(route: Route, along: DoubleArray, lat: Double, lon: Double): Double {
-            var best = 0
+        /**
+         * Metres along [route] to the point of its line nearest ([lat], [lon]), [along] being
+         * its metres ([TrafficArea.metres]): on the segment, not at the route's nearest point,
+         * so a place part way along a long segment is where it is rather than at its nearer
+         * end. Flat around the place, as [RouteFollower] snaps a fix.
+         */
+        fun nearestAlong(route: Route, along: DoubleArray, lat: Double, lon: Double): Double {
+            if (along.isEmpty()) return 0.0
+            if (route.points < 2) return along[0]
+            val scaleY = METRES_PER_DEGREE
+            val scaleX = METRES_PER_DEGREE * cos(lat * PI / 180.0)
+            var best = along[0]
             var nearest = Double.MAX_VALUE
-            for (i in 0 until route.points) {
-                val d = RouteFollower.distance(route.latitudes[i], route.longitudes[i], lat, lon)
-                if (d < nearest) {
-                    nearest = d
-                    best = i
+            for (i in 0 until route.points - 1) {
+                val ax = (route.longitudes[i] - lon) * scaleX
+                val ay = (route.latitudes[i] - lat) * scaleY
+                val dx = (route.longitudes[i + 1] - lon) * scaleX - ax
+                val dy = (route.latitudes[i + 1] - lat) * scaleY - ay
+                val lengthSq = dx * dx + dy * dy
+                val t = if (lengthSq > 0.0) (-(ax * dx + ay * dy) / lengthSq).coerceIn(0.0, 1.0) else 0.0
+                val offset = hypot(ax + t * dx, ay + t * dy)
+                // Ties go to the earlier segment, as RouteFollower's.
+                if (offset < nearest) {
+                    nearest = offset
+                    best = along[i] + t * (along[i + 1] - along[i])
                 }
             }
-            return if (along.isEmpty()) 0.0 else along[best]
+            return best
         }
+
+        private const val METRES_PER_DEGREE = 6_371_000.0 * PI / 180.0
     }
 }
 

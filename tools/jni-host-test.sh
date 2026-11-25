@@ -28,8 +28,9 @@
 #   search through the handle, an engine's refusal, a crash or running out of memory failing
 #   the route and not the thread, and the engine only ever built on the routing thread.
 #   OBF_DIR with Us_massachusetts_northamerica.obf adds OsmAnd routes through the planner
-#   (across town to Boston Common, the same answer twice, a long search stopped by a second
-#   destination) under -Xmx256m, and with the Austin and Waco maps Austin to Waco over two
+#   (across town to Boston Common, the same answer twice, a long search stopped through its
+#   handle by a second destination, ending stopped, superseded and with no route) under
+#   -Xmx256m, and with the Austin and Waco maps Austin to Waco over two
 #   files; without them the summary line says what was skipped.
 # * AdaptiveZoomTest: the follow view's zoom by speed band, the waits before zooming out
 #   and in, the margin at a band's edge, the glide, that a pinch or +/- holds the zoom
@@ -51,7 +52,8 @@
 #   alternatives (sharing part of the best, no slower than the router's own first, never
 #   repeated).
 # * GuidanceTest: turn commands as cluster maneuvers (the pinned numbering), and
-#   RouteFollower joining, leaving and arriving. OBF_DIR with
+#   RouteFollower joining, leaving and arriving; off a route no re-route can replace, the
+#   card's no-map or track-only text in place of the old next turn. OBF_DIR with
 #   Us_massachusetts_northamerica.obf adds OsmAndRouter's Lexington to Boston route followed
 #   end to end (one destination, times never going back) and a re-route, given a heading,
 #   from where lab-receiver/drives/lexington.csv leaves it.
@@ -71,9 +73,12 @@
 #   the junction when the route stays on the motorway, an on-ramp driven against its stored
 #   order signed by destination:backward, the sign through the follower to the card, cluster and voice and
 #   through the route file, the times, a closure and a costly jam moving the route and a
-#   cheap one not, a destination, via point or dropped minus sign outside the maps refused,
-#   closures with no way round opened, the second alternative, a stopped search, no maps,
-#   the profile's parameters, and OsmAnd's errors stripped of coordinates. OBF_DIR with
+#   cheap one not, an absurd jam still weighed, a destination, via point or dropped minus
+#   sign outside the maps refused, a stop only a track reaches and a start, stop or
+#   destination with no road but a track near refused, an unsigned exit named by its
+#   junction, closures with no way round opened, the second alternative, a stopped search, a
+#   track check out of time leaving the route found, no maps, the profile's parameters, and
+#   OsmAnd's errors stripped of coordinates. OBF_DIR with
 #   Us_texas_austin_northamerica.obf adds a 58 km route with a jam under the phone's 256 MB
 #   heap (the plain search's memory failure), and with the San Antonio map from another
 #   OsmAnd build, that the hierarchy is skipped. No phone.
@@ -156,10 +161,13 @@
 #   paced time plus the delay ahead, free flow adding nothing and the pace never counting the
 #   delay; no-go points on every request, alternatives search and via route, with closures
 #   and jams laid on the route's own line, the same at the slowest and fastest top speed; a
-#   closure ahead re-routing once and never on a route that opened closures; the offer at 3
-#   minutes, a look's way round offered alone without ever swapping or taking down the offer
-#   up, Keep's suppression until 3 more, withdrawal past the split or when the saving goes,
-#   Take; Home's "+N min traffic"; and no place, road, reason or key in the report or event
+#   closure ahead re-routing once and never on a route that opened closures, an end closure
+#   placed along the line; the offer at 3 minutes, with the bubbles on a look's way round
+#   offered alone without ever swapping or taking down the offer up, with them off its
+#   final decision (a different way replacing the offer, a closed or missing way round
+#   withdrawing it, never a superseded look), a look stopped after its searches ended
+#   deciding nothing, Keep's suppression until 3 more, withdrawal past the split or when the
+#   saving goes, Take; Home's "+N min traffic"; and no place, road, reason or key in the report or event
 #   log. OBF_DIR with Us_texas_dallas_northamerica.obf adds OsmAndRouter's I-35E route in
 #   Dallas: a closure laid on it is re-routed round once without opening it, and a queue
 #   brings an offer on the engine's way round as soon as that one search returns (its time

@@ -87,8 +87,9 @@ object Navigation {
         private set
 
     /**
-     * The last request for [destination] failed because only a track reaches it and Allow
-     * tracks is off ([OsmAndRouter.DESTINATION_BY_TRACK]). Like [uncovered], moving the
+     * The last request for [destination] failed because only a track reaches it, or its
+     * stop, and Allow tracks is off ([OsmAndRouter.DESTINATION_BY_TRACK],
+     * [OsmAndRouter.STOP_BY_TRACK]). Like [uncovered], moving the
      * vehicle cannot change that, so neither [retry] nor [Guide]'s re-routes ask again.
      * Cleared by a route, a new destination, a change to the route options
      * ([optionsChanged]), new maps, or clearing or restoring the trip. A start only a track
@@ -242,7 +243,7 @@ object Navigation {
     fun coverage(error: String?) {
         if (destination == null || arrived) return
         uncovered = OsmAndRouter.coverage(error)
-        trackOnly = error == OsmAndRouter.DESTINATION_BY_TRACK
+        trackOnly = error == OsmAndRouter.DESTINATION_BY_TRACK || error == OsmAndRouter.STOP_BY_TRACK
         if (uncovered && !refusalCounted) {
             refusalCounted = true
             refuse(Refusal.NO_ROUTING_DATA, source ?: DestinationSource.TYPED)

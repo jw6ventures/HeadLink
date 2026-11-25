@@ -613,6 +613,22 @@ public final class TrafficFeedTest {
         check(twoClosures.rerouteCalls == 1, "but a separate closure farther ahead on it still re-routes: " + twoClosures.rerouteCalls);
         check(fromInside.remainder(1).getEndClosures().equals(fromInside.getEndClosures())
                 && fromInside.withTimeScale(1.1).getEndClosures().equals(fromInside.getEndClosures()), "the end closures go with the route's copies");
+        // Review 3: the end closure is placed where it is along the route's line, not at the
+        // route's nearest point. A circle 70 m along a 0-100 m segment never reaches a separate
+        // closure at 100-140 m, which still re-routes; placed at the segment's end (100 m) it
+        // would have passed for the closure the route starts in, and nothing would re-route.
+        double[] at70 = at(route, along, 70.0);
+        double placed = TrafficFeed.Companion.nearestAlong(route, along, at70[0], at70[1]);
+        check(Math.abs(placed - 70.0) < 1.0, "70 m along a 100 m segment is 70 m along it, not at its end: " + placed);
+        Route fromNear = route.withNogos(12, false, List.of(new Nogo(at70[0], at70[1], TrafficNogos.RADIUS_M, null)));
+        Host beyond = new Host(settings(true, KEY));
+        beyond.http.incidents = incidentsJson(List.<double[][]>of(closure(route, 100.0, 140.0, 3.0)));
+        TrafficFeed nextTo = new TrafficFeed(beyond);
+        nextTo.onRoute(fromNear);
+        nextTo.onPosition(fromNear, on(0.0));
+        beyond.drain();
+        check(nextTo.report().contains("traffic_closed_runs=1") && beyond.rerouteCalls == 1,
+                "a closure just past the one the route starts in, out of its circle's reach, re-routes: " + beyond.rerouteCalls);
     }
 
     // ---- the offer (P9.6) ------------------------------------------------
@@ -650,8 +666,9 @@ public final class TrafficFeedTest {
         Route roundAgain = aside(look, 10_000.0, look.ahead.getSeconds() + delay - 250);
         look.assess(feed, host, List.of(roundAgain));
         check(feed.getDisplay().getOffer() != null && feed.getDisplay().getOffer().getId() == id, "the same way round keeps its id");
-        // A look's way round alone (LiveAlternatives.wayRoundFound) never swaps or takes
-        // down the offer up: another way saving more, or one saving too little, leaves it.
+        // With the bubbles on, a look's way round alone (LiveAlternatives.wayRoundFound) never
+        // swaps or takes down the offer up: another way saving more, or one saving too little,
+        // leaves it. With them off it is the look's whole decision (secondReviewFixes).
         check(look.assessWayRound(feed, host, aside(look, 12_000.0, look.ahead.getSeconds() + delay - 600)) == null
                 && feed.getDisplay().getOffer() != null && feed.getDisplay().getOffer().getId() == id, "a look's way round alone never swaps the offer up");
         check(look.assessWayRound(feed, host, short1) == null && feed.getDisplay().getOffer() != null
@@ -827,8 +844,15 @@ public final class TrafficFeedTest {
         check(feed.getDisplay().getOffer() != null && feed.getDisplay().getOffer().getId() != id, "the same result with the points held replaces it");
         long betterId = feed.getDisplay().getOffer().getId();
 
-        // Fix 2: bubbles off, a traffic look searches the way round only, and that alone is
-        // the decision: it neither replaces nor withdraws a different offer up.
+        // Fix 2, as review 3 left it: with the bubbles on, a traffic look's way round alone
+        // (LiveAlternatives.wayRoundFound, assessWayRound) is provisional: it neither replaces
+        // nor withdraws a different offer up, which the look's bubbles decide.
+        check(look.assessWayRound(feed, host, round) == null && feed.getDisplay().getOffer().getId() == betterId,
+                "with the bubbles on, a look's way round alone leaves a better way up as it is");
+        check(look.assessWayRound(feed, host, tooLittle) == null && feed.getDisplay().getOffer().getId() == betterId, "nor takes it down");
+        // With them off, the look searches the way round only, and that is the look's whole
+        // decision (assess): it replaces a different way up, and withdraws the offer when the
+        // way round no longer qualifies or none is found.
         RouteOptions bubblesOff = new RouteOptions(false, false, false, false, false, RouteOptions.DEFAULT_TOP_SPEED_KMH, 0, true, false);
         PreviewRequest offTrip = new PreviewRequest(1L, look.ahead.getLatitudes()[0], look.ahead.getLongitudes()[0], toLat, toLon, null,
                 bubblesOff, look.ahead, feed.nogos());
@@ -838,9 +862,38 @@ public final class TrafficFeedTest {
         AlternativeSearch.INSTANCE.find(solo, offTrip, true, RoutePlanner.MAX_RUNNING_MS, h -> Unit.INSTANCE, () -> false,
                 r -> { rounds.add(r); return Unit.INSTANCE; }, r -> { found.add(r); return Unit.INSTANCE; });
         check(solo.computes == 1 && rounds.size() == 1 && found.isEmpty(), "bubbles off: one search, the way round, and no bubbles: " + solo.computes);
-        check(look.assessWayRound(feed, host, rounds.get(0)) == null && feed.getDisplay().getOffer().getId() == betterId,
-                "and the way round alone leaves a better way up as it is");
-        check(look.assessWayRound(feed, host, tooLittle) == null && feed.getDisplay().getOffer().getId() == betterId, "nor takes it down");
+        Route offWay = rounds.get(0);
+        Assessed off = look.assess(feed, host, List.of(offWay));
+        TrafficOffer replaced = feed.getDisplay().getOffer();
+        check(off.offered == offWay && replaced != null && replaced.getId() != betterId && replaced.getRoute() == offWay,
+                "bubbles off: the look's way round replaces a different way up");
+        long offId = replaced.getId();
+        check(look.assessWayRound(feed, host, better) == null && feed.getDisplay().getOffer().getId() == offId,
+                "with the bubbles on, even a better way round alone waits for the bubbles");
+        Assessed swapped = look.assess(feed, host, List.of(better));
+        check(swapped.offered == better && feed.getDisplay().getOffer() != null && feed.getDisplay().getOffer().getId() != offId
+                && feed.getDisplay().getOffer().getRoute() == better, "with them off, a better different way round replaces it");
+        long closingId = feed.getDisplay().getOffer().getId();
+        // A refresh closes the way round on offer: the offer stays until a look says so.
+        host.http.incidents = incidentsJson(List.<double[][]>of(closureOn(better, 0.6)));
+        host.now += 10 * MIN;
+        feed.onPosition(route, on(0.0));
+        host.drain();
+        check(feed.getDisplay().getOffer() != null && feed.getDisplay().getOffer().getId() == closingId, "the refresh itself leaves the offer up");
+        check(look.assessWayRound(feed, host, better) == null && feed.getDisplay().getOffer() != null
+                && feed.getDisplay().getOffer().getId() == closingId, "with the bubbles on, the closed way round alone leaves it for the bubbles");
+        Assessed closed = look.assess(feed, host, List.of(better));
+        check(closed.offered == null && feed.getDisplay().getOffer() == null,
+                "with them off, the look's way round now closed takes the offer down, so Take cannot follow it");
+        host.http.incidents = incidentsJson(List.of());
+        host.now += 10 * MIN;
+        feed.onPosition(route, on(0.0));
+        host.drain();
+        check(look.assess(feed, host, List.of(better)).offered == better && feed.getDisplay().getOffer() != null, "open again: offered again");
+        look.assess(feed, host, feed.getPointsRevision() - 1, List.of());
+        check(feed.getDisplay().getOffer() != null, "a superseded bubbles-off look that found no way round leaves it");
+        look.assess(feed, host, List.of());
+        check(feed.getDisplay().getOffer() == null, "a bubbles-off look that finds no way round takes it down");
 
         // Fix 3: stopping a look terminates its running search at once, and every search it
         // starts after that as its handle arrives, inside one engine request too: alternative
@@ -865,6 +918,18 @@ public final class TrafficFeedTest {
                 during::getStopped, r -> { rounds.add(r); return Unit.INSTANCE; }, r -> Unit.INSTANCE);
         check(running.handles.size() == 1 && running.handles.get(0)[0] && rounds.isEmpty() && running.computes == 1,
                 "and the search running when it stops is terminated at once, its route never given");
+
+        // Review 3: a look stopped by a newer traffic update after its searches ended, but
+        // before their answer is used on the main thread (LiveAlternatives.finished), is not
+        // complete: its routes decide nothing and its bubbles are never shown.
+        LookStop late = new LookStop();
+        late.ended(true);
+        check(late.getComplete(), "a look whose searches ran to their end is complete");
+        late.stop();
+        check(!late.getComplete(), "stopped after its searches ended, before its answer is used: not complete");
+        LookStop cut = new LookStop();
+        cut.ended(false);
+        check(!cut.getComplete() && !new LookStop().getComplete(), "nor is a look a route request cut short, or one not yet ended");
 
         // Fix 4: the way round now offered is no longer also a bubble, grey line and all.
         Route wayA = aside(look, 10_000.0, look.ahead.getSeconds() + 60);

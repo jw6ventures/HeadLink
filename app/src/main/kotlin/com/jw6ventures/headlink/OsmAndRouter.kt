@@ -50,9 +50,9 @@ import kotlin.math.sqrt
  * unclassified-yet `highway=road`; HeadLink's switch refuses them unless allowed
  * ([RequestRouter.acceptLine]). HH's shortcuts were built with them, so an HH route is
  * kept only when it drives none, and searched again plainly otherwise: a route that never
- * goes near a track costs nothing more. A start or destination only a track reaches is
- * refused ([START_BY_TRACK], [DESTINATION_BY_TRACK]) rather than routed to a road well
- * short of it.
+ * goes near a track costs nothing more. A start, stop or destination only a track reaches is
+ * refused ([START_BY_TRACK], [STOP_BY_TRACK], [DESTINATION_BY_TRACK]) rather than routed to
+ * a road well short of it, as is one no road but a track is near.
  *
  * **Towns** ([RouteOptions.bypassTowns]). Every step inside a city's or town's circle
  * costs seconds per metre on top of its own time ([Town]), so the search goes round where
@@ -320,6 +320,11 @@ class OsmAndRouter(
      * unless allowed); else, and whenever anything is priced, the plain search, which asks
      * [RequestRouter] about every road and step. A [diagnostic] search throws [Expired]
      * when it runs out of time.
+     *
+     * With tracks refused, a start, stop or destination with no road but a track near it
+     * is not located by OsmAnd at all; when the same request with tracks allowed finds a
+     * route, the failure is the track's ([START_BY_TRACK], [STOP_BY_TRACK],
+     * [DESTINATION_BY_TRACK]), else OsmAnd's own stands.
      */
     private fun search(
         request: RouteRequest,
@@ -342,7 +347,19 @@ class OsmAndRouter(
             if (options.allowTracks || found.segments.none { it.getObject().highway in TRACKS }) return found
             withTracks = found
         }
-        val found = searchOnce(request, readers, from, to, via, RequestRouter.Rules(!options.allowTracks, penalties, used), maxRunningMs, started, diagnostic)
+        val found = try {
+            searchOnce(request, readers, from, to, via, RequestRouter.Rules(!options.allowTracks, penalties, used), maxRunningMs, started, diagnostic)
+        } catch (e: RoutingException) {
+            if (options.allowTracks || e.stopped) throw e
+            val refusal = when (e.message) {
+                OSMAND_START_NOT_LOCATED -> START_BY_TRACK
+                OSMAND_STOP_NOT_LOCATED -> STOP_BY_TRACK
+                OSMAND_END_NOT_LOCATED -> DESTINATION_BY_TRACK
+                else -> throw e
+            }
+            val reference = withTracks?.route ?: tracksAllowed(request, readers, from, to, via, penalties, used, maxRunningMs, started)
+            throw if (reference != null) RoutingException(refusal) else e
+        }
         if (!options.allowTracks) {
             trackOnlyEnd(found.route, withTracks?.route, request, readers, from, to, via, penalties, used, maxRunningMs, started)
                 ?.let { throw RoutingException(it) }
@@ -351,14 +368,14 @@ class OsmAndRouter(
     }
 
     /**
-     * Why [refused], searched with tracks refused, does not reach [request]'s start or
-     * destination, or null when it does: [START_BY_TRACK] or [DESTINATION_BY_TRACK]. A
-     * refused track is not loaded at all, so an end on one is snapped to the nearest other
-     * road, which can be hundreds of metres off, and the follower would announce arrival
-     * there. Judged by [displaced] against the same request with tracks allowed: the
-     * hierarchy's route when it was searched ([withTracks]), else one searched now, only for
-     * a route whose start or end is that far off. That search is a diagnostic: if it fails
-     * or runs out of time, [refused] stands.
+     * Why [refused], searched with tracks refused, does not reach [request]'s start, stop
+     * or destination, or null when it does: [START_BY_TRACK], [STOP_BY_TRACK] or
+     * [DESTINATION_BY_TRACK]. A refused track is not loaded at all, so a place on one is
+     * snapped to the nearest other road, which can be hundreds of metres off: the follower
+     * would announce arrival there, or pass a stop by. Judged by [displaced] against the
+     * same request with tracks allowed: the hierarchy's route when it was searched
+     * ([withTracks]), else one searched now ([tracksAllowed]), only for a route that far
+     * off one of them. If that search fails or runs out of time, [refused] stands.
      */
     private fun trackOnlyEnd(
         refused: Route,
@@ -374,28 +391,49 @@ class OsmAndRouter(
         started: (SearchHandle) -> Unit,
     ): String? {
         val start = startDistance(refused, request)
+        val stop = stopDistance(refused, request)
         val end = endDistance(refused, request)
-        if (start <= END_SNAP_M && end <= END_SNAP_M) return null
-        val reference = withTracks ?: try {
-            searchOnce(request, readers, from, to, via, RequestRouter.Rules(false, penalties, used), maxRunningMs, started, diagnostic = true).route
-        } catch (e: Expired) {
-            return null
-        } catch (e: RoutingException) {
-            if (e.stopped) throw e
-            return null
-        }
+        if (start <= END_SNAP_M && stop <= END_SNAP_M && end <= END_SNAP_M) return null
+        val reference = withTracks ?: tracksAllowed(request, readers, from, to, via, penalties, used, maxRunningMs, started) ?: return null
         return when {
             displaced(start, startDistance(reference, request)) -> START_BY_TRACK
+            displaced(stop, stopDistance(reference, request)) -> STOP_BY_TRACK
             displaced(end, endDistance(reference, request)) -> DESTINATION_BY_TRACK
             else -> null
         }
     }
 
     /**
+     * [request] searched plainly with tracks allowed, to judge a refusal of them by: a
+     * diagnostic, so null when it fails or runs out of time. The caller's stop still ends
+     * the request.
+     */
+    private fun tracksAllowed(
+        request: RouteRequest,
+        readers: List<BinaryMapIndexReader>,
+        from: LatLon,
+        to: LatLon,
+        via: List<LatLon>?,
+        penalties: StepPenalty?,
+        used: UsedRoads?,
+        maxRunningMs: Long,
+        started: (SearchHandle) -> Unit,
+    ): Route? = try {
+        searchOnce(request, readers, from, to, via, RequestRouter.Rules(false, penalties, used), maxRunningMs, started, diagnostic = true).route
+    } catch (e: Expired) {
+        null
+    } catch (e: RoutingException) {
+        if (e.stopped) throw e
+        null
+    }
+
+    /**
      * One OsmAnd search: over the highway hierarchy when [rules] is null, else the plain
      * search with [rules] applied through [RequestRouter]. Its handle's stop always ends
      * the request; running out of time or memory throws [Expired] instead when the search
-     * is a [diagnostic].
+     * is a [diagnostic]. OsmAnd's plain search throws InterruptedException for either, and
+     * its hierarchy may return as though done, so both are told apart by the handle alone.
+     * The time runs from before [started], so a handle's taker is timed with the search.
      */
     private fun searchOnce(
         request: RouteRequest,
@@ -426,16 +464,26 @@ class OsmAndRouter(
         val progress = RouteCalculationProgress()
         context.calculationProgress = progress
         val stopped = AtomicBoolean()
-        started(
-            SearchHandle {
-                stopped.set(true)
-                progress.isCancelled = true
-            },
-        )
+
+        // Why a cancelled search ended: the caller's stop, else its time or memory.
+        fun cancelled(): Nothing {
+            if (stopped.get()) throw RoutingException("routing stopped", true)
+            if (diagnostic) throw Expired()
+            throw RoutingException(if (progress.memoryLimitExceeded) "out of routing memory" else "routing stopped", true)
+        }
+
         val timer = TIMER.schedule({ progress.isCancelled = true }, maxRunningMs, TimeUnit.MILLISECONDS)
         val result = try {
+            started(
+                SearchHandle {
+                    stopped.set(true)
+                    progress.isCancelled = true
+                },
+            )
             frontEnd.searchRoute(context, from, to, via)
         } catch (e: InterruptedException) {
+            if (progress.isCancelled) cancelled()
+            // A real interrupt of the routing thread, not OsmAnd's word for a cancel.
             Thread.currentThread().interrupt()
             throw RoutingException("routing interrupted", true)
         } catch (e: IOException) {
@@ -455,11 +503,7 @@ class OsmAndRouter(
         } finally {
             timer.cancel(false)
         }
-        if (progress.isCancelled) {
-            if (stopped.get()) throw RoutingException("routing stopped", true)
-            if (diagnostic) throw Expired()
-            throw RoutingException(if (progress.memoryLimitExceeded) "out of routing memory" else "routing stopped", true)
-        }
+        if (progress.isCancelled) cancelled()
         if (result == null || !result.isCorrect) throw RoutingException(result?.error?.let(::placeless) ?: "no route found")
         return Found(toRoute(result.list, options, request), result.list)
     }
@@ -540,6 +584,14 @@ class OsmAndRouter(
         private const val OSMAND_NOT_FOUND = "Route is not found"
 
         /**
+         * OsmAnd's messages when no road it may use lies near the start, the stop (its
+         * intermediate point) or the destination, so the search never begins.
+         */
+        private const val OSMAND_START_NOT_LOCATED = "Start point is not located"
+        private const val OSMAND_STOP_NOT_LOCATED = "Intermediate point is not located"
+        private const val OSMAND_END_NOT_LOCATED = "End point is not located"
+
+        /**
          * With tracks refused, the route could only start on another road well away from the
          * start, the start being on (or by) a track ([trackOnlyEnd]).
          */
@@ -551,6 +603,13 @@ class OsmAndRouter(
          * short of it ([trackOnlyEnd]).
          */
         const val DESTINATION_BY_TRACK = "destination reachable only by a track; Allow tracks is off"
+
+        /**
+         * With tracks refused, the route could only pass the stop (its via point) on another
+         * road well away from it, which a track reaches: no route, rather than one that
+         * drives past a stop it never reaches ([trackOnlyEnd]).
+         */
+        const val STOP_BY_TRACK = "stop reachable only by a track; Allow tracks is off"
 
         private const val METRES_PER_DEGREE = 111_320.0
 
@@ -633,6 +692,24 @@ class OsmAndRouter(
         private fun endDistance(route: Route, request: RouteRequest): Double {
             val last = route.points - 1
             return MapUtils.getDistance(route.latitudes[last], route.longitudes[last], request.toLat, request.toLon)
+        }
+
+        /**
+         * Metres from [route], at its nearest, to [request]'s stop; 0 when it has none.
+         * OsmAnd splits the route at the point it snapped the stop to, so the nearest piece
+         * passes through that point.
+         */
+        private fun stopDistance(route: Route, request: RouteRequest): Double {
+            val lat = request.viaLat ?: return 0.0
+            val lon = request.viaLon!!
+            var nearest = MapUtils.getDistance(route.latitudes[0], route.longitudes[0], lat, lon)
+            for (i in 1 until route.points) {
+                nearest = min(
+                    nearest,
+                    MapUtils.getOrthogonalDistance(lat, lon, route.latitudes[i - 1], route.longitudes[i - 1], route.latitudes[i], route.longitudes[i]),
+                )
+            }
+            return nearest
         }
 
         /** Stops searches that outlive their time; one daemon thread for every router. */
@@ -859,21 +936,23 @@ class OsmAndRouter(
          * The exit number and sign text where the segment at [s] begins, only when that
          * segment is a ramp (`*_link`): a route that keeps to the motorway past a junction
          * takes no exit, and its number would be a sign for a road not driven. The text is
-         * OsmAnd's own destination for the maneuver. The number is the link's
-         * `junction:ref` where the map gives it one, else the `ref` of the
-         * `motorway_junction` node the route leaves the motorway at, read from either road
-         * at that point: OsmAnd's maps keep the node on the motorway, and only some keep it
-         * on the link too.
+         * OsmAnd's own destination for the maneuver; with none, the ramp's `junction:name`,
+         * else the `name` of the `motorway_junction` node, as an exit named "Main Street" on
+         * its sign. (OSM's `exit_to` would come between, but OsmAnd's maps do not keep it.)
+         * The number is the link's `junction:ref` where the map gives it one, else the `ref`
+         * of the `motorway_junction` node the route leaves the motorway at. Each node tag is
+         * read from either road at that point: OsmAnd's maps keep the node on the motorway,
+         * and only some keep it on the link too.
          */
         private fun exitSign(segments: List<RouteSegmentResult>, s: Int): ExitSign? {
             val segment = segments[s]
             if (segment.getObject().highway?.endsWith("_link") != true) return null
             val before = segments.getOrNull(s - 1)
-            val number = (
-                segment.getObject().junctionRef
-                    ?: before?.let { junctionRef(it.getObject(), it.endPointIndex) }
-                    ?: junctionRef(segment.getObject(), segment.startPointIndex)
-                )?.takeIf { it.isNotBlank() }
+
+            fun junction(tag: String): String? =
+                before?.let { junctionTag(it.getObject(), it.endPointIndex, tag) } ?: junctionTag(segment.getObject(), segment.startPointIndex, tag)
+
+            val number = (segment.getObject().junctionRef ?: junction("ref"))?.takeIf { it.isNotBlank() }
             // The sign as the card words it: the road first, then the places, one " / " apart.
             val ref = segment.getObject().getDestinationRef("", false, segment.isForwardDirection)
             val places = segment.getDestinationName("", false, segments, s, false)
@@ -884,18 +963,20 @@ class OsmAndRouter(
                 .distinct()
                 .joinToString(" / ")
                 .takeIf { it.isNotEmpty() }
+                ?: segment.getObject().junctionName?.trim()?.takeIf { it.isNotEmpty() }
+                ?: junction("name")?.trim()?.takeIf { it.isNotEmpty() }
             return if (number != null || toward != null) ExitSign(number, toward) else null
         }
 
-        /** The `ref` of a `motorway_junction` node at [point] of [road], or null. */
-        private fun junctionRef(road: RouteDataObject, point: Int): String? {
+        /** The [tag] (`ref`, `name`) of a `motorway_junction` node at [point] of [road], or null. */
+        private fun junctionTag(road: RouteDataObject, point: Int, tag: String): String? {
             if (point < 0 || point >= road.pointsLength) return null
             val types = road.getPointTypes(point) ?: return null
             if (types.none { road.region.quickGetEncodingRule(it)?.value == "motorway_junction" }) return null
             val names = road.getPointNames(point) ?: return null
             val nameTypes = road.getPointNameTypes(point) ?: return null
             for (k in names.indices) {
-                if (road.region.quickGetEncodingRule(nameTypes[k])?.tag == "ref") return names[k]
+                if (road.region.quickGetEncodingRule(nameTypes[k])?.tag == tag) return names[k]
             }
             return null
         }
@@ -1057,7 +1138,10 @@ class OsmAndRouter(
         private val minY = circles.minOf { it.minY }
         private val maxY = circles.maxOf { it.maxY }
 
-        /** Seconds to add for the step from (x1, y1) to (x2, y2), or a negative for a closed one. */
+        /**
+         * Seconds to add for the step from (x1, y1) to (x2, y2), or a negative for a closed
+         * one; never more than [MAX_STEP_SECONDS].
+         */
         fun seconds(x1: Int, y1: Int, x2: Int, y2: Int): Float {
             if (max(x1, x2) < minX || min(x1, x2) > maxX || max(y1, y2) < minY || min(y1, y2) > maxY) return 0f
             var traffic = 0.0
@@ -1079,11 +1163,20 @@ class OsmAndRouter(
                 val price = c.secondsPerMetre ?: return -1f
                 if (c.town) town = max(town, inside * price) else traffic += inside * price
             }
-            return (traffic + town).toFloat()
+            return min(traffic + town, MAX_STEP_SECONDS).toFloat()
         }
 
         companion object {
             private const val METRES_PER_DEGREE = 6_371_000.0 * Math.PI / 180.0
+
+            /**
+             * The most one step is charged, seconds: a day, more than any way round costs,
+             * so the dearest step is still avoided wherever it can be. A request's weights are
+             * finite ([RouteRequest] refuses others) but unbounded: a HERE stretch of absurd
+             * length gives a jam of absurd delay, and its seconds, summed here and narrowed
+             * to OsmAnd's Float, could reach infinity, which OsmAnd's search cannot weigh.
+             */
+            const val MAX_STEP_SECONDS = 86_400.0
 
             fun of(nogos: List<Nogo>, towns: List<Town>): StepPenalty? {
                 if (nogos.isEmpty() && towns.isEmpty()) return null

@@ -74,13 +74,19 @@ object Routing {
     private var tripRequest = false
 
     /**
-     * The last answered request when no map covered it ([OsmAndRouter.coverage]) or only a
-     * track reaches its destination ([OsmAndRouter.DESTINATION_BY_TRACK]), with the reason,
-     * or null: what [coverageText] words. Its own request's, never the held destination's,
+     * The last answered request when no map covered it ([OsmAndRouter.coverage]), only a
+     * track reaches one of its ends or its stop ([OsmAndRouter.START_BY_TRACK],
+     * [OsmAndRouter.DESTINATION_BY_TRACK], [OsmAndRouter.STOP_BY_TRACK]) or no road in the
+     * maps joins its points ([OsmAndRouter.NOT_CONNECTED]), with the reason, or null: what
+     * [coverageText] words. Only the words: whether it is asked again is [Navigation]'s.
+     * Its own request's, never the held destination's,
      * so a two-point request off the maps names its own end.
      */
     private var refusal: Pair<RouteRequest, String>? = null
     private var refusalTrip = false
+
+    /** [ObfLibrary.generation] when the request in flight was made. */
+    private var inventory = 0
 
     /**
      * Names the route on show: changes whenever [line] does. The route preview is handed
@@ -151,7 +157,9 @@ object Routing {
         options = request.options
         lastRequest = request
         tripRequest = trip
-        pending = planner.request(request) { result -> main.post { finished(result) } }
+        inventory = ObfLibrary.generation
+        val app = context.applicationContext
+        pending = planner.request(request) { result -> main.post { finished(app, result) } }
         SessionController.note("route requested from $from (request $pending)")
     }
 
@@ -199,7 +207,7 @@ object Routing {
         ).also { planner = it }
     }
 
-    private fun finished(result: RouteResult) {
+    private fun finished(app: Context, result: RouteResult) {
         if (result.sequence != pending || result.superseded) {
             superseded++
             return
@@ -207,7 +215,7 @@ object Routing {
         pending = 0
         val route = result.route
         val request = lastRequest
-        val refused = OsmAndRouter.coverage(result.error) || result.error == OsmAndRouter.DESTINATION_BY_TRACK
+        val refused = OsmAndRouter.coverage(result.error) || result.error in EXPLAINED
         refusal = if (refused && request != null) request to result.error!! else null
         refusalTrip = refused && tripRequest
         if (route == null && (origin == CLOSURE || origin == REROUTE) && line != null) {
@@ -220,6 +228,7 @@ object Routing {
             val what = if (origin == CLOSURE) "re-route round a closure" else "re-route"
             SessionController.note("$what failed after ${result.computeMs} ms: ${result.error}")
             if (tripRequest) Navigation.coverage(result.error)
+            stale(app)
             Guide.onRouteFailed()
             return
         }
@@ -236,6 +245,7 @@ object Routing {
             // moves ([Navigation.retry]) unless no map covers it, and the dashboard says so.
             // A two-point request's coverage failure is its own, not the held destination's.
             Navigation.routeFailed(if (tripRequest) result.error else null)
+            stale(app)
             Guide.onRouteLost()
         }
         NavigationStore.changed()
@@ -247,6 +257,16 @@ object Routing {
                     traffic(route)
             } ?: "route failed after ${result.computeMs} ms on ${result.thread}: ${result.error}",
         )
+    }
+
+    /**
+     * The trip was just found [Navigation.stuck], but the maps changed while its request ran
+     * ([ObfLibrary.generation]): the refusal is the old maps', so it is asked for again
+     * against the new ones rather than left stuck.
+     */
+    private fun stale(app: Context) {
+        if (!tripRequest || !Navigation.stuck || inventory == ObfLibrary.generation) return
+        Navigation.mapsChanged(app)
     }
 
     /** How many traffic points the search had (P9.5), and whether it had to open a closure: counts, not places. */
@@ -332,9 +352,10 @@ object Routing {
 
     /**
      * What the operator is told when the last request's destination or stop is outside
-     * every OsmAnd map, or only a track reaches its destination and Allow tracks is off, or
-     * null: the place and the map to get, the mirrored longitude for a dropped minus sign,
-     * or the switch to turn on. Names the place, so it is for the screen, never the report.
+     * every OsmAnd map, only a track reaches its start, stop or destination and Allow tracks
+     * is off, or no road in the maps joins its points, or null: the place and the map to
+     * get, the mirrored longitude for a dropped minus sign, or the switch to turn on. Names
+     * the place, so it is for the screen, never the report.
      */
     fun coverageText(context: Context): String? {
         if (pending != 0L) return null
@@ -349,9 +370,24 @@ object Routing {
                 R.string.stop_no_osmand_map, Navigation.coordinates(request.viaLat ?: return null, request.viaLon ?: return null),
             )
             OsmAndRouter.DESTINATION_BY_TRACK -> context.getString(R.string.destination_track_only, place)
+            OsmAndRouter.STOP_BY_TRACK -> context.getString(
+                R.string.stop_track_only, Navigation.coordinates(request.viaLat ?: return null, request.viaLon ?: return null),
+            )
+            OsmAndRouter.START_BY_TRACK -> context.getString(
+                R.string.start_track_only, Navigation.coordinates(request.fromLat, request.fromLon),
+            )
+            OsmAndRouter.NOT_CONNECTED -> context.getString(R.string.route_not_connected, place)
             else -> context.getString(R.string.destination_no_osmand_map, place)
         }
     }
+
+    /** The failures [coverageText] words besides [OsmAndRouter.coverage]'s. */
+    private val EXPLAINED = setOf(
+        OsmAndRouter.START_BY_TRACK,
+        OsmAndRouter.DESTINATION_BY_TRACK,
+        OsmAndRouter.STOP_BY_TRACK,
+        OsmAndRouter.NOT_CONNECTED,
+    )
 
     /**
      * One line for the connection screen, which is the operator's own and may say more:

@@ -578,6 +578,9 @@ object Guide {
     private fun publish(ended: Boolean = false) {
         val result = last
         val step = result?.step
+        // Off a route no re-route can replace ([Navigation.stuck]): the line stays on the map,
+        // but its next turn is no longer the way, so the card says why instead.
+        val stranded = UpcomingTurn.stranded(result?.state, Navigation.uncovered, Navigation.trackOnly)
         turnListener?.invoke(
             when {
                 // A destination with no route yet (P6.4): being computed, waiting for a
@@ -586,6 +589,7 @@ object Guide {
                 // had been asked for.
                 follower == null -> Navigation.searching()?.let { UpcomingTurn(it, null) }
                 rerouting -> UpcomingTurn(UpcomingTurn.REROUTING, null)
+                stranded != null -> UpcomingTurn(stranded, null)
                 result?.state == FollowState.ARRIVED -> UpcomingTurn(
                     UpcomingTurn.ARRIVED, null, Maneuvers.DESTINATION,
                     destinationMetres = 0.0, destinationSeconds = 0,
@@ -604,6 +608,7 @@ object Guide {
         when {
             follower == null -> null
             rerouting -> voice.onRerouting()
+            stranded != null -> null
             result?.state == FollowState.ARRIVED -> voice.onArrived()
             step == null -> null
             else -> voice.onStep(step, lastSpeed, SystemClock.elapsedRealtime())
@@ -617,6 +622,9 @@ object Guide {
             // Off the route with no destination to re-route to (P6.3's lab route) keeps
             // counting down from where the vehicle left it rather than claiming a re-route.
             rerouting -> NativeBridge.submitGuidance(handle, NativeBridge.GUIDANCE_REROUTING)
+            // Off a route that cannot be re-routed: the old route's next turn is not the
+            // way, so nothing is counted down.
+            stranded != null -> NativeBridge.submitGuidance(handle, NativeBridge.GUIDANCE_IDLE)
             result?.state == FollowState.ARRIVED -> NativeBridge.submitGuidance(handle, NativeBridge.GUIDANCE_ARRIVED)
             // A route and no fix on it yet: nothing honest to count down from.
             step == null -> NativeBridge.submitGuidance(handle, NativeBridge.GUIDANCE_IDLE)
@@ -735,6 +743,19 @@ class UpcomingTurn @JvmOverloads constructor(
 
         /** Whether [text] says there is a destination and no route to it yet. */
         fun searching(text: String): Boolean = text == FINDING || text == NO_ROUTE || text == NO_MAP || text == TRACK_ONLY
+
+        /**
+         * What the card says in place of the followed route's next turn: [NO_MAP] or
+         * [TRACK_ONLY] while the vehicle is off a route no re-route can replace ([uncovered],
+         * [trackOnly] are [Navigation]'s), else null and the route guides as usual.
+         */
+        @JvmStatic
+        fun stranded(state: FollowState?, uncovered: Boolean, trackOnly: Boolean): String? = when {
+            state != FollowState.OFF_ROUTE -> null
+            uncovered -> NO_MAP
+            trackOnly -> TRACK_ONLY
+            else -> null
+        }
 
         /** A route with no fix on it yet. Blank: the card draws nothing for it. */
         const val WAITING = ""

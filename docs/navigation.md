@@ -160,16 +160,24 @@ followed:
 
 - **No route followed** (a first route that failed): the turn card says "No map covers
   this place" and the trip panel "no map here".
-- **A re-route that failed** keeps the old route and its follower, so guidance continues
-  along it and the dashboard shows that route's turns, not the coverage text.
+- **A re-route that failed** keeps the old route and its follower. On it, guidance
+  continues and the dashboard shows that route's turns, not the coverage text. Off it, the
+  line stays on the map but its next turn is no longer the way, so the turn card says "No
+  map covers this place" instead, no prompt is spoken and the cluster is idle
+  (`UpcomingTurn.stranded`) until the vehicle is back on the route.
 
 **A standalone two-point request** (`lat,lon lat,lon`) that misses gets the reason's text
 on Home only; it does not mark the held trip uncovered.
 
-A new destination clears it. Choosing a new maps folder (`Navigation.mapsChanged`)
-re-sends the held destination at once, but only when the trip is held (uncovered, or only
-a track reaches it), not yet arrived, and no request is pending. With no maps folder chosen
-there are no maps to cover anything, and Setup lists the folder.
+A new destination clears it. A change of maps (`Navigation.mapsChanged`) re-sends the held
+destination at once, but only when the trip is held (uncovered, or only a track reaches its
+destination or stop), not yet arrived, and no request is pending. A change is any listing
+of the maps that finds a different set of routable files (`ObfLibrary.generation`): a
+newly chosen folder, or files added, removed or replaced in the same one (the folder is
+listed again when the maps are next used once the last listing is 15 s old). A refusal
+answered from maps that changed while its request ran does not leave the trip held: it is
+asked for again against the new maps (`Routing.stale`). With no maps folder chosen there
+are no maps to cover anything, and Setup lists the folder.
 
 ### Points the maps hold but no road joins
 
@@ -177,25 +185,33 @@ Every point can be covered and still have no road between them: OsmAnd's Waco an
 maps stop 8 km apart (32.13 and 32.20 °N), the Tyler map holding the strip between, and
 Waco to Dallas failed with only the first two (2026-11-24). When OsmAnd's search runs out
 of road on a leg ("Route is not found…"), the request fails with `NOT_CONNECTED`, worded
-without places: "no road joins all the route's points in the OsmAnd maps; a map between
-them may be missing". OsmAnd does not say which leg, so neither does the app. It is an
-ordinary failure, not a held one: `Navigation.retry` asks again as for any other.
+without places for the report: "no road joins all the route's points in the OsmAnd maps; a
+map between them may be missing". OsmAnd does not say which leg, so neither does the app;
+Home names the destination (`route_not_connected`: "No road in your OsmAnd maps joins the
+start to …") and says to download the map between. It is an ordinary failure, not a held
+one: `Navigation.retry` asks again as for any other.
 
-### Track-only ends
+### Track-only ends and stops
 
-With Allow tracks off, a refused track is not loaded at all, so an end on one would be
-snapped to the nearest other road, possibly hundreds of metres off, and the follower would
-announce arrival there. When the route's start or end lands more than `END_SNAP_M` from
-the request's, `OsmAndRouter.trackOnlyEnd` compares it with the same request searched with
-tracks allowed (the hierarchy's route when there was one, else a diagnostic search); if
-allowing tracks brings that end much closer, the request fails:
+With Allow tracks off, a refused track is not loaded at all, so an end or stop on one would
+be snapped to the nearest other road, possibly hundreds of metres off: the follower would
+announce arrival there, or pass the stop by. When the route's start, end or nearest point
+to the via point lands more than `END_SNAP_M` from the request's,
+`OsmAndRouter.trackOnlyEnd` compares it with the same request searched with tracks allowed
+(the hierarchy's route when there was one, else a diagnostic search); if allowing tracks
+brings that point much closer, the request fails. A place with no road near it but a track
+is not located by OsmAnd at all ("Start point is not located", "Intermediate point …", "End
+point …"); when the same request with tracks allowed finds a route, that failure becomes
+the same reason, else OsmAnd's own error stands. Checked in route order:
 
 | Reason | Held? | What shows |
 | --- | --- | --- |
+| `START_BY_TRACK` | No: driving onto a road mends it, so it is retried like any failure | Home card `start_track_only` (names the start, says to drive onto a road or turn on Allow tracks); the dashboard's usual no-route wording |
+| `STOP_BY_TRACK` | Yes, as for the destination (`Navigation.trackOnly`) | Turn card "Only a track goes there", trip panel "track only", Home card `stop_track_only` (names the stop and says to turn on Allow tracks) |
 | `DESTINATION_BY_TRACK` | Yes (`Navigation.trackOnly`): no retries or automatic re-routes until the route options, the maps or the destination change, or the trip is cleared or restored | Turn card "Only a track goes there", trip panel "track only", Home card `destination_track_only` (names the place and says to turn on Allow tracks) |
-| `START_BY_TRACK` | No: driving onto a road mends it, so it is retried like any failure | The failure on Home; the dashboard's usual no-route wording |
 
-If the diagnostic search fails or runs out of time, the refused route stands.
+If the diagnostic search fails or runs out of time, the refused route stands: running out
+of time ends only that search, never the request; only the caller's stop does.
 
 Coordinates are always `lat,lon`; a swapped pair is still valid numbers.
 
@@ -234,9 +250,9 @@ routes too.
 `highway=road` (roads of unknown class); with the switch off `RequestRouter.acceptLine`
 does not load them at all. The highway hierarchy's shortcuts were built with them, so a
 hierarchy route is kept only when it drives none, and searched again plainly otherwise; a
-route that never goes near a track costs nothing more. A start or destination that only a
-track reaches is refused with its own reason rather than routed to a road well short of
-it ([Track-only ends](#track-only-ends)).
+route that never goes near a track costs nothing more. A start, stop or destination that
+only a track reaches is refused with its own reason rather than routed to a road well short
+of it ([Track-only ends and stops](#track-only-ends-and-stops)).
 
 **Go around towns** (off by default). OsmAnd's maps carry no per-road town class (BRouter's
 `estimated_town_class`), so every city and town in the maps' address index becomes a circle
@@ -424,7 +440,10 @@ panel and Home all use this one figure.
 vehicle with its heading, and the cluster says `REROUTING`. It asks again after 15 s if
 still off. A new route is placed at once from the fix in hand, so the cluster goes straight
 from `REROUTING` to the first maneuver. A failed re-route keeps the old route on the map; a
-vehicle back on it is guided along it again.
+vehicle back on it is guided along it again. While the trip is held (no map covers it, or
+only a track reaches it), no re-route can replace the route, so off it the turn card says
+so instead of the old route's next turn, and nothing is spoken or counted down
+([Coverage refusal](#coverage-refusal)).
 
 **No route yet.** A start must lie near a road the car profile can use, so a destination
 set off road (a field, a long private drive, a lot whose aisles are not mapped as roads)
@@ -569,7 +588,11 @@ would be for a road not driven.
   that point (OsmAnd's maps keep the node on the motorway, only some on the link too). An
   on-ramp from a surface street has no junction, so it gets words and no number.
 - **The words** are the link's `destination:ref` then OsmAnd's own destination for the
-  maneuver, OSM's `;` read as " / ", duplicates dropped.
+  maneuver, OSM's `;` read as " / ", duplicates dropped. With neither, the link's
+  `junction:name`, else the `name` of the `motorway_junction` node (read from either road
+  as for the number), as an exit signed only "Main Street". OSM's `exit_to` would come
+  between, but OsmAnd's maps do not keep it (no `routing_type` for it in OsmAnd's
+  `rendering_types.xml`).
 
 `Route.exitSigns` holds one `ExitSign` (or null) per maneuver, kept through scaling,
 `remainder` and the saved route file. `RouteFollower` puts the sign's label in
@@ -683,8 +706,10 @@ drops.
 **Not done.** Lane guidance (in the same data, not yet carried into `Route`).
 
 **Verified:** host tests on a synthetic file built from the proto (`OsmAndRoutingTest`): the
-exit with its number and signs, times, closures, jams, opened closures, the second
-alternative, a stopped search and no maps. With `OBF_DIR`, the same test under a 256 MB
+exit with its number and signs (and an unsigned exit named by its junction), times,
+closures, jams (an absurd one still weighed), opened closures, the second alternative, a
+stopped search, a track check out of time leaving the found route, a stop or place only a
+track reaches refused, and no maps. With `OBF_DIR`, the same test under a 256 MB
 heap routes Taylor to downtown Austin with a jam, and Austin to San Antonio over two
 builds. Routes across Texas over the Pixel's own maps (2026-11-13) on the host: all
 found, COMPLEX matching the hierarchy's distance and time where both ran. Emulator lab
@@ -869,7 +894,10 @@ matched to the route also get points on the route's own line, in place of HERE's
 a jam. Every request carries them
 while a response is held, including re-routes and every alternatives search. A closure
 makes a step impassable; a jam adds time in proportion to the metres of the step inside
-its circle, and overlapping circles add up. A request that finds no route with its
+its circle, and overlapping circles add up. Traffic and town prices together charge no
+step more than a day (`StepPenalty.MAX_STEP_SECONDS`), so an absurdly long or slow HERE
+stretch cannot add up to a cost OsmAnd's search cannot weigh, and the dearest step is
+still avoided wherever it can be. A request that finds no route with its
 closures closed is tried once more with each closure passable at 300 s a point, so a
 vehicle already in a closure still gets out; such a route never triggers a closure
 re-route, or it would loop. A route that starts or ends inside a closure's circle with the
@@ -877,8 +905,10 @@ closures shut is another case: OsmAnd joins the trip's two ends to the road with
 pricing those pieces, so a vehicle or destination in a closure is reached through it all
 the same. Such a route opened nothing; it carries the closures it enters there
 (`Route.endClosures`, in memory only), and only those are no reason to re-route: another
-closure farther along it still re-routes. Circles have no direction: on an undivided road
-a jam one way charges both.
+closure farther along it still re-routes. Which closures those are is judged by where each
+circle lies along the route's line (`TrafficFeed.nearestAlong`), not by the route's point
+nearest it, which on a long segment can be past it, inside a closure farther along.
+Circles have no direction: on an undivided road a jam one way charges both.
 
 **Weights.** A weight is seconds per metre inside the circle: a jam's points together
 charge its delay times its HERE class's factor to a route through all their middles, so
@@ -937,14 +967,18 @@ search runs with the points. Its first search is the engine's own best route wit
 the way round the traffic; it is laid on the traffic and offered the moment it returns,
 and the bubbles' alternatives (up to eight more searches, as slow as the first, every one
 a plain search because of the points) follow only when Show other routes on the map is
-on, after which the offer is decided again over all of them. The way round alone never
-swaps or takes down a different offer already up; that is left to the full decision. A
-newer update stops a look at once: its running search is terminated, and so is each search
-it would start after (OsmAnd's alternative *k* is *k* + 1 searches), as its handle arrives.
-What a stopped look found decides nothing, and every look carries the points it searched
-with, so a result that arrives once newer points are held (a refresh in between) gives
-its bubbles' delays but leaves the offer alone. With the bubbles off the way round is the
-only decision: it neither replaces nor withdraws a different offer up. An offered way that
+on, after which the offer is decided again over all of them. With the bubbles on, the way
+round alone is provisional: it never swaps or takes down a different offer already up;
+that is left to the full decision. A newer update stops a look at once: its running
+search is terminated, and so is each search it would start after (OsmAnd's alternative
+*k* is *k* + 1 searches), as its handle arrives. What a stopped look found decides
+nothing, even when it was stopped after its searches ended while its answer waited for the
+main thread (`LookStop.complete`), and every look carries the points it searched with, so
+a result that arrives once newer points are held (a refresh in between) gives its
+bubbles' delays but leaves the offer alone. With the bubbles off the way round is the
+look's final decision (`Traffic.assess`): it keeps the offer up when it is the same way,
+replaces a different one, and withdraws the offer when it no longer saves enough, as does
+a look that found no way round at all. An offered way that
 is already a bubble leaves the map at once, grey line and all. On the host's Dallas I-35E
 queue the offer came 1.8 s into the look rather than at
 its end, 57.6 s; in the lab emulator, 18 s after the traffic arrived rather than 140 s.

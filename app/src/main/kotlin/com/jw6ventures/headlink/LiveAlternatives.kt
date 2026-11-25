@@ -246,6 +246,19 @@ class LookStop {
     var stopped = false
         private set
 
+    /** Whether the look's searches ran to their end ([ended]). */
+    @Volatile
+    private var whole = false
+
+    /**
+     * Whether the look's answer may be used, asked on the main thread when it arrives: its
+     * searches ran to their end, and it was not stopped since. A newer traffic update may
+     * stop it after its searches end but before their answer reaches the main thread
+     * ([LiveAlternatives.lookNow]), and then what it found is the old points' and decides
+     * nothing.
+     */
+    val complete: Boolean get() = whole && !stopped
+
     /** The look's `started`: [handle] is the search running now. */
     fun started(handle: SearchHandle) {
         val stop = synchronized(this) {
@@ -253,6 +266,11 @@ class LookStop {
             stopped
         }
         if (stop) handle.terminate()
+    }
+
+    /** The routing thread is done with the look: [whole] when nothing cut its searches short. */
+    fun ended(whole: Boolean) {
+        this.whole = whole
     }
 
     fun stop() {
@@ -290,11 +308,14 @@ class LookStop {
  * asks for one look at once ([lookNow]), whether or not the bubbles are on, in place of
  * the next timed one; that is the only extra search traffic makes. Such a look searches
  * the engine's own way round first and lays it on the traffic as soon as it is found, so
- * the offer comes after one search, not after the bubbles' eight more; with the bubbles
- * off those are not searched at all, and the way round alone decides the offer
- * ([Traffic.assessWayRound]). A look carries the points it searched with, and its routes
- * decide nothing once newer ones are held; one a newer traffic update supersedes is
- * stopped ([LookStop]) and decides nothing at all.
+ * the offer comes after one search, not after the bubbles' eight more. With the bubbles on
+ * that is provisional ([Traffic.assessWayRound]: it never swaps or takes down a different
+ * offer up) until the look's bubbles decide again. With them off those are not searched at
+ * all, and the way round alone is the look's whole decision ([Traffic.assess]): it keeps,
+ * replaces or withdraws the offer up, and a look that finds no way round withdraws it. A
+ * look carries the points it searched with, and its routes decide nothing once newer ones
+ * are held; one a newer traffic update supersedes is stopped ([LookStop]) and decides
+ * nothing at all, even when the stop lands after its searches ended.
  *
  * **Expiry.** An alternative goes once the vehicle is past the point where it leaves the
  * followed route: it is no longer a way the driver can go.
@@ -449,14 +470,12 @@ object LiveAlternatives {
         val routes = ArrayList<Route>()
         var begun = System.nanoTime()
         var ran = false
-        var whole = false
         Routing.explore(
             context,
             done = {
                 val took = (System.nanoTime() - begun) / 1_000_000L
                 val looked = ran
-                val complete = whole
-                main.post { finished(app, look, routes, took, looked, complete) }
+                main.post { finished(app, look, routes, took, looked) }
             },
         ) { router, started, cancelled ->
             ran = true
@@ -470,16 +489,16 @@ object LiveAlternatives {
                 { cancelled() || stop.stopped },
                 wayRound = { route ->
                     routes += route
-                    // The offer is decided on the way round now; with the bubbles on, again
-                    // with them once the finder is done.
+                    // The offer is decided on the way round now: with the bubbles on, again
+                    // with them once the finder is done; with them off, for good.
                     val took = (System.nanoTime() - begun) / 1_000_000L
                     main.post { wayRoundFound(look, route, took) }
                 },
                 found = { routes += it },
             )
-            // Stopped part way (a newer traffic update, a route request): what it found is
-            // not the look asked for.
-            whole = !cancelled() && !stop.stopped
+            // Stopped part way (a route request; a newer traffic update stops the look
+            // itself, then or later): what it found is not the look asked for.
+            stop.ended(!cancelled())
         }
     }
 
@@ -497,24 +516,31 @@ object LiveAlternatives {
 
     /**
      * A traffic look's way round ([AlternativeSearch.find]), found [tookMs] after the look
-     * began: laid on the traffic and offered if it saves enough ([Traffic.assessWayRound]).
-     * With the bubbles on, [finished] lays it again with them; with them off this is the
-     * look's only decision. A bubble already on the map for the way now offered goes at
+     * began: laid on the traffic and offered if it saves enough. With the bubbles on it is
+     * provisional ([Traffic.assessWayRound]) and [finished] lays it again with them; with
+     * them off it is the look's whole decision ([Traffic.assess]), keeping, replacing or
+     * withdrawing the offer up. A bubble already on the map for the way now offered goes at
      * once, grey line and all ([LiveAlternative.withoutOffered]).
      */
     private fun wayRoundFound(look: Look, route: Route, tookMs: Long) {
         if (!looking || running !== look.stop || look.stop.stopped || look.token != token || look.token != Routing.token) return
-        Traffic.assessWayRound(look.revision, look.follower.route, look.ahead, look.aheadAlongM, route) { offered ->
-            if (look.token != token || look.token != Routing.token) return@assessWayRound
-            if (offered != null) {
-                val left = LiveAlternative.withoutOffered(shown, look.ahead, offered)
-                if (left.size != shown.size) publish(left)
+        val answered: (Route?) -> Unit = { offered ->
+            if (look.token == token && look.token == Routing.token) {
+                if (offered != null) {
+                    val left = LiveAlternative.withoutOffered(shown, look.ahead, offered)
+                    if (left.size != shown.size) publish(left)
+                }
+                SessionController.note("way round the traffic found in $tookMs ms (look ${look.number})" + if (offered != null) "; offered" else "; not offered")
             }
-            SessionController.note("way round the traffic found in $tookMs ms (look ${look.number})" + if (offered != null) "; offered" else "; not offered")
+        }
+        if (look.bubbles) {
+            Traffic.assessWayRound(look.revision, look.follower.route, look.ahead, look.aheadAlongM, route, answered)
+        } else {
+            Traffic.assess(look.revision, look.follower.route, look.ahead, look.aheadAlongM, listOf(route)) { _, offered -> answered(offered) }
         }
     }
 
-    private fun finished(context: Context, look: Look, routes: List<Route>, tookMs: Long, looked: Boolean, complete: Boolean) {
+    private fun finished(context: Context, look: Look, routes: List<Route>, tookMs: Long, looked: Boolean) {
         looking = false
         if (running === look.stop) running = null
         if (!looked) {
@@ -525,16 +551,22 @@ object LiveAlternatives {
         lastLookMsTaken = tookMs
         // The same token is the same route, so the follower that was asked about is still the one following it.
         if (look.token != token || look.token != Routing.token) return
-        if (!complete) {
-            // Stopped part way: its routes so far decide nothing and replace no bubbles. The
-            // look that stopped it follows ([lookNow]).
+        // Read here, on the main thread: a newer traffic update may have stopped the look
+        // after its searches ended, while this answer waited to be run.
+        if (!look.stop.complete) {
+            // Stopped part way, or since: its routes so far decide nothing and replace no
+            // bubbles. The look that stopped it follows ([lookNow]).
             SessionController.note("looked for other routes for $tookMs ms (look ${look.number}): stopped")
             if (lookAgain) lookNow(context)
             return
         }
         if (!look.bubbles) {
-            // Only the way round was looked for, and [wayRoundFound] decided on it.
-            if (routes.isEmpty()) SessionController.note("looked for other routes in $tookMs ms (look ${look.number}): no way round")
+            // Only the way round was looked for, and [wayRoundFound] decided on it. None
+            // found is a decision too: the offer up, if any, has no way round now.
+            if (routes.isEmpty()) {
+                SessionController.note("looked for other routes in $tookMs ms (look ${look.number}): no way round")
+                Traffic.assess(look.revision, look.follower.route, look.ahead, look.aheadAlongM, emptyList()) { _, _ -> }
+            }
             if (shown.isNotEmpty()) publish(emptyList())
             if (lookAgain) lookNow(context)
             return

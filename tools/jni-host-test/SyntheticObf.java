@@ -14,6 +14,10 @@
 // there: the other is an unclassified loop 2.8 km north, across and back. And 5 km south of
 // the motorway, in a root box and data block of its own, a short residential road no other
 // road joins.
+//
+// Two variants for OsmAndRoutingTest: the ramp with no destination signs, with or without a
+// junction:name of its own; and a far track, in a root box and data block of its own, on
+// east 6.7 km from the corner, its far end 3 km from any other road.
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -27,7 +31,10 @@ final class SyntheticObf {
 
     // Rules, numbered from 1 in file order.
     private static final int MOTORWAY = 1, LINK = 2, JUNCTION = 3, REF = 4, NAME = 5, DEST = 6, DEST_REF = 7, PRIMARY = 8,
-        DEST_FWD = 9, DEST_BWD = 10, TRACK = 11, UNCLASSIFIED = 12, RESIDENTIAL = 13;
+        DEST_FWD = 9, DEST_BWD = 10, TRACK = 11, UNCLASSIFIED = 12, RESIDENTIAL = 13, JUNCTION_NAME = 14;
+
+    /** The ramp's text tags in the usual file: destination:ref I 35 South, destination Waco;Temple. */
+    private static final int[][] SIGNED_RAMP = {{DEST_REF, 2}, {DEST, 3}};
 
     static double[][] motorway() {
         double[][] p = new double[11][];
@@ -67,9 +74,28 @@ final class SyntheticObf {
         return new double[][] {{LAT - 0.045, LON}, {LAT - 0.045, LON + 0.003}};
     }
 
+    /** The far track: on east from the track's corner, 6.7 km, in a box of its own. */
+    static double[][] farTrack() {
+        return new double[][] {{LAT + 0.0075, LON + 0.020}, {LAT + 0.0075, LON + 0.050}, {LAT + 0.0075, LON + 0.080},
+            {LAT + 0.0075, LON + 0.090}};
+    }
+
     /** The whole file. */
     static byte[] syntheticObf() throws IOException {
-        return file(null);
+        return file(null, SIGNED_RAMP, false);
+    }
+
+    /**
+     * The whole file with no destination signs on the ramp; with [junctionName], the ramp
+     * carries junction:name Lamar Boulevard instead.
+     */
+    static byte[] syntheticObfWithUnsignedRamp(boolean junctionName) throws IOException {
+        return file(null, junctionName ? new int[][] {{JUNCTION_NAME, 9}} : new int[0][], false);
+    }
+
+    /** The whole file and the far track. */
+    static byte[] syntheticObfWithFarTrack() throws IOException {
+        return file(null, SIGNED_RAMP, true);
     }
 
     /**
@@ -87,25 +113,25 @@ final class SyntheticObf {
         ByteArrayOutputStream address = new ByteArrayOutputStream();
         string(address, 1, "Synthetic");
         tag(address, 6, 6); be4(address, cities.size()); address.write(cities.toByteArray(), 0, cities.size());
-        return file(address.toByteArray());
+        return file(address.toByteArray(), SIGNED_RAMP, false);
     }
 
-    private static byte[] file(byte[] address) throws IOException {
+    private static byte[] file(byte[] address, int[][] rampNames, boolean farTrack) throws IOException {
         ByteArrayOutputStream f = new ByteArrayOutputStream();
         tag(f, 1, 0); varint(f, 2);
         if (address != null) {
             tag(f, 7, 6); be4(f, address.length); f.write(address, 0, address.length);
         }
-        byte[] routing = routingSection();
+        byte[] routing = routingSection(rampNames, farTrack);
         tag(f, 9, 6); be4(f, routing.length); f.write(routing, 0, routing.length);
         tag(f, 32, 0); varint(f, 2);
         return f.toByteArray();
     }
 
     private static final List<String> STRINGS = List.of("23A", "Main Street", "I 35 South", "Waco;Temple", "Dallas", "Nowhere",
-        "I 35", "FM 1825", " ");
+        "I 35", "FM 1825", " ", "Lamar Boulevard");
 
-    private static byte[] routingSection() throws IOException {
+    private static byte[] routingSection(int[][] rampNames, boolean farTrack) throws IOException {
         ByteArrayOutputStream head = new ByteArrayOutputStream();
         string(head, 1, "Synthetic");
         rule(head, "highway", "motorway");
@@ -121,34 +147,57 @@ final class SyntheticObf {
         rule(head, "highway", "track");
         rule(head, "highway", "unclassified");
         rule(head, "highway", "residential");
+        rule(head, "junction:name", "");
 
+        // Each root box with its data block: {left, right, top, bottom} and the block.
+        List<long[]> boxes = new java.util.ArrayList<>();
+        List<byte[]> blocks = new java.util.ArrayList<>();
         long left = ObfTiles.INSTANCE.x31(LON - 0.01), right = ObfTiles.INSTANCE.x31(LON + 0.03);
         long top = ObfTiles.INSTANCE.y31(LAT + 0.04), bottom = ObfTiles.INSTANCE.y31(LAT - 0.01);
+        boxes.add(new long[] {left, right, top, bottom});
+        blocks.add(block(left, top, rampNames));
         // The island has a root box and a data block of its own, so a search near it loads
         // only its road: OsmAnd snaps a point to any road in the blocks it loads.
         long islandLeft = ObfTiles.INSTANCE.x31(LON - 0.001), islandRight = ObfTiles.INSTANCE.x31(LON + 0.004);
         long islandTop = ObfTiles.INSTANCE.y31(LAT - 0.044), islandBottom = ObfTiles.INSTANCE.y31(LAT - 0.046);
-        byte[] block = block(left, top);
         ByteArrayOutputStream island = new ByteArrayOutputStream();
         message(island, 6, road(islandLeft, islandTop, island(), new int[] {RESIDENTIAL}, new int[0][], new int[0][], new int[0][], 7));
-        byte[] islandBlock = island.toByteArray();
+        boxes.add(new long[] {islandLeft, islandRight, islandTop, islandBottom});
+        blocks.add(island.toByteArray());
+        if (farTrack) {
+            // Likewise, so a search near its far end loads only the track.
+            long farLeft = ObfTiles.INSTANCE.x31(LON + 0.019), farRight = ObfTiles.INSTANCE.x31(LON + 0.091);
+            long farTop = ObfTiles.INSTANCE.y31(LAT + 0.0085), farBottom = ObfTiles.INSTANCE.y31(LAT + 0.0065);
+            ByteArrayOutputStream far = new ByteArrayOutputStream();
+            message(far, 6, road(farLeft, farTop, farTrack(), new int[] {TRACK}, new int[0][], new int[0][], new int[0][], 8));
+            boxes.add(new long[] {farLeft, farRight, farTop, farBottom});
+            blocks.add(far.toByteArray());
+        }
         // Two passes: a root box's shiftToData is fixed-width, so its length does not move.
-        byte[] root = rootBox(left, right, top, bottom, 0, true);
-        byte[] islandRoot = rootBox(islandLeft, islandRight, islandTop, islandBottom, 0, false);
-        int rootBody = head.size() + 1 + 4;                    // tag(3, 6), 4-byte length
-        int islandRootBody = rootBody + root.length + 1 + 4;
-        int blockAt = islandRootBody + islandRoot.length + 1;  // tag(5, 2), then the block's length varint
-        int islandBlockAt = blockAt + varintSize(block.length) + block.length + 1;
-        root = rootBox(left, right, top, bottom, blockAt - rootBody, true);
-        islandRoot = rootBox(islandLeft, islandRight, islandTop, islandBottom, islandBlockAt - islandRootBody, false);
+        // Only the first box has the nonsense child.
+        int n = boxes.size();
+        byte[][] roots = new byte[n][];
+        for (int i = 0; i < n; i++) roots[i] = rootBox(boxes.get(i), 0, i == 0);
+        int[] rootBodies = new int[n], blockAts = new int[n];
+        int at = head.size();
+        for (int i = 0; i < n; i++) {
+            rootBodies[i] = at + 1 + 4;                        // tag(3, 6), 4-byte length
+            at = rootBodies[i] + roots[i].length;
+        }
+        for (int i = 0; i < n; i++) {
+            blockAts[i] = at + 1;                              // tag(5, 2), then the block's length varint
+            at = blockAts[i] + varintSize(blocks.get(i).length) + blocks.get(i).length;
+        }
+        for (int i = 0; i < n; i++) roots[i] = rootBox(boxes.get(i), blockAts[i] - rootBodies[i], i == 0);
         ByteArrayOutputStream s = new ByteArrayOutputStream();
         s.write(head.toByteArray(), 0, head.size());
-        tag(s, 3, 6); be4(s, root.length); s.write(root, 0, root.length);
-        tag(s, 3, 6); be4(s, islandRoot.length); s.write(islandRoot, 0, islandRoot.length);
-        if (s.size() + 1 != blockAt) throw new AssertionError("block layout moved");
-        message(s, 5, block);
-        if (s.size() + 1 != islandBlockAt) throw new AssertionError("island block layout moved");
-        message(s, 5, islandBlock);
+        for (byte[] root : roots) {
+            tag(s, 3, 6); be4(s, root.length); s.write(root, 0, root.length);
+        }
+        for (int i = 0; i < n; i++) {
+            if (s.size() + 1 != blockAts[i]) throw new AssertionError("block layout moved");
+            message(s, 5, blocks.get(i));
+        }
         return s.toByteArray();
     }
 
@@ -164,7 +213,8 @@ final class SyntheticObf {
         message(b, 2, r.toByteArray());
     }
 
-    private static byte[] rootBox(long left, long right, long top, long bottom, int shift, boolean nonsenseChild) throws IOException {
+    private static byte[] rootBox(long[] box, int shift, boolean nonsenseChild) throws IOException {
+        long left = box[0], right = box[1], top = box[2], bottom = box[3];
         ByteArrayOutputStream b = new ByteArrayOutputStream();
         tag(b, 1, 0); varint(b, zig((int) left)); tag(b, 2, 0); varint(b, zig((int) right));
         tag(b, 3, 0); varint(b, zig((int) top)); tag(b, 4, 0); varint(b, zig((int) bottom));
@@ -180,12 +230,12 @@ final class SyntheticObf {
         return b.toByteArray();
     }
 
-    private static byte[] block(long left, long top) throws IOException {
+    private static byte[] block(long left, long top, int[][] rampNames) throws IOException {
         ByteArrayOutputStream b = new ByteArrayOutputStream();
         // the motorway, its junction at point 5 with a number and a name
         message(b, 6, road(left, top, motorway(), new int[] {MOTORWAY}, new int[][] {{REF, 6}},
             new int[][] {{5, JUNCTION}}, new int[][] {{5, REF, 0}, {5, NAME, 1}}, 1));
-        message(b, 6, road(left, top, ramp(), new int[] {LINK}, new int[][] {{DEST_REF, 2}, {DEST, 3}},
+        message(b, 6, road(left, top, ramp(), new int[] {LINK}, rampNames,
             new int[0][], new int[0][], 2));
         message(b, 6, road(left, top, primary(), new int[] {PRIMARY}, new int[][] {{NAME, 1}, {REF, 7}}, new int[0][],
             new int[0][], 3));

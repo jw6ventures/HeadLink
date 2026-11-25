@@ -34,6 +34,7 @@ import com.jw6ventures.headlink.RoutePlanner;
 import com.jw6ventures.headlink.RouteRequest;
 import com.jw6ventures.headlink.RouteTraffic;
 import com.jw6ventures.headlink.TrafficArea;
+import com.jw6ventures.headlink.TrafficFeed;
 import com.jw6ventures.headlink.TrafficIncident;
 import com.jw6ventures.headlink.TrafficJson;
 import com.jw6ventures.headlink.TrafficMatch;
@@ -147,8 +148,11 @@ public final class LabTraffic {
         say("A ways round: %s; A2: %s", String.join("; ", a.each), String.join("; ", a2.each));
         // The offer is made on the engine's own way round as soon as it is found
         // (LiveAlternatives.wayRoundFound), and decided again once the bubbles' searches end.
-        if (a.wayRoundSaving < 180) throw new IllegalStateException("A's way round does not save 3 minutes");
-        if (a2.wayRoundSaving < a.wayRoundSaving + 180) throw new IllegalStateException("A2's way round does not save 3 minutes more than A's");
+        // Both savings are of ways round the app offers (TrafficFeed.worthOffering).
+        if (a.wayRoundSaving < TrafficFeed.OFFER_SAVING_S) throw new IllegalStateException("A's way round is no offer");
+        if (a2.wayRoundSaving < a.wayRoundSaving + TrafficFeed.OFFER_REGROW_S) {
+            throw new IllegalStateException("A2's way round does not save 3 minutes more than A's");
+        }
 
         // The side road: a piece of a street near the route that neither the route, nor any
         // way round A or A2 found, nor the drive comes within SIDE_CLEAR_M of.
@@ -159,7 +163,7 @@ public final class LabTraffic {
         String sideClosure = closure("lab-side", side);
         say("side road closure %d points, %.0f m from the route", side[0].length, nearest(route, side));
         Offer aSide = offer(router, route, options, flowJson(flowA), incidentsJson(List.of(sideClosure)));
-        if (aSide.wayRoundSaving < 180 || Math.abs(aSide.delay - a.delay) > 1.0 || aSide.closedRuns != 0) {
+        if (aSide.wayRoundSaving < TrafficFeed.OFFER_SAVING_S || Math.abs(aSide.delay - a.delay) > 1.0 || aSide.closedRuns != 0) {
             throw new IllegalStateException("the side closure changes A: saving " + aSide.saving + " delay " + aSide.delay);
         }
         say("A with the side closure: saves %d s, closed runs on the route %d, %d nogos (%d hard)", aSide.saving, aSide.closedRuns,
@@ -238,7 +242,13 @@ public final class LabTraffic {
         List<String> each = new ArrayList<>();
     }
 
-    /** The delay and the best way round the app would offer, parked at the start (TrafficFeed.decide). */
+    /**
+     * The delay and the best way round the app would offer, parked at the start: every way
+     * round judged by TrafficFeed.decide's own rule (TrafficFeed.offerSaving and
+     * worthOffering: at least OFFER_SAVING_S saved because of traffic, leaving the route more
+     * than LiveAlternatives.PASSED_M ahead), so no saving counted here is one the app would
+     * not offer.
+     */
     private static Offer offer(OsmAndRouter router, Route route, RouteOptions options, String flow, String incidents) throws Exception {
         List<FlowStretch> f = TrafficJson.INSTANCE.flow(new StringReader(flow));
         List<TrafficIncident> inc = TrafficJson.INSTANCE.incidents(new StringReader(incidents));
@@ -251,7 +261,7 @@ public final class LabTraffic {
         List<Nogo> nogos = TrafficNogos.INSTANCE.forRoute(f, inc, held, TrafficNogos.MAX_NOGOS).getNogos();
         o.nogos = nogos.size();
         o.hard = (int) nogos.stream().filter(Nogo::getHard).count();
-        if (o.delay < 180.0) return o;
+        if (o.delay < TrafficFeed.OFFER_SAVING_S) return o;
         // LiveAlternatives.look: from the lead point ahead of the vehicle.
         RouteFollower follower = new RouteFollower(route, 9L);
         Route fromVehicle = route.remainder(follower.indexAt(0.0) + 1);
@@ -277,17 +287,18 @@ public final class LabTraffic {
             Integer split = LiveAlternative.Companion.splitIndex(ahead, alternative);
             if (split == null) continue;
             double ownDelay = own.delayAheadSeconds(0.0);
-            if (aheadDelay - ownDelay <= 0.0) continue;
-            int saving = (int) Math.round(ahead.getSeconds() + aheadDelay - alternative.getSeconds() - ownDelay);
-            o.each.add(String.format(Locale.ROOT, "%d s (own delay %.0f, via %b, split %.0f m%s)", saving, ownDelay, alternative.getVia() != null,
-                    alongNearest(route, along, alternative.getLatitudes()[split], alternative.getLongitudes()[split]),
-                    alternative == o.wayRound ? ", the engine's way round" : ""));
+            double splitM = TrafficFeed.Companion.nearestAlong(route, along, alternative.getLatitudes()[split], alternative.getLongitudes()[split]);
+            int saving = TrafficFeed.Companion.offerSaving(ahead.getSeconds(), aheadDelay, alternative.getSeconds(), ownDelay);
+            boolean offered = TrafficFeed.Companion.worthOffering(saving, aheadDelay, ownDelay, splitM, 0.0);
+            o.each.add(String.format(Locale.ROOT, "%d s (own delay %.0f, via %b, split %.0f m%s%s)", saving, ownDelay, alternative.getVia() != null,
+                    splitM, alternative == o.wayRound ? ", the engine's way round" : "", offered ? "" : ", no offer"));
+            if (!offered) continue;
             if (alternative == o.wayRound) o.wayRoundSaving = saving;
             if (saving > o.saving) {
                 o.saving = saving;
                 o.best = alternative;
                 o.ownDelay = ownDelay;
-                o.splitM = alongNearest(route, along, alternative.getLatitudes()[split], alternative.getLongitudes()[split]);
+                o.splitM = splitM;
             }
         }
         return o;
@@ -456,19 +467,6 @@ public final class LabTraffic {
         int i = 0;
         while (i < along.length - 2 && along[i + 1] <= m) i++;
         return i;
-    }
-
-    private static double alongNearest(Route route, double[] along, double lat, double lon) {
-        int best = 0;
-        double nearest = Double.MAX_VALUE;
-        for (int i = 0; i < route.getPoints(); i++) {
-            double d = RouteFollower.Companion.distance(route.getLatitudes()[i], route.getLongitudes()[i], lat, lon);
-            if (d < nearest) {
-                nearest = d;
-                best = i;
-            }
-        }
-        return along[best];
     }
 
     /** The least distance from any point of [line] to [route]'s line, metres. */

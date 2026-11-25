@@ -529,6 +529,12 @@ fi
 DRIVE_ARGS=
 REROUTE_MODE=${LAB_REROUTE:-ok}
 case $REROUTE_MODE in ok|fail) ;; *) echo "emulator-lab: LAB_REROUTE is ok or fail" >&2; exit 1 ;; esac
+# After LAB_REROUTE=fail's attempt a lab route must still be computed: the run's own
+# LAB_ROUTE, else the region's parked position to its guidance destination (the Battle
+# Green; the university in Austin).
+if [ -n "$ROUTE" ]; then AFTER_ROUTE=$ROUTE
+elif [ "$REGION" = austin ]; then AFTER_ROUTE="30.2660,-97.7360 30.2849,-97.7341"
+else AFTER_ROUTE="42.4242,-71.2121 42.4495,-71.2310"; fi
 if [ "$REROUTE_MODE" = fail ] && [ "$SCRIPT" != guidance ]; then
     echo "emulator-lab: LAB_REROUTE=fail is for the guidance script" >&2
     exit 1
@@ -705,7 +711,7 @@ podman run --rm --pod "$pod" --name "$name" --security-opt label=disable \
   -e ANDROID_EMULATOR_HOME=/cache/avd -e ANDROID_SDK_ROOT=/opt/android-sdk \
   -e PROJECTION_MS="$PROJECTION_MS" -e SOFTWARE_ENCODER="${LAB_SOFTWARE_ENCODER:-false}" \
   -e AUDIO="$AUDIO" -e NAVIGATION="$NAVIGATION" -e NAVIGATION_FORCE="$NAVIGATION_FORCE" \
-  -e NAVIGATION_CLUSTER="$NAVIGATION_CLUSTER" -e REROUTE_MODE="$REROUTE_MODE" \
+  -e NAVIGATION_CLUSTER="$NAVIGATION_CLUSTER" -e REROUTE_MODE="$REROUTE_MODE" -e AFTER_ROUTE="$AFTER_ROUTE" \
   -e LAB_SENSORS="${LAB_SENSORS:-all}" -e SCRIPT="$SCRIPT" -e ROUTE="$ROUTE" -e OSMAND_EXPECT="$OSMAND_EXPECT" \
   -e DESTINATION="$DESTINATION" -e NAVIGATION_SCRIPT="$NAVIGATION_SCRIPT" \
   -e GUIDE_DEST="${LAB_GUIDE_DEST:-$(if [ "$REGION" = austin ]; then echo 30.28490,-97.73410; elif [ "$SCRIPT" = traffic ]; then echo 42.35510,-71.06560; else echo 42.44950,-71.23100; fi)}" \
@@ -1636,8 +1642,8 @@ https://osmand.net/map?pin=30.50860,-97.67880#16/30.50860/-97.67880"
     [ -n "$idle" ] || fail "the attempt did not finish"
     if [ "$REROUTE_MODE" = fail ]; then
         # The hook ends with its attempt: in the same app process, the attempt over, a lab
-        # route (the parked position to the Battle Green) must be computed again.
-        adb shell am start -n $package/.ConnectionActivity --es lab_route "\"42.4242,-71.2121 42.4495,-71.2310\"" \
+        # route ($AFTER_ROUTE) must be computed again.
+        adb shell am start -n $package/.ConnectionActivity --es lab_route "\"$AFTER_ROUTE\"" \
             > /out/lab-route-after.txt 2>&1 || fail "lab route intent after the attempt"
         after=
         for _ in $(seq 120); do

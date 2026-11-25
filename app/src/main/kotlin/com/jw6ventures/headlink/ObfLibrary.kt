@@ -220,6 +220,17 @@ object ObfLibrary {
     private var newerFiles = 0
     private var closes = 0
 
+    /** The routable files the last listing found; what [generation] counts changes of. */
+    private var inventory: Set<ObfRules.FileKey> = emptySet()
+
+    /**
+     * Counts the listings that found a different set of maps: a request made before the
+     * count moved was answered from other maps ([Routing]). Any thread.
+     */
+    @Volatile
+    var generation = 0
+        private set
+
     /** Called on the main thread after a listing changed what [status] says. */
     @Volatile
     var listener: (() -> Unit)? = null
@@ -260,10 +271,9 @@ object ObfLibrary {
             relist(app)
         }
         // The last listing is the old folder's: a route asked for before the relist above
-        // runs must list again on the routing thread rather than refuse from it. Then a
-        // destination refused for want of a map is asked for again against the new maps.
+        // runs must list again on the routing thread rather than refuse from it. Whichever
+        // listing finds the new folder's maps tells [Navigation] ([scan]).
         synchronized(lock) { listedAt = 0L }
-        Navigation.mapsChanged(app)
     }
 
     /**
@@ -466,6 +476,7 @@ object ObfLibrary {
             }
         }
         val labOnly = tree == null
+        var changed = false
         synchronized(lock) {
             for (entry in added) opened[entry.key] = entry
             opens += added.size
@@ -474,6 +485,19 @@ object ObfLibrary {
                 if (why == Rejection.NEWER) newerFiles++ else openFailures++
             }
             state = state(tree != null, labOnly, unreadable, found.size)
+            // Compared with the last listing, not [opened]: closing every file when the last
+            // holder lets go is not a change of maps.
+            changed = opened.keys != inventory
+            if (changed) {
+                inventory = HashSet(opened.keys)
+                generation++
+            }
+        }
+        // A destination refused for want of a map, or with only a track to it, is asked for
+        // again against the new maps.
+        if (changed) {
+            val app = context.applicationContext
+            main.post { Navigation.mapsChanged(app) }
         }
     }
 
