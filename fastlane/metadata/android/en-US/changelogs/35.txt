@@ -1,0 +1,1 @@
+A Routes button on the car screen's trip panel, between End route and the voice toggle: press it and the map zooms out to show the rest of your route and the other ways there, each with how much longer it is. Tap one's time to take it; press Routes again or recentre to go back. It works even with Show other routes on the map turned off.
