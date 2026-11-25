@@ -13,7 +13,9 @@ routing, OsmAnd, weather, HERE and identity files onto the phone is in [data.md]
 
 There is one activity, `ConnectionActivity`, with five tabs in a bar along the bottom:
 **Home**, **Setup**, **Maps**, **Settings** and **Diagnostics**. Diagnostics shows only
-while its switch in Settings is on. When Setup has items, its tab reads `Setup (N)`.
+while its switch in Settings is on. Setup shows only while it lists something, required or
+optional; with nothing left to do its tab goes away, and an open Setup page moves to Home.
+When Setup has required items, its tab reads `Setup (N)`.
 
 - **Where.** `app/src/main/kotlin/com/jw6ventures/headlink/ConnectionActivity.kt` builds
   every page (`buildViews`) and renders them all from one `SessionController` listener

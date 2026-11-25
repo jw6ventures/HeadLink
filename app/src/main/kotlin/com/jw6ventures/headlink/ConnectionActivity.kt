@@ -1884,8 +1884,14 @@ class ConnectionActivity : Activity() {
             else getString(R.string.notification_exclusions_count, excluded.size)
     }
 
-    /** Diagnostics is a tab only with its switch on, or once the status card opened it. */
+    /**
+     * Diagnostics is a tab only with its switch on, or once the status card opened it.
+     * Setup is a tab only while it lists something to do, required or optional.
+     */
     private fun renderTabs() {
+        val setup = !shownSetup.isNullOrEmpty()
+        tabs[TAB_SETUP].visibility = if (setup) View.VISIBLE else View.GONE
+        if (!setup && currentTab == TAB_SETUP) selectTab(TAB_HOME)
         val diagnostics = diagnosticsCheck.isChecked || diagnosticsRevealed
         tabs[TAB_DIAGNOSTICS].visibility = if (diagnostics) View.VISIBLE else View.GONE
         if (!diagnostics && currentTab == TAB_DIAGNOSTICS) selectTab(TAB_SETTINGS)

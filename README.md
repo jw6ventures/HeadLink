@@ -74,8 +74,9 @@ Download `HeadLink-<version>.apk` from the
 [Releases page](https://github.com/jw6ventures/headlink/releases) and open it on your
 phone. Each release also has a `SHA256SUMS` file if you want to check the download.
 
-Launch **HeadLink**. It has four tabs: **Home**, **Setup**, **Maps** and **Settings**. The
-**Setup** tab lists anything that still needs doing and has a button for each.
+Launch **HeadLink**. It has up to four tabs: **Home**, **Setup**, **Maps** and **Settings**.
+The **Setup** tab lists anything that still needs doing and has a button for each; once
+nothing is left, it disappears.
 
 ### 2. Choose your OsmAnd maps
 
