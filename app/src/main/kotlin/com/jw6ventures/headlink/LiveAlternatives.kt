@@ -320,6 +320,10 @@ class LookStop {
  * **Expiry.** An alternative goes once the vehicle is past the point where it leaves the
  * followed route: it is no longer a way the driver can go.
  *
+ * **Asked for.** The dashboard's Routes button asks ([ask]): the bubbles show whatever the
+ * setting says until it closes ([unask]) or the route changes, and a look runs now if none
+ * are on show. The listener hears whether that look is still running, for "Finding routes…".
+ *
  * Main-thread state, like [Guide]. [shown] is read by the scene thread.
  */
 object LiveAlternatives {
@@ -330,8 +334,12 @@ object LiveAlternatives {
     var shown: List<LiveAlternative> = emptyList()
         private set
 
-    /** Told whenever [shown] changes, installed by [ProjectionService] for the dashboard's bubbles. */
-    var listener: ((List<LiveAlternative>) -> Unit)? = null
+    /**
+     * Told whenever [shown] changes, or whether the routes the driver asked for are still
+     * being looked for ([ask]); installed by [ProjectionService] for the dashboard's bubbles
+     * and its Routes button.
+     */
+    var listener: ((List<LiveAlternative>, Boolean) -> Unit)? = null
 
     private var token = -1L
     private var followedSince = 0L
@@ -341,6 +349,17 @@ object LiveAlternatives {
     private var lookAgain = false
     /** The running look's own stop ([lookNow]), or null. */
     private var running: LookStop? = null
+    /** Whether the running look shows bubbles, not only the way round the traffic. */
+    private var runningBubbles = false
+    /**
+     * The driver asked for the other routes (the dashboard's Routes button, [ask]): bubbles
+     * are shown whatever Show other routes on the map says, until [unask] or a new route.
+     */
+    private var asked = false
+    /** A look the driver asked for is running, or its answer is being laid on the traffic. */
+    private var finding = false
+    /** The driver asked while a look without bubbles ran: look for them when it ends. */
+    private var askAgain = false
     /**
      * A traffic look was asked for before it could run: no fix had yet placed the vehicle on
      * the route it was asked for (the first fetch often lands while joining), or that route
@@ -361,6 +380,9 @@ object LiveAlternatives {
     var chosen = 0
         private set
     var lastLookMsTaken = 0L
+        private set
+    /** Times the driver asked for the other routes ([ask]). */
+    var asks = 0
         private set
 
     /** Every fix [Guide] follows, after it has placed it. Main thread. */
@@ -383,7 +405,8 @@ object LiveAlternatives {
             }
         }
         if (!AppSettings.load(context).routing.showAlternatives) {
-            if (shown.isNotEmpty()) publish(emptyList())
+            // Those the driver asked for stay until Routes closes; no timed look for more.
+            if (!asked && shown.isNotEmpty()) publish(emptyList())
             return
         }
         if (nowMs - followedSince < FIRST_DELAY_MS) return
@@ -422,6 +445,56 @@ object LiveAlternatives {
         look(context, follower, onRoute, android.os.SystemClock.elapsedRealtime(), traffic = true)
     }
 
+    /**
+     * The driver pressed Routes on the dashboard: show the other ways to the destination,
+     * Show other routes on the map on or off. Those on show already are the answer at once,
+     * at most an interval old and still ahead. With none, a look now, or, while one without
+     * bubbles runs (a traffic look with the setting off), one when it ends; while it runs
+     * the dashboard says "Finding routes…". Main thread.
+     */
+    fun ask(context: Context) {
+        if (Routing.token != token) adopt(android.os.SystemClock.elapsedRealtime())
+        asked = true
+        asks++
+        when {
+            shown.isNotEmpty() -> publish(shown)
+            looking -> {
+                if (!runningBubbles) askAgain = true
+                finding = true
+                publish(shown)
+            }
+            else -> askLook(context)
+        }
+    }
+
+    /**
+     * Routes closed: the bubbles go again unless the setting shows them anyway. A look still
+     * running carries on, and shows what it finds only as the setting says.
+     */
+    fun unask(context: Context) {
+        if (!asked) return
+        asked = false
+        askAgain = false
+        finding = false
+        publish(if (AppSettings.load(context).routing.showAlternatives) shown else emptyList())
+    }
+
+    /**
+     * A look for the driver now, if there is a route ahead long enough to have others
+     * ([MIN_AHEAD_M]); with none, the dashboard is told nothing is being looked for, and
+     * says there are no other routes.
+     */
+    private fun askLook(context: Context) {
+        val position = Guide.position()
+        if (Navigation.destination != null && position != null) {
+            val (follower, onRoute) = position
+            if (follower.totalM - onRoute.alongM >= MIN_AHEAD_M) {
+                look(context, follower, onRoute, android.os.SystemClock.elapsedRealtime(), traffic = false)
+            }
+        }
+        publish(shown)
+    }
+
     /** A new route: what was shown or asked for was about the last one. */
     private fun adopt(nowMs: Long) {
         // A route request is what changes the token, and it stops or skips any look in
@@ -431,12 +504,16 @@ object LiveAlternatives {
         lastLookMs = 0L
         looking = false
         lookAgain = false
+        asked = false
+        finding = false
+        askAgain = false
         publish(emptyList())
     }
 
     private fun look(context: Context, follower: RouteFollower, onRoute: FollowResult, nowMs: Long, traffic: Boolean) {
         val destination = Navigation.destination ?: return
-        val options = Routing.options(context)
+        // The driver's ask shows bubbles whatever the setting says.
+        val options = Routing.options(context).let { if (asked) it.copy(showAlternatives = true) else it }
         val aroundTraffic = Traffic.worthLooking()
         // With the bubbles off a look is only for the way round, and only worth it while
         // the traffic is (a look asked again after the old one ends may find it eased).
@@ -459,6 +536,12 @@ object LiveAlternatives {
         running = stop
         looking = true
         lookAgain = false
+        runningBubbles = options.showAlternatives
+        // A look with bubbles is the one the driver asked for, whichever started it.
+        if (asked) {
+            finding = true
+            askAgain = false
+        }
         lastLookMs = nowMs
         looks++
         if (traffic) trafficLooks++
@@ -545,7 +628,8 @@ object LiveAlternatives {
         if (running === look.stop) running = null
         if (!looked) {
             // Skipped for a route request: what is on show stays, and the next fix may look.
-            if (lookAgain && look.token == token && look.token == Routing.token) lookNow(context)
+            // One owed (a traffic look, or the driver's) is asked again while the route stands.
+            if (look.token == token && look.token == Routing.token) next(context)
             return
         }
         lastLookMsTaken = tookMs
@@ -557,7 +641,7 @@ object LiveAlternatives {
             // Stopped part way, or since: its routes so far decide nothing and replace no
             // bubbles. The look that stopped it follows ([lookNow]).
             SessionController.note("looked for other routes for $tookMs ms (look ${look.number}): stopped")
-            if (lookAgain) lookNow(context)
+            next(context)
             return
         }
         if (!look.bubbles) {
@@ -567,8 +651,8 @@ object LiveAlternatives {
                 SessionController.note("looked for other routes in $tookMs ms (look ${look.number}): no way round")
                 Traffic.assess(look.revision, look.follower.route, look.ahead, look.aheadAlongM, emptyList()) { _, _ -> }
             }
-            if (shown.isNotEmpty()) publish(emptyList())
-            if (lookAgain) lookNow(context)
+            if (!asked && shown.isNotEmpty()) publish(emptyList())
+            next(context)
             return
         }
         // Laid on the traffic held, if any, before anything is shown; the offer is decided there.
@@ -585,9 +669,31 @@ object LiveAlternatives {
                 "looked for other routes in $tookMs ms (look ${look.number}): ${made.size} shown" +
                     made.joinToString("") { " ${it.label}" } + if (offered != null) "; one offered for traffic" else "",
             )
-            publish(if (AppSettings.load(context).routing.showAlternatives) made else emptyList())
-            if (lookAgain) lookNow(context)
+            finding = false
+            publish(if (asked || AppSettings.load(context).routing.showAlternatives) made else emptyList())
+            next(context)
         }
+    }
+
+    /**
+     * A look is over and nothing of it is still to come: the look owed next, if any. A
+     * traffic look asked for while it ran ([lookNow]) comes first, and shows bubbles if the
+     * driver has asked; otherwise the driver's ask, if it came while a look without bubbles
+     * ran. Anything else the driver was waiting on is over, found or not (a look skipped
+     * for a route request is not asked again: a closed planner skips every one), and the
+     * dashboard hears so.
+     */
+    private fun next(context: Context) {
+        val wasFinding = finding
+        finding = false
+        if (lookAgain) {
+            lookNow(context)
+        } else if (asked && askAgain) {
+            askAgain = false
+            askLook(context)
+            return
+        }
+        if (wasFinding != finding) publish(shown)
     }
 
     /**
@@ -630,19 +736,23 @@ object LiveAlternatives {
         looking = false
         lookAgain = false
         trafficPending = false
+        asked = false
+        finding = false
+        askAgain = false
         splitAlong.clear()
         publish(emptyList())
     }
 
     private fun publish(list: List<LiveAlternative>) {
         shown = list
-        listener?.invoke(list)
+        listener?.invoke(list, finding)
     }
 
     /** The report's line: counts and a time, no places. */
     fun report(): String =
         "live_alternatives_looks=$looks live_alternatives_traffic_looks=$trafficLooks live_alternatives_found=$found " +
-            "live_alternatives_chosen=$chosen live_alternatives_shown=${shown.size} live_alternatives_last_ms=$lastLookMsTaken\n"
+            "live_alternatives_chosen=$chosen live_alternatives_shown=${shown.size} live_alternatives_last_ms=$lastLookMsTaken " +
+            "live_alternatives_asks=$asks live_alternatives_asked=$asked\n"
 
     const val FIRST_DELAY_MS = 30_000L
     const val INTERVAL_MS = 5 * 60_000L

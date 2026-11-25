@@ -272,7 +272,7 @@ route. Mechanics are in
 | Top speed | 75 mph (121 km/h) | The router's top speed, from 56 to 85 mph (OsmAnd's car profile alone allows up to 81 mph). It changes routes as well as times. |
 | Time adjustment | as estimated | −15% to +30% on every estimated time; changes no route |
 | Learn my pace | on | Corrects the time left by your pace learned across drives (per road kind, surroundings and 15 mile area) and by how this drive compares; Forget learned pace clears it |
-| Show other routes on the map | on | Up to two grey alternatives with "+N min" while a route is followed |
+| Show other routes on the map | on | Up to two grey alternatives with "+N min" while a route is followed. Routes on the trip panel shows them while open even when off |
 
 The 75 mph default was chosen in P6 because BRouter's own 56 mph timed Austin to Dallas at
 3 h 42 min, and was kept for OsmAnd. James has not confirmed it. **Verified:** host tests

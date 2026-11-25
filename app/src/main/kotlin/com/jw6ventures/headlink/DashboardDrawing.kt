@@ -812,18 +812,33 @@ object DashboardDrawing {
             }
         }
 
-        trip.later.take(RouteFollower.LATER_STEPS).forEachIndexed { index, step ->
-            val cell = layout.tripLater(index)
-            if (cell.height <= 0 || cell.width <= 0) return@forEachIndexed
-            // At 800x480 a cell is about 83 px wide: the icon takes a third, so the distance
-            // beside it is never cut short.
-            val side = minOf(cell.height * 3 / 4, cell.width / 3)
-            val icon = Box(cell.x, cell.y + (cell.height - side) / 2, side, side)
-            drawManeuver(canvas, paint, Maneuvers.glyph(step.maneuver, step.exit), icon, palette.text, palette.dim, palette.tile)
-            paint.color = palette.text
-            paint.textSize = cell.height * 0.36f
-            val textX = icon.right + layout.margin / 2f
-            canvas.drawText(fit(paint, step.distance, cell.right - textX), textX, cell.y + cell.height * 0.64f, paint)
+        val status = trip.routesStatus
+        if (status != null) {
+            // Routes is open: what it found takes the later maneuvers' row, in the accent
+            // while there is a choice on the map, brought down to fit rather than cut.
+            val first = layout.tripLater(0)
+            val row = Box(first.x, first.y, layout.tripSummary.width, first.height)
+            if (row.height > 0 && row.width > 0) {
+                paint.color = if (status == TripPanel.ROUTES_PICK) palette.accent else palette.dim
+                paint.textSize = row.height * 0.4f
+                val width = paint.measureText(status)
+                if (width > row.width) paint.textSize = maxOf(row.height * 0.28f, paint.textSize * row.width / width)
+                canvas.drawText(fit(paint, status, row.width.toFloat()), row.x.toFloat(), row.y + row.height * 0.64f, paint)
+            }
+        } else {
+            trip.later.take(RouteFollower.LATER_STEPS).forEachIndexed { index, step ->
+                val cell = layout.tripLater(index)
+                if (cell.height <= 0 || cell.width <= 0) return@forEachIndexed
+                // At 800x480 a cell is about 83 px wide: the icon takes a third, so the distance
+                // beside it is never cut short.
+                val side = minOf(cell.height * 3 / 4, cell.width / 3)
+                val icon = Box(cell.x, cell.y + (cell.height - side) / 2, side, side)
+                drawManeuver(canvas, paint, Maneuvers.glyph(step.maneuver, step.exit), icon, palette.text, palette.dim, palette.tile)
+                paint.color = palette.text
+                paint.textSize = cell.height * 0.36f
+                val textX = icon.right + layout.margin / 2f
+                canvas.drawText(fit(paint, step.distance, cell.right - textX), textX, cell.y + cell.height * 0.64f, paint)
+            }
         }
 
         val button = layout.endRoute
@@ -833,16 +848,65 @@ object DashboardDrawing {
             val typeface = paint.typeface
             paint.typeface = Typeface.DEFAULT_BOLD
             paint.color = palette.text
-            // Since P8.2 the button shares its row with the voice toggle, so the words are
-            // sized to its width as well as its height: about 4.5 em in bold, 5 allowed.
-            paint.textSize = minOf(button.height * 0.28f, (button.width - 2f * layout.margin) / 5f)
-            val text = fit(paint, "End route", button.width - 2f * layout.margin)
+            // Since Routes shares the row, "End" over "route" where that reads larger than
+            // one line ([DashboardLayout.endRouteTextSize]).
+            paint.textSize = layout.endRouteTextSize
             paint.textAlign = Paint.Align.CENTER
-            canvas.drawText(text, button.centerX.toFloat(), button.centerY + paint.textSize * 0.36f, paint)
+            val room = button.width - layout.margin.toFloat()
+            if (layout.endRouteTwoLines) {
+                val gap = paint.textSize * 0.6f
+                canvas.drawText(fit(paint, "End", room), button.centerX.toFloat(), button.centerY - gap + paint.textSize * 0.36f, paint)
+                canvas.drawText(fit(paint, "route", room), button.centerX.toFloat(), button.centerY + gap + paint.textSize * 0.36f, paint)
+            } else {
+                canvas.drawText(fit(paint, "End route", room), button.centerX.toFloat(), button.centerY + paint.textSize * 0.36f, paint)
+            }
             paint.textAlign = Paint.Align.LEFT
             paint.typeface = typeface
         }
+        drawRoutesButton(canvas, paint, layout.routesButton, trip, palette)
         drawVoiceToggle(canvas, paint, layout.voiceToggle, trip, palette)
+    }
+
+    /**
+     * Routes: a road forking in two, drawn from strokes as the speaker beside it is. The
+     * stem comes up from the bottom and splits into two branches, each ending in an arrow.
+     * Lit in the accent while Routes is open, so a second press is seen to close it.
+     */
+    private fun drawRoutesButton(canvas: Canvas, paint: Paint, box: Box, trip: TripPanel, palette: DashboardPalette) {
+        if (box.width <= 0 || box.height <= 0) return
+        paint.style = Paint.Style.FILL
+        paint.color = if (trip.routesPressed) palette.accent else palette.button
+        canvas.drawRoundRect(rect(box), CORNER, CORNER, paint)
+        val s = minOf(box.width, box.height) * 0.8f
+        val cx = box.centerX.toFloat()
+        val cy = box.centerY.toFloat()
+        paint.color = if (trip.routesOpen && !trip.routesPressed) palette.accent else palette.text
+        val join = paint.strokeJoin
+        paint.style = Paint.Style.STROKE
+        paint.strokeCap = Paint.Cap.ROUND
+        paint.strokeJoin = Paint.Join.ROUND
+        paint.strokeWidth = maxOf(2f, s * 0.1f)
+        val fork = cy + s * 0.05f
+        val tipY = cy - s * 0.36f
+        val spread = s * 0.3f
+        canvas.drawLine(cx, cy + s * 0.42f, cx, fork, paint)
+        for (side in floatArrayOf(-1f, 1f)) {
+            val tipX = cx + side * spread
+            canvas.drawPath(
+                Path().apply {
+                    moveTo(cx, fork)
+                    cubicTo(cx, fork - s * 0.14f, tipX, fork - s * 0.16f, tipX, tipY + s * 0.1f)
+                    lineTo(tipX, tipY)
+                },
+                paint,
+            )
+            // The arrowhead, a small chevron on each branch's end.
+            val head = s * 0.12f
+            canvas.drawLine(tipX, tipY, tipX - head, tipY + head, paint)
+            canvas.drawLine(tipX, tipY, tipX + head, tipY + head, paint)
+        }
+        paint.strokeJoin = join
+        paint.style = Paint.Style.FILL
     }
 
     /**

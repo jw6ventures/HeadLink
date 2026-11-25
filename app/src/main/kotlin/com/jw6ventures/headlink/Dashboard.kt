@@ -12,8 +12,17 @@ data class Box(val x: Int, val y: Int, val width: Int, val height: Int) {
     fun contains(px: Int, py: Int): Boolean = px >= x && px < right && py >= y && py < bottom
 }
 
-/** A live alternative as the dashboard knows it: which one, where its bubble goes, and what it says. */
-data class AlternativeMark(val id: Long, val latitude: Double, val longitude: Double, val label: String)
+/**
+ * A live alternative as the dashboard knows it: which one, where its bubble goes, what it
+ * says, and its line, which Routes frames the map on (null frames the bubble alone).
+ */
+data class AlternativeMark @JvmOverloads constructor(
+    val id: Long,
+    val latitude: Double,
+    val longitude: Double,
+    val label: String,
+    val route: Route? = null,
+)
 
 /** An alternative's bubble on this frame: where, what it says, and whether a finger is on it. */
 data class AlternativeBubble(val id: Long, val box: Box, val label: String, val pressed: Boolean)
@@ -581,39 +590,72 @@ class DashboardLayout @JvmOverloads constructor(
     val markerBelow: Int = (turnCard.bottom - map.y) / 2
 
     /**
-     * The voice-guidance toggle (P8.2): at the right end of End route's row,
-     * End route's height, a margin clear of it.
+     * The trip panel's bottom row: End route, Routes and the voice toggle, left to right, a
+     * margin apart, each the height of a media button (or what the tile leaves).
      *
-     * **Not quite the square an earlier design asked for.** The row inside the tile is only about two media
-     * buttons wide (415 px beside 208 px buttons at 1080p, 174 beside 93 at 800x480), so a
-     * square of End route's height would leave End route narrower than the toggle, and
-     * "End route" in type too small to read; End route is also to stay the
-     * widest target on the tile. So the toggle is a square only while that leaves End
-     * route at least twice its width, and narrower than it is tall otherwise: a third of
-     * the row at every display the project renders. The glyph is drawn to its width.
+     * **Routes and the toggle are two sevenths of the row each, End route the rest.** The row
+     * inside the tile is only about two media buttons wide (375 px at 1080p, 144 at Ford's
+     * 726x480), and End route is to stay the widest target there (James, 25 November 2026:
+     * "End route should still be the biggest button"), so the two others are narrower than
+     * they are tall: 41x95 at 726x480 beside End route's 62. Their glyphs are drawn to their
+     * width; End route's words go on two lines ([endRouteTextSize]).
      */
+    private val tripRowHeight: Int = run {
+        val tile = tiles[FAVORITES_TILE]
+        minOf(mediaButton(0).height, maxOf(0, tile.height - 3 * margin))
+    }
+
+    private val tripRowNarrow: Int = minOf(tripRowHeight, maxOf(0, tiles[FAVORITES_TILE].width - 4 * margin) * 2 / 7)
+
+    /** The voice-guidance toggle (P8.2): at the right end of the trip panel's bottom row. */
     val voiceToggle: Box = run {
         val tile = tiles[FAVORITES_TILE]
-        val h = minOf(mediaButton(0).height, maxOf(0, tile.height - 3 * margin))
-        val w = minOf(h, maxOf(0, (tile.width - 3 * margin) / 3))
-        Box(tile.right - margin - w, tile.bottom - margin - h, w, h)
+        Box(tile.right - margin - tripRowNarrow, tile.bottom - margin - tripRowHeight, tripRowNarrow, tripRowHeight)
+    }
+
+    /**
+     * Routes: a margin left of [voiceToggle], its size. Frames the map on the rest of the
+     * route and the other ways to the destination, each with a "+N min" bubble to take it
+     * (docs/dashboard.md, "Favourites tile and trip panel").
+     */
+    val routesButton: Box = run {
+        val x = if (voiceToggle.width > 0) voiceToggle.x - margin - tripRowNarrow else voiceToggle.x
+        Box(x, voiceToggle.y, tripRowNarrow, tripRowHeight)
     }
 
     /**
      * End route (P7.4): along the bottom of the trip panel, which takes the
      * favourites tile's place during a trip. **The height of a media button**: it is the
      * only way to cancel a route from the car, and it is the fix for a
-     * mistaken favourite, so it gets the biggest target the tile can give it. Since P8.2
-     * it stops a margin short of [voiceToggle], and is still the widest target there.
+     * mistaken favourite, so it is the biggest target on the panel. It stops a margin
+     * short of [routesButton].
      */
     val endRoute: Box = run {
         val tile = tiles[FAVORITES_TILE]
-        val right = if (voiceToggle.width > 0) voiceToggle.x - margin else tile.right - margin
+        val right = if (routesButton.width > 0) routesButton.x - margin else tile.right - margin
         Box(tile.x + margin, voiceToggle.y, maxOf(0, right - tile.x - margin), voiceToggle.height)
     }
 
+    private val endRouteOneLineSize: Float = minOf(endRoute.height * 0.28f, (endRoute.width - 2f * margin) / 5f)
+
+    private val endRouteTwoLineSize: Float = minOf(endRoute.height * 0.26f, (endRoute.width - margin) / 3.2f)
+
+    /**
+     * "End" over "route", in bold, or "End route" on one line: whichever is larger, both to
+     * the button's width. On one line the words came to 10 px at 726x480 once Routes took
+     * its share of the row; on two they are 17. About 2.9 em for "route" in bold, 3.2
+     * allowed, with half a margin each side; 4.5 em for "End route", 5 allowed, with a margin.
+     */
+    val endRouteTextSize: Float = maxOf(endRouteTwoLineSize, endRouteOneLineSize)
+
+    /** Whether "End route" is drawn on two lines ([endRouteTextSize]). */
+    val endRouteTwoLines: Boolean = endRouteTwoLineSize >= endRouteOneLineSize
+
     /** Whether a point is on End route. */
     fun hitEndRoute(px: Int, py: Int): Boolean = endRoute.contains(px, py)
+
+    /** Whether a point is on Routes. */
+    fun hitRoutes(px: Int, py: Int): Boolean = routesButton.contains(px, py)
 
     /** Whether a point is on the voice toggle. */
     fun hitVoiceToggle(px: Int, py: Int): Boolean = voiceToggle.contains(px, py)
@@ -809,6 +851,15 @@ class DashboardLayout @JvmOverloads constructor(
      */
     val offerView: Box = run {
         val top = offerCard.bottom + margin
+        Box(map.x + margin, top, maxOf(0, map.width - 2 * margin), maxOf(0, map.bottom - margin - top))
+    }
+
+    /**
+     * Where the map frames the route and its alternatives while Routes is open: the pane
+     * under the turn card, inset by a margin, as [offerView] is under the divided card.
+     */
+    val routesView: Box = run {
+        val top = turnCard.bottom + margin
         Box(map.x + margin, top, maxOf(0, map.width - 2 * margin), maxOf(0, map.bottom - margin - top))
     }
 
@@ -1181,7 +1232,22 @@ data class TripPanel(
      * and [arrival], labelled; null when it rounds to under a minute or there is no figure.
      */
     val traffic: String? = null,
-)
+    /** Routes is open: its fork drawn lit, and the map framed on the route and its alternatives. */
+    val routesOpen: Boolean = false,
+    /** A finger is on Routes. */
+    val routesPressed: Boolean = false,
+    /**
+     * While Routes is open, what it found, in place of the later maneuvers: [ROUTES_FINDING],
+     * [ROUTES_PICK] or [ROUTES_NONE]; null while it is closed.
+     */
+    val routesStatus: String? = null,
+) {
+    companion object {
+        const val ROUTES_FINDING = "Finding routes…"
+        const val ROUTES_PICK = "Tap a time to take it"
+        const val ROUTES_NONE = "No other routes"
+    }
+}
 
 /**
  * The display choices a dashboard starts a session with (P7.2, P7.3, P7.6), read from
@@ -1563,6 +1629,18 @@ class Dashboard @JvmOverloads constructor(
     /** Frames that drew at least one alternative's bubble: whether they were ever on the pane. */
     private var alternativeBubbleFrames = 0L
 
+    /**
+     * Routes on the trip panel: open while the map frames the route and its alternatives,
+     * the open or close the caller has not yet taken ([takeRoutesRequest]), and whether the
+     * alternatives asked for are still being looked for.
+     */
+    private var routesOpen = false
+    private var pressedRoutes = false
+    private var routesRequest: Boolean? = null
+    private var routesFinding = false
+    private var routesPresses = 0L
+    private var routesFits = 0L
+
     // P8.2: the voice toggle beside End route, and whether speech can happen at all.
     private var voiceOn = choices.voiceGuidance
     private var voicePresses = 0L
@@ -1738,6 +1816,8 @@ class Dashboard @JvmOverloads constructor(
         if (turn == null) {
             pressedEndRoute = false
             pressedVoice = false
+            pressedRoutes = false
+            if (routesOpen) closeRoutes()
         }
         upcomingTurn = turn
     }
@@ -1901,11 +1981,91 @@ class Dashboard @JvmOverloads constructor(
         return PoiCardView(rows, poiSelected, card.primary, pressedPoiCardButton, pressedPoiRow)
     }
 
-    /** The live alternatives to put bubbles on; empty takes them away. */
+    /**
+     * The live alternatives to put bubbles on; empty takes them away. [finding] is whether
+     * the ones Routes asked for are still being looked for ([LiveAlternatives.ask]). While
+     * Routes is open and the map is still on its framing, the map frames them as they come.
+     */
     @Synchronized
-    fun alternatives(marks: List<AlternativeMark>) {
+    @JvmOverloads
+    fun alternatives(marks: List<AlternativeMark>, finding: Boolean = false) {
         alternatives = marks
+        routesFinding = finding
         if (marks.none { it.id == pressedAlternative }) pressedAlternative = null
+        if (routesOpen && mapControl.fitted) overview()
+    }
+
+    /**
+     * Routes opened (true) or closed (false) since the last call, once, or null. The caller
+     * asks [LiveAlternatives] for the alternatives, or lets them go, as it says.
+     */
+    @Synchronized
+    fun takeRoutesRequest(): Boolean? = routesRequest.also { routesRequest = null }
+
+    /** Whether Routes is open (for the lab and the tests). */
+    @Synchronized
+    fun routesOpen(): Boolean = routesOpen
+
+    /**
+     * Opens Routes: the map leaves the vehicle to frame the rest of the route and every
+     * alternative on show, as it frames the offer's two routes, and keeps framing them as
+     * they come ([alternatives]) until the driver moves it.
+     */
+    private fun openRoutes() {
+        routesOpen = true
+        routesRequest = true
+        // None on show means a look is about to be asked for: "Finding routes…" from this
+        // frame, not "No other routes" until the caller has asked.
+        routesFinding = alternatives.isEmpty()
+        if (overview()) routesFits++
+    }
+
+    /**
+     * Closes Routes: back to the offer's view if one is up and the map is still framed,
+     * else back on the vehicle at the zoom it had, unless the driver has moved the map.
+     */
+    private fun closeRoutes() {
+        routesOpen = false
+        pressedRoutes = false
+        routesRequest = false
+        if (shownOffer() != null && mapControl.fitted) overview() else mapControl.unfit()
+    }
+
+    /**
+     * Frames what the map is showing of the trip: the rest of the followed route from the
+     * vehicle, the vehicle, the offer's route while one is up, and every alternative while
+     * Routes is open. Only from a map following the vehicle or still on a framing; one the
+     * driver has moved stays where they put it. Under the divided card while an offer is
+     * up, else under the turn card. Returns whether the camera changed.
+     */
+    private fun overview(): Boolean {
+        if (!mapControl.following && !mapControl.fitted) return false
+        val offer = shownOffer()
+        val lats = ArrayList<DoubleArray>()
+        val lons = ArrayList<DoubleArray>()
+        val position = followPosition()
+        followedRoute?.let { route ->
+            val from = position?.let { TrafficLines.nearestIndex(route, it.first, it.second) } ?: 0
+            lats += route.latitudes.copyOfRange(from, route.points)
+            lons += route.longitudes.copyOfRange(from, route.points)
+        }
+        // The offer's route starts near the vehicle, as an alternative starts a little ahead.
+        offer?.let {
+            lats += it.route.latitudes
+            lons += it.route.longitudes
+        }
+        if (routesOpen) {
+            for (mark in alternatives) {
+                val route = mark.route
+                lats += route?.latitudes ?: doubleArrayOf(mark.latitude)
+                lons += route?.longitudes ?: doubleArrayOf(mark.longitude)
+            }
+        }
+        position?.let {
+            lats += doubleArrayOf(it.first)
+            lons += doubleArrayOf(it.second)
+        }
+        return mapControl.fit(lats, lons, layout.map, if (offer != null) layout.offerView else layout.routesView)
     }
 
     /** The alternative whose bubble was tapped since the last call, once, or null. The caller takes it. */
@@ -1948,10 +2108,12 @@ class Dashboard @JvmOverloads constructor(
 
     /**
      * The route the map is drawing ([Routing.line]), from the scene thread when it changes:
-     * the offer's view frames the rest of it from the vehicle.
+     * the offer's view frames the rest of it from the vehicle. A new route (a re-route, a
+     * taken alternative) closes Routes: what it framed was the old one's.
      */
     @Synchronized
     fun followedRoute(route: Route?) {
+        if (route !== followedRoute && routesOpen) closeRoutes()
         followedRoute = route
     }
 
@@ -1965,29 +2127,17 @@ class Dashboard @JvmOverloads constructor(
         // A finger already on the card came down on the whole turn card, and lifts on Take or
         // Keep: that must not answer an offer the driver had not seen when pressing.
         pressedOfferId = 0L
-        if (!mapControl.following && !mapControl.fitted) return
-        // The rest of the followed route from the vehicle, and the whole proposal, which
-        // starts near the vehicle; the vehicle itself too, so it is never off the view.
-        val lats = ArrayList<DoubleArray>()
-        val lons = ArrayList<DoubleArray>()
-        val position = followPosition()
-        followedRoute?.let { route ->
-            val from = position?.let { TrafficLines.nearestIndex(route, it.first, it.second) } ?: 0
-            lats += route.latitudes.copyOfRange(from, route.points)
-            lons += route.longitudes.copyOfRange(from, route.points)
-        }
-        lats += offer.route.latitudes
-        lons += offer.route.longitudes
-        position?.let {
-            lats += doubleArrayOf(it.first)
-            lons += doubleArrayOf(it.second)
-        }
-        if (mapControl.fit(lats, lons, layout.map, layout.offerView)) offerFits++
+        if (overview()) offerFits++
     }
 
+    /** The offer went: Routes' own framing if it is open, else back on the vehicle. */
     private fun endOffer() {
         pressedOffer = null
-        if (mapControl.unfit()) offerRefollows++
+        if (routesOpen) {
+            if (mapControl.fitted) overview()
+        } else if (mapControl.unfit()) {
+            offerRefollows++
+        }
     }
 
     /** Each alternative's bubble where the map puts it now; one off the pane is not drawn and takes no press. */
@@ -2384,6 +2534,7 @@ class Dashboard @JvmOverloads constructor(
                     pressedWeatherInCall = onWeather && call.phase != CallPhase.NONE
                     pressedWeather = onWeather && !pressedWeatherInCall
                     pressedEndRoute = upcomingTurn != null && layout.hitEndRoute(px, py)
+                    pressedRoutes = upcomingTurn != null && layout.hitRoutes(px, py)
                     pressedVoice = upcomingTurn != null && layout.hitVoiceToggle(px, py)
                     pressedPlayer = if (idle) layout.hitPlayer(px, py, players.size, !mediaAccess) else -1
                     // A finger on the turn card is on the card, not on the map under it.
@@ -2431,6 +2582,7 @@ class Dashboard @JvmOverloads constructor(
                 val zoom = layout.hitZoomBubble(px, py)
                 val icon = layout.hitHeaderIcon(px, py)
                 val endRoute = upcomingTurn != null && layout.hitEndRoute(px, py)
+                val routes = upcomingTurn != null && layout.hitRoutes(px, py)
                 val voice = upcomingTurn != null && layout.hitVoiceToggle(px, py)
                 val player = if (mediaIdle()) layout.hitPlayer(px, py, players.size, !mediaAccess) else -1
                 val callAction = if (flexSource() == FlexSource.CALL) layout.hitCallAction(px, py, FlexRules.actions(call)) else null
@@ -2457,20 +2609,29 @@ class Dashboard @JvmOverloads constructor(
                     if (take) offersTaken++ else offersKept++
                     offerAnswer = OfferAnswer(offer.id, take)
                     answeredOffer = offer.id
+                    // Taking it is a choice of route, as a bubble is: Routes closes with it.
+                    if (take && routesOpen) {
+                        routesOpen = false
+                        routesRequest = false
+                    }
                     endOffer()
                 }
                 val wasAlternative = pressedAlternative
                 pressedAlternative = null
                 if (alternative != null && alternative == wasAlternative) {
-                    // Press and release on the same bubble, as on every button.
+                    // Press and release on the same bubble, as on every button. A route
+                    // chosen is what Routes was open for, so it closes and the map follows.
                     alternativePresses++
                     alternativePick = alternative
+                    if (routesOpen) closeRoutes()
                 }
                 val wasEndRoute = pressedEndRoute
+                val wasRoutes = pressedRoutes
                 val wasVoice = pressedVoice
                 val wasPlayer = pressedPlayer
                 val wasCallAction = pressedCallAction
                 pressedEndRoute = false
+                pressedRoutes = false
                 pressedVoice = false
                 pressedPlayer = -1
                 pressedCallAction = null
@@ -2479,6 +2640,12 @@ class Dashboard @JvmOverloads constructor(
                     // caller through Navigation.clear(); counted here, and nothing else.
                     endRoutePresses++
                     endRouteRequested = true
+                }
+                if (routes && wasRoutes) {
+                    // The same rule. Opens or closes at once, so the map moves on this
+                    // frame; the caller asks for the alternatives through takeRoutesRequest().
+                    routesPresses++
+                    if (routesOpen) closeRoutes() else openRoutes()
                 }
                 if (voice && wasVoice) {
                     // P8.2: the same rule. Flipped here so the next frame draws it; saved,
@@ -2520,7 +2687,11 @@ class Dashboard @JvmOverloads constructor(
                 if (bubble != null && bubble == wasBubble) {
                     mapPresses++
                     when (bubble) {
-                        "recentre" -> mapControl.recentre()
+                        // The driver asked for the vehicle: Routes closes, as a choice would close it.
+                        "recentre" -> {
+                            if (routesOpen) closeRoutes()
+                            mapControl.recentre()
+                        }
                         "compass" -> {
                             mapControl.flipOrientation()
                             onMapOrientation(mapControl.orientation)
@@ -2546,6 +2717,7 @@ class Dashboard @JvmOverloads constructor(
             }
             "cancel" -> {
                 pressedEndRoute = false
+                pressedRoutes = false
                 pressedVoice = false
                 pressedPlayer = -1
                 pressedTile = -1
@@ -3035,6 +3207,14 @@ class Dashboard @JvmOverloads constructor(
             voiceWarning = !speechAvailable,
             voicePressed = pressedVoice,
             traffic = if (seconds == null) null else trafficDelayLabel(trafficDisplay.delaySeconds),
+            routesOpen = routesOpen,
+            routesPressed = pressedRoutes,
+            routesStatus = when {
+                !routesOpen -> null
+                routesFinding -> TripPanel.ROUTES_FINDING
+                alternatives.isNotEmpty() -> TripPanel.ROUTES_PICK
+                else -> TripPanel.ROUTES_NONE
+            },
         )
     }
 
@@ -3116,7 +3296,8 @@ class Dashboard @JvmOverloads constructor(
             // the lab can set it beside the cluster's; a duration, never a place.
             "dashboard_trip_seconds=${upcomingTurn?.destinationSeconds ?: "-"} " +
             "dashboard_turn_card=${turnCard() != null} dashboard_end_route_presses=$endRoutePresses " +
-            "dashboard_voice_toggle_presses=$voicePresses dashboard_voice_guidance=${if (voiceOn) "on" else "off"}\n" +
+            "dashboard_voice_toggle_presses=$voicePresses dashboard_voice_guidance=${if (voiceOn) "on" else "off"} " +
+            "dashboard_routes_presses=$routesPresses dashboard_routes_open=$routesOpen dashboard_routes_fits=$routesFits\n" +
             // P7.5: how many players were offered and what Resume did; never which app.
             "dashboard_media_idle=${mediaIdle()} dashboard_media_access=$mediaAccess " +
             // Whether the progress bar was drawn; never the track or how far into it.

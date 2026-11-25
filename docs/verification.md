@@ -303,6 +303,7 @@ Pixel lab. Most features also have host tests for their logic.
 | Favorites tile, recent destination | Lab (rendered) | a row has never been tapped outside host tests; rows are ~52 px at 800x480 |
 | Route preview and alternatives (phone) | Emulator | |
 | Live alternatives on the dashboard | Lab | |
+| Routes on the trip panel | Host, Lab | `DashboardTripTest`; the `endroute` lab script opens and closes it before End route (25 Nov 2026, `LAB_MARGINS=74x0`, `20261125T171801Z`: one look, "+1 min" shown). A bubble tap from Routes is host-tested only; not yet pressed on the truck |
 | Saved route across a restart | Emulator | |
 | Players with Resume (idle media pane) | Lab | |
 | Dashboard notifications and pause | Lab | |

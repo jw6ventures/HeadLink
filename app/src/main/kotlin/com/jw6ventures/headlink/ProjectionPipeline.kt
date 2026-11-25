@@ -583,13 +583,16 @@ class ProjectionPipeline(
         dashboard?.poiKinds(kinds)
     }
 
-    /** The live alternatives' bubbles, from the main thread. */
-    fun alternatives(marks: List<AlternativeMark>) {
-        dashboard?.alternatives(marks)
+    /** The live alternatives' bubbles, and whether those Routes asked for are still being looked for; main thread. */
+    fun alternatives(marks: List<AlternativeMark>, finding: Boolean) {
+        dashboard?.alternatives(marks, finding)
     }
 
     /** The live alternative whose bubble was tapped since the last call, once, or null. */
     fun takeAlternativePick(): Long? = dashboard?.takeAlternativePick()
+
+    /** Routes opened (true) or closed (false) on the trip panel since the last call, once, or null. */
+    fun takeRoutesRequest(): Boolean? = dashboard?.takeRoutesRequest()
 
     /** Whether End route was pressed on the trip panel since the last call (P7.4). */
     fun takeEndRoute(): Boolean = dashboard?.takeEndRoute() ?: false

@@ -17,7 +17,9 @@
 #   panel in the favourites tile with End route, the marker moved down under the card, the
 #   idle media pane's player rows with Resume, and the empty favourites text, at 1080p,
 #   Ford's 726x480 and 800x480; since P8.2 the voice toggle beside End route at all three
-#   with the map on either side, its press and release, its saved start and warning mark.
+#   with the map on either side, its press and release, its saved start and warning mark;
+#   and Routes between them: End route still the widest, the map framed on the route and
+#   its alternatives, what the panel says, and what closes it.
 # * DashboardFlexTest: P7.8 and P7.9 — the flex tile's priority and label, its notification
 #   rows on the favourites' shared scroll rules with the read-aloud stub, the call card on
 #   both call routes, the pop-up keypad and its tones, the answer and decline colours in

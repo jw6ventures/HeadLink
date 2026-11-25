@@ -326,15 +326,35 @@ player app. The progress row is host-tested only, not yet seen on a phone or hea
     the minute;
   - the time and distance remaining, with "+7 min traffic" when traffic is in the figure;
   - the next two maneuvers after the current one, each an icon and a distance;
-  - **End route**, a media button's height.
-  - **The voice toggle**, a speaker glyph at End route's right, slashed when off. A
-    warning mark shows when speech cannot happen now (no engine, or no A2DP output). It
-    is End route's height but only a third of the row wide (131x205 at 1080p, 50x95 at
-    726x480), not square: End route must stay the widest target there, with readable
-    text. What it switches: [audio-and-speech.md](audio-and-speech.md).
+  - a bottom row, a media button tall, of three buttons a margin apart:
+    - **End route**, the widest (62x95 at 726x480, 161x205 at 1080p), with "End" over
+      "route" in bold, which reads larger on two lines than on one now that it shares the
+      row (17 px at 726x480 rather than 10).
+    - **Routes**, a road forking into two arrows, lit while open. See below.
+    - **The voice toggle**, a speaker glyph, slashed when off. A warning mark shows when
+      speech cannot happen now (no engine, or no A2DP output). What it switches:
+      [audio-and-speech.md](audio-and-speech.md).
+
+    Routes and the toggle are each two sevenths of the row (41x95 at 726x480, 107x205 at
+    1080p), narrower than tall, so End route stays the biggest target (James, 25 November
+    2026).
 
   While re-routing, or with no fix yet on the route, the figures are dashes rather than
   stale numbers.
+- **Routes** shows the other ways to the destination and lets one be taken. A press:
+  - zooms the map out of following to frame the rest of the route, the vehicle and every
+    other route, under the turn card (`MapControl.fit`, as the traffic offer frames its two
+    routes), and frames them again as they arrive;
+  - asks for the other routes (`LiveAlternatives.ask`): those already on the map at once,
+    else a look now, whether or not *Show other routes on the map* is on;
+  - puts what it found in place of the two later maneuvers: "Finding routes…", "Tap a time
+    to take it", or "No other routes".
+
+  Each other route is the usual grey line with its "+N min" bubble; tapping a bubble takes
+  that route. Routes closes, and the map goes back to the vehicle at its old zoom, on that
+  tap, a second press, recentre, Take on a traffic offer, a new route (a re-route), or the
+  route ending. A map the driver has panned or zoomed is left where they put it. With the
+  setting off, the bubbles go again when Routes closes.
 - **End route is never hidden while a route exists.** It is the only way to cancel from
   the car, and the fix for a mistaken tap, so no undo banner exists. Arrival ends the
   route by itself 30 s after "You have arrived".
@@ -536,7 +556,7 @@ traffic colours and alternatives: [navigation.md](navigation.md).
   - **Speed** is `Dashboard.guidanceSpeed`, the same as the spoken prompts use: the car's
     own, else the phone's. It is never reported; the band changes are counted.
   - **The driver wins.** A pinch or + or − holds the zoom where it was put until recentre
-    is pressed. A panned map and the offer's two-route view are left alone.
+    is pressed. A panned map, the offer's two-route view and Routes' overview are left alone.
   - **When it applies.** Read when projection starts, like the other display choices: a
     change on the phone shows at the next connection.
 - **Floating bubbles.** Each is an eighth of the pane:

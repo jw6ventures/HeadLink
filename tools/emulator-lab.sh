@@ -141,10 +141,13 @@
 # sends night that long after the app subscribes. It needs LAB_SENSORS=all (the default).
 #
 # The endroute script (P7.4, P7.5, needs OBF data) shares the guidance
-# destination while parked, and once the cluster has the route presses End route on the
-# trip panel. The receiver checks the cluster went INACTIVE and heard no route after it,
-# and that the trip panel and the turn card left the picture; the app side checks it was
-# End route that ended it, and that no destination reached the report. It then presses
+# destination while parked, and once the cluster has the route presses Routes on the trip
+# panel, holds it open 10 s and presses it again: the receiver checks the map left the
+# vehicle for the overview, the app side that it asked for the other routes once and framed
+# the map once. Then it presses End route. The receiver checks the cluster went INACTIVE
+# and heard no route after it, and that the trip panel and the turn card left the picture;
+# the app side checks it was End route that ended it, and that no destination reached the
+# report. It then presses
 # the first Resume row of the idle media pane, which in the emulator lists whatever
 # browser services its image has, and checks only the app own counters for that press.
 # Since P7.4a the destination is then shared again: the receiver checks the cluster was
@@ -1963,14 +1966,17 @@ https://osmand.net/map?pin=30.50860,-97.67880#16/30.50860/-97.67880"
     fi
     # P7.4, P7.5: the app own account of the End route press the receiver made, and of the
     # Resume press after it. The route was ended by End route (not by arrival, and not from
-    # the phone), and no destination, label or app name reached the report.
+    # the phone), and no destination, label or app name reached the report. Before it, Routes
+    # was opened and closed: one ask for the other routes, and the map framed once.
     if [ "$SCRIPT" = endroute ]; then
         # Two trips and two presses since P7.4a: the second route is the one that shows the
         # cluster is asked for again after being handed back.
         for want in "dashboard_trips=2 " "dashboard_end_route_presses=2" "dashboard_trip=false " \
             "guidance_state=idle " "guidance_arrivals=0 " "dashboard end route pressed" "route cleared" \
             "dashboard_resume_presses=1 " "media_resume_presses=1" "media_resume_recent=1 " \
-            "navigation_focus_requests=2 " "navigation_focus_denials=0 " "navigation_focus_handbacks=2 "; do
+            "navigation_focus_requests=2 " "navigation_focus_denials=0 " "navigation_focus_handbacks=2 " \
+            "dashboard_routes_presses=2 " "dashboard_routes_open=false " "dashboard_routes_fits=1" \
+            "dashboard routes opened" "dashboard routes closed" "live_alternatives_asks=1 "; do
             grep -q -- "$want" /out/app-report.txt || fail "app report lacks $want"
         done
         grep -q "NAV_STATE_INACTIVE" /out/app-report.txt || fail "the cluster was never told INACTIVE"
@@ -1979,7 +1985,8 @@ https://osmand.net/map?pin=30.50860,-97.67880#16/30.50860/-97.67880"
         done
         grep -E "^dashboard_(trip|media_idle)|^guidance_state|^navigation_(states|focus)|^media_(players|resume)" /out/app-report.txt \
             | while read -r line; do log "$line"; done
-        grep -E "end route|route cleared|route computed" /out/app-report.txt | while read -r line; do log "$line"; done
+        grep -E "end route|route cleared|route computed|dashboard routes|looked for other routes|live_alternatives_|dashboard_routes" \
+            /out/app-report.txt | while read -r line; do log "$line"; done
     fi
     # P7.8, P7.9: the app own account of what the receiver pressed on the flex tile, the call
     # card and the keypad, and of the call itself; then that no sender, text, app name,

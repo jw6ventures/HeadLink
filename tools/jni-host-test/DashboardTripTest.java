@@ -31,6 +31,7 @@ import com.jw6ventures.headlink.MarkerColour;
 import com.jw6ventures.headlink.PhoneSnapshot;
 import com.jw6ventures.headlink.Player;
 import com.jw6ventures.headlink.ResumeResult;
+import com.jw6ventures.headlink.Route;
 import com.jw6ventures.headlink.RouteFollower;
 import com.jw6ventures.headlink.SpeedUnit;
 import com.jw6ventures.headlink.TripPanel;
@@ -64,6 +65,7 @@ public final class DashboardTripTest {
         for (DashboardLayout layout : everyDisplay()) theVoiceToggleSitsBesideEndRoute(layout);
         theVoiceToggleIsAPressAndRelease();
         theVoiceToggleStartsAsSavedAndWarns();
+        routesFramesTheAlternativesAndClosesOnAChoice();
         System.out.println("jni-host-test: ok " + passed + " dashboard trip, turn card and player checks");
     }
 
@@ -132,8 +134,8 @@ public final class DashboardTripTest {
         Box end = l.getEndRoute();
         int m = l.getMargin();
         check(end.getHeight() == l.mediaButton(0).getHeight(), at + "End route is a media button tall: " + end.getHeight());
-        Box voice = l.getVoiceToggle();
-        check(end.getX() == tile.getX() + m && end.getRight() == voice.getX() - m, at + "End route runs from the tile's left to a margin short of the voice toggle");
+        Box routes = l.getRoutesButton();
+        check(end.getX() == tile.getX() + m && end.getRight() == routes.getX() - m, at + "End route runs from the tile's left to a margin short of Routes");
         check(end.getBottom() == tile.getBottom() - m, at + "End route runs along the bottom");
         check(l.hitEndRoute(end.getCenterX(), end.getCenterY()), at + "End route's centre hits");
         check(l.hitEndRoute(end.getX(), end.getY()) && l.hitEndRoute(end.getRight() - 1, end.getBottom() - 1), at + "and its corners");
@@ -160,10 +162,15 @@ public final class DashboardTripTest {
         float row = 5 * 0.65f * 0.52f * h + m + 6 * DashboardLayout.EM_PER_CHARACTER * 0.3f * h;
         check(row <= summary.getWidth(), at + "the arrival time and the time remaining fit side by side: " + row + " of " + summary.getWidth());
         check(0.52f * h >= 20, at + "the arrival time is at least 20 px: " + 0.52f * h);
-        // About 4.5 em in bold; 5 allowed. Since P8.2 the size is the smaller of 0.28 of the
-        // height and a fifth of the width less its margins, and must stay readable.
-        float endText = Math.min(end.getHeight() * 0.28f, (end.getWidth() - 2f * m) / 5f);
-        check(5f * endText <= end.getWidth() - 2 * m, at + "\"End route\" fits its button");
+        // Since Routes took a share of the row, "End" over "route" where that reads larger:
+        // "route" is about 2.9 em in bold, 3.2 allowed, with half a margin each side.
+        float endText = l.getEndRouteTextSize();
+        if (l.getEndRouteTwoLines()) {
+            check(3.2f * endText <= end.getWidth() - m, at + "\"route\" fits its button");
+            check(2.6f * endText <= end.getHeight(), at + "two lines fit its height");
+        } else {
+            check(5f * endText <= end.getWidth() - 2 * m, at + "\"End route\" fits its button");
+        }
         check(endText >= 16f, at + "\"End route\" is at least 16 px: " + endText);
     }
 
@@ -636,35 +643,40 @@ public final class DashboardTripTest {
         String at = size(l) + ": ";
         Box tile = l.getTiles().get(DashboardLayout.FAVORITES_TILE);
         Box end = l.getEndRoute();
+        Box routes = l.getRoutesButton();
         Box voice = l.getVoiceToggle();
         int m = l.getMargin();
-        check(inside(voice, tile), at + "the toggle is in the tile");
+        check(inside(voice, tile) && inside(routes, tile), at + "the toggle and Routes are in the tile");
         check(voice.getHeight() == end.getHeight() && voice.getY() == end.getY(), at + "End route's height, on its row");
-        check(voice.getRight() == tile.getRight() - m, at + "at the row's right end");
-        check(voice.getWidth() <= voice.getHeight(), at + "no wider than it is tall");
+        check(routes.getHeight() == end.getHeight() && routes.getY() == end.getY(), at + "Routes too");
+        check(voice.getRight() == tile.getRight() - m, at + "the toggle at the row's right end");
+        check(routes.getRight() == voice.getX() - m, at + "Routes a margin left of it");
+        check(routes.getWidth() == voice.getWidth(), at + "the same width");
+        check(voice.getWidth() <= voice.getHeight(), at + "no wider than they are tall");
         check(voice.getWidth() >= 40, at + "at least 40 px wide: " + voice.getWidth());
-        check(voice.getWidth() == voice.getHeight() || end.getWidth() >= 2 * voice.getWidth(),
-            at + "square, or End route keeps twice its width");
-        check(end.getWidth() > voice.getWidth(), at + "End route is still the wider target: " + end.getWidth() + " > " + voice.getWidth());
-        check(!overlaps(voice, end), at + "the toggle and End route never overlap");
-        check(voice.getX() - end.getRight() >= m, at + "a margin between them: " + (voice.getX() - end.getRight()));
-        // A finger on one can never reach the other: every column of the row belongs to
-        // at most one, and the gap to neither.
+        check(end.getWidth() > voice.getWidth(), at + "End route is still the widest target: " + end.getWidth() + " > " + voice.getWidth());
+        check(!overlaps(voice, end) && !overlaps(routes, end) && !overlaps(routes, voice), at + "the three never overlap");
+        // A finger on one can never reach another: every column of the row belongs to at
+        // most one, and the gaps to none.
         int y = end.getCenterY();
         for (int x = tile.getX(); x < tile.getRight(); x++) {
-            check(!(l.hitEndRoute(x, y) && l.hitVoiceToggle(x, y)), at + "no point is both, at x=" + x);
+            int hits = (l.hitEndRoute(x, y) ? 1 : 0) + (l.hitRoutes(x, y) ? 1 : 0) + (l.hitVoiceToggle(x, y) ? 1 : 0);
+            check(hits <= 1, at + "no point is two buttons, at x=" + x);
         }
+        check(!l.hitEndRoute(end.getRight() + m / 2, y) && !l.hitRoutes(end.getRight() + m / 2, y), at + "the gap after End route is neither");
         check(l.hitVoiceToggle(voice.getCenterX(), voice.getCenterY()), at + "the toggle's centre hits");
         check(l.hitVoiceToggle(voice.getX(), voice.getY()) && l.hitVoiceToggle(voice.getRight() - 1, voice.getBottom() - 1),
             at + "and its corners");
-        check(!l.hitVoiceToggle(end.getCenterX(), end.getCenterY()), at + "End route's centre is not the toggle");
-        check(!l.hitEndRoute(voice.getCenterX(), voice.getCenterY()), at + "the toggle's centre is not End route");
-        check(!l.hitVoiceToggle(voice.getRight() + 1, voice.getCenterY()), at + "right of it misses");
-        check(!l.hitVoiceToggle(voice.getCenterX(), voice.getY() - 1), at + "above it misses");
+        check(l.hitRoutes(routes.getCenterX(), routes.getCenterY()), at + "Routes' centre hits");
+        check(!l.hitVoiceToggle(routes.getCenterX(), routes.getCenterY()) && !l.hitEndRoute(routes.getCenterX(), routes.getCenterY()),
+            at + "Routes' centre is neither of the others");
+        check(!l.hitVoiceToggle(voice.getRight() + 1, voice.getCenterY()), at + "right of the toggle misses");
+        check(!l.hitVoiceToggle(voice.getCenterX(), voice.getY() - 1) && !l.hitRoutes(routes.getCenterX(), routes.getY() - 1),
+            at + "above them misses");
         for (int i = 0; i < RouteFollower.LATER_STEPS; i++) {
-            check(!overlaps(voice, l.tripLater(i)), at + "clear of later maneuver " + i);
+            check(!overlaps(voice, l.tripLater(i)) && !overlaps(routes, l.tripLater(i)), at + "clear of later maneuver " + i);
         }
-        check(!overlaps(voice, l.getTripSummary()), at + "and of the summary");
+        check(!overlaps(voice, l.getTripSummary()) && !overlaps(routes, l.getTripSummary()), at + "and of the summary");
         check(!overlaps(voice, l.getTiles().get(DashboardLayout.FLEX_TILE)), at + "and of the flex tile beside it");
     }
 
@@ -709,7 +721,7 @@ public final class DashboardTripTest {
             check(Boolean.FALSE.equals(d.takeVoiceToggle()), at + "three presses between reads hand over the state they left");
             tap(d, end.getCenterX(), end.getCenterY());
             check(d.takeEndRoute() && d.takeVoiceToggle() == null, at + "End route still ends the route and leaves the toggle alone");
-            check(d.report().contains("dashboard_voice_toggle_presses=5 dashboard_voice_guidance=off\n"),
+            check(d.report().contains("dashboard_voice_toggle_presses=5 dashboard_voice_guidance=off "),
                 at + "presses and the final state counted: " + d.report());
             d.upcomingTurn(null);
             check(d.nextFrame(NOON).getTrip() == null, at + "the route gone, so is the panel");
@@ -724,7 +736,7 @@ public final class DashboardTripTest {
             new DashboardChoices(MarkerColour.BLUE, DayNightMode.AUTO, false, false, null, false));
         muted.upcomingTurn(guiding("Main Street", 4023.0, 600));
         check(!muted.nextFrame(NOON).getTrip().getVoiceOn(), "a route started muted stays muted");
-        check(muted.report().contains("dashboard_voice_guidance=off\n"), "and the report says so");
+        check(muted.report().contains("dashboard_voice_guidance=off "), "and the report says so");
 
         Dashboard d = dashboard(1920, 1080);
         d.upcomingTurn(guiding("Main Street", 4023.0, 600));
@@ -743,12 +755,145 @@ public final class DashboardTripTest {
         d.voiceGuidance(true);
         check(d.nextFrame(NOON).getTrip().getVoiceOn(), "the phone turning guidance on lights the toggle");
         check(d.takeVoiceToggle() == null, "and hands nothing back: the phone saved it already");
-        check(d.report().contains("dashboard_voice_toggle_presses=1 dashboard_voice_guidance=on\n"),
+        check(d.report().contains("dashboard_voice_toggle_presses=1 dashboard_voice_guidance=on "),
             "not counted as a press, and the final state reported: " + d.report());
         d.voiceGuidance(false);
         check(!d.nextFrame(NOON).getTrip().getVoiceOn(), "and off slashes it");
         tap(d, voice.getCenterX(), voice.getCenterY());
         check(Boolean.TRUE.equals(d.takeVoiceToggle()), "a press after it flips from what the phone set");
+    }
+
+    // --- Routes ----------------------------------------------------------------------------
+
+    /**
+     * Routes on the trip panel: a press and release opens it, asks the caller for the
+     * alternatives once, and zooms the map out of following onto the rest of the route; the
+     * alternatives framed as they come; "Finding routes…", "Tap a time to take it" and "No
+     * other routes"; and it closes, the map back on the vehicle at its old zoom, on a second
+     * press, a bubble tapped, recentre, a new route or the route ending. A map the driver
+     * has moved is left where they put it.
+     */
+    private static void routesFramesTheAlternativesAndClosesOnAChoice() {
+        for (DashboardLayout layout : layouts()) {
+            String at = size(layout) + ": ";
+            Dashboard d = new Dashboard(layout, "t", ZoneId.of("UTC"));
+            d.phone(new PhoneSnapshot(60, false, 3, "wifi", 30.27, -97.74, null, null, null, true));
+            Box button = layout.getRoutesButton();
+            tap(d, button.getCenterX(), button.getCenterY());
+            check(d.takeRoutesRequest() == null && !d.routesOpen(), at + "no route, no Routes");
+
+            // 14 km north, and a way round 23 km to the east that rejoins it: wider than the
+            // route is tall in every view, so framing it zooms out further.
+            Route route = line(30.27, -97.74, 30.33, -97.74, 30.40, -97.74);
+            Route east = line(30.28, -97.74, 30.33, -97.50, 30.40, -97.74);
+            d.upcomingTurn(guiding("Main Street", 14000.0, 900));
+            d.followedRoute(route);
+            MapCamera following = d.mapCamera();
+            check(d.nextFrame(NOON).getTrip().getRoutesStatus() == null, at + "closed, the later maneuvers show");
+
+            d.touch("down", button.getCenterX(), button.getCenterY());
+            check(d.nextFrame(NOON).getTrip().getRoutesPressed(), at + "Routes lights while pressed");
+            check(d.takeRoutesRequest() == null && !d.routesOpen(), at + "and does nothing until the release");
+            d.touch("up", button.getCenterX(), button.getCenterY());
+            check(d.routesOpen() && Boolean.TRUE.equals(d.takeRoutesRequest()), at + "a press and release opens it and asks");
+            check(d.takeRoutesRequest() == null, at + "once");
+            MapCamera framed = d.mapCamera();
+            Dashboard.Snapshot s = d.nextFrame(NOON);
+            check(!s.getMapFollowing() && framed.getScale() < following.getScale(), at + "the map zooms out of following: " + framed.getScale());
+            check(s.getTrip().getRoutesOpen() && TripPanel.ROUTES_FINDING.equals(s.getTrip().getRoutesStatus()),
+                at + "and says it is finding them at once");
+            int[] end = mapPoint(d, 30.40, -97.74);
+            check(onView(end, layout), at + "the route's far end is on the view under the turn card: " + end[0] + "," + end[1]);
+
+            d.alternatives(List.of(new AlternativeMark(7L, 30.30, -97.62, "+4 min", east)), false);
+            MapCamera both = d.mapCamera();
+            s = d.nextFrame(NOON);
+            check(both.getScale() < framed.getScale(), at + "the alternative is framed too: " + both.getScale());
+            int[] far = mapPoint(d, 30.33, -97.50);
+            check(onView(far, layout), at + "its furthest point is on the view: " + far[0] + "," + far[1]);
+            check(TripPanel.ROUTES_PICK.equals(s.getTrip().getRoutesStatus()), at + "and the panel says to tap a time");
+            check(s.getAlternativeBubbles().size() == 1, at + "its bubble is on the pane");
+            Box bubble = s.getAlternativeBubbles().get(0).getBox();
+
+            // A bubble tapped takes that route, and Routes closes with the map back on the vehicle.
+            tap(d, bubble.getCenterX(), bubble.getCenterY());
+            check(d.takeAlternativePick() == 7L, at + "the tapped one is taken");
+            check(!d.routesOpen() && Boolean.FALSE.equals(d.takeRoutesRequest()), at + "Routes closes and lets them go");
+            MapCamera back = d.mapCamera();
+            check(d.nextFrame(NOON).getMapFollowing() && back.getScale() == following.getScale(), at + "following again at the old zoom");
+
+            // None found: says so. A second press closes it.
+            tap(d, button.getCenterX(), button.getCenterY());
+            d.alternatives(List.of(), false);
+            check(TripPanel.ROUTES_NONE.equals(d.nextFrame(NOON).getTrip().getRoutesStatus()), at + "none found says so");
+            tap(d, button.getCenterX(), button.getCenterY());
+            check(!d.routesOpen() && d.nextFrame(NOON).getMapFollowing() && d.mapCamera().getScale() == following.getScale(),
+                at + "a second press closes it");
+            check(Boolean.FALSE.equals(d.takeRoutesRequest()), at + "and the caller hears the last word only");
+
+            // Recentre closes it.
+            tap(d, button.getCenterX(), button.getCenterY());
+            Box recentre = layout.mapBubble(0);
+            tap(d, recentre.getCenterX(), recentre.getCenterY());
+            check(!d.routesOpen() && d.nextFrame(NOON).getMapFollowing(), at + "recentre closes it");
+
+            // A new route closes it: what it framed was the old one's.
+            tap(d, button.getCenterX(), button.getCenterY());
+            d.followedRoute(east);
+            check(!d.routesOpen() && d.nextFrame(NOON).getMapFollowing(), at + "a new route closes it");
+
+            // A map the driver moves is theirs: alternatives arriving do not move it, nor does closing.
+            tap(d, button.getCenterX(), button.getCenterY());
+            d.mapCamera();
+            Box view = layout.getRoutesView();
+            int x = view.getX() + view.getWidth() * 3 / 4;
+            int y = view.getCenterY();
+            d.touch("down", x, y);
+            d.touch("move", x - 100, y);
+            d.touch("up", x - 100, y);
+            MapCamera moved = d.mapCamera();
+            d.alternatives(List.of(new AlternativeMark(8L, 30.30, -97.62, "+4 min", east)), false);
+            check(d.mapCamera().equals(moved), at + "alternatives do not move a map the driver moved");
+            tap(d, button.getCenterX(), button.getCenterY());
+            check(!d.routesOpen() && !d.nextFrame(NOON).getMapFollowing() && d.mapCamera().equals(moved),
+                at + "nor does closing Routes");
+
+            // No route any more closes it.
+            tap(d, recentre.getCenterX(), recentre.getCenterY());
+            tap(d, button.getCenterX(), button.getCenterY());
+            d.upcomingTurn(null);
+            check(!d.routesOpen() && d.nextFrame(NOON).getMapFollowing(), at + "the route ending closes it");
+            check(d.report().contains("dashboard_routes_presses=8 "), at + "every press counted: " + d.report());
+        }
+    }
+
+    /** A route through [latLon] pairs, as the engine would give it, with no maneuvers. */
+    private static Route line(double... latLon) {
+        double[] lats = new double[latLon.length / 2];
+        double[] lons = new double[latLon.length / 2];
+        for (int i = 0; i < lats.length; i++) {
+            lats[i] = latLon[2 * i];
+            lons[i] = latLon[2 * i + 1];
+        }
+        return new Route(lats, lons, 14000, 900, new int[0], new int[0]);
+    }
+
+    /**
+     * Where the map draws a point on the current camera, read as the vehicle marker: the
+     * phone's fix moved there for one frame and back. {-1, -1} off the pane.
+     */
+    private static int[] mapPoint(Dashboard d, double lat, double lon) {
+        d.phone(new PhoneSnapshot(60, false, 3, "wifi", lat, lon, null, null, null, true));
+        d.mapCamera();
+        kotlin.Pair<Integer, Integer> marker = d.nextFrame(NOON).getMapMarker();
+        d.phone(new PhoneSnapshot(60, false, 3, "wifi", 30.27, -97.74, null, null, null, true));
+        return marker == null ? new int[] {-1, -1} : new int[] {marker.getFirst(), marker.getSecond()};
+    }
+
+    /** Whether a drawn point is in [DashboardLayout.routesView], a pixel's rounding allowed at its edges. */
+    private static boolean onView(int[] p, DashboardLayout layout) {
+        Box v = layout.getRoutesView();
+        return p[0] >= v.getX() - 1 && p[0] <= v.getRight() + 1 && p[1] >= v.getY() - 1 && p[1] <= v.getBottom() + 1;
     }
 
     // --- helpers ---------------------------------------------------------------------

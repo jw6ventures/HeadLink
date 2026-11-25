@@ -813,6 +813,16 @@ behind the numbers: searched from the vehicle, alternatives split at the next ju
 which was passed before the search ended; and the router's snapped ends were never shared
 nodes (BRouter), so sharing allows 50 m at the ends.
 
+**Asked for: the trip panel's Routes** (`LiveAlternatives.ask`, layout and framing in
+[dashboard.md](dashboard.md)). The driver's press shows the bubbles whatever "Show other
+routes on the map" says, until Routes closes (`unask`), the route changes or the projection
+ends. Bubbles already on show are the answer at once; with none, a look runs now, by the
+same rules (from 45 s ahead, more than 3 km left, the same "Not shown" limits), and the
+dashboard says "Finding routes…" until it is done. A look already running answers it if it
+shows bubbles; one without them (a traffic look with the setting off) is followed by one
+that does. The report counts `live_alternatives_asks`; the event log notes "dashboard
+routes opened" and "closed", never a place.
+
 **Verified:** preview and saved route in the emulator; live alternatives in the lab. A
 bubble tap has not been seen on the truck; the preview has not run on the Pixel.
 

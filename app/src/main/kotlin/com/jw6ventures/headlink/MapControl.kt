@@ -288,17 +288,19 @@ class MapControl(
     /**
      * Frames every point of [latitudes] and [longitudes] (one array pair per line) inside
      * [view], a part of [pane], and leaves following to show them (P9.6, docs/navigation.md:
-     * the offer's "zoom to both routes"). Returns whether the camera changed.
+     * the offer's "zoom to both routes"; and the trip panel's Routes, the route and its
+     * alternatives). Returns whether the camera changed.
      *
      * The points are measured in the rotation on show, so the box they need is the one the
      * driver sees, not a north-up one; the zoom is the largest that fits both extents,
-     * clamped to the pinch's range and never closer in than the map already was, since a
-     * fit is an overview. The middle of their extent goes to the middle of [view], which
-     * sits below the turn card rather than at the pane's centre.
+     * clamped to the pinch's range and never closer in than the map was before the first
+     * fit, since a fit is an overview. The middle of their extent goes to the middle of
+     * [view], which sits below the turn card rather than at the pane's centre.
      *
-     * Only the offer calls this; [unfit] undoes it. A drag, a pinch, a twist, a zoom bubble
-     * or the compass after it is the driver taking the map, and clears [fitted], so the
-     * offer's end does not pull the map from under them.
+     * [unfit] undoes it, and a fit while [fitted] reframes from the same starting zoom. A
+     * drag, a pinch, a twist, a zoom bubble or the compass after it is the driver taking the
+     * map, and clears [fitted], so an offer's end or Routes closing does not pull the map
+     * from under them.
      */
     fun fit(latitudes: List<DoubleArray>, longitudes: List<DoubleArray>, pane: Box, view: Box): Boolean {
         val rotation = last?.rotation ?: wrap((if (orientation == MapOrientation.HEADING_UP) heading else 0f) + turn)

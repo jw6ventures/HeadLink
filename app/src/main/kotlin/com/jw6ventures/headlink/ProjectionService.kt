@@ -505,6 +505,12 @@ class ProjectionService : Service() {
                 // A live alternative's bubble: follow that route instead, as the phone's
                 // preview would. The note says how much longer it was, never where.
                 pipeline.takeAlternativePick()?.let { LiveAlternatives.choose(this, it) }
+                // Routes on the trip panel: the other ways to the destination asked for, bubbles
+                // shown whatever the setting, until it closes. The note says only which.
+                pipeline.takeRoutesRequest()?.let { open ->
+                    SessionController.note("dashboard routes ${if (open) "opened" else "closed"}")
+                    if (open) LiveAlternatives.ask(this) else LiveAlternatives.unask(this)
+                }
                 if (pipeline.takeEndRoute()) {
                     SessionController.note("dashboard end route pressed")
                     Navigation.clear()
@@ -698,11 +704,12 @@ class ProjectionService : Service() {
             pipeline.upcomingTurn(turn)
             session.ahead?.guidance(turn)
         }
-        // The live alternatives' bubbles, starting with any already found.
-        LiveAlternatives.listener = { list ->
-            pipeline.alternatives(list.map { AlternativeMark(it.id, it.labelLat, it.labelLon, it.label) })
+        // The live alternatives' bubbles, starting with any already found, and whether those
+        // Routes asked for are still being looked for.
+        LiveAlternatives.listener = { list, finding ->
+            pipeline.alternatives(list.map { AlternativeMark(it.id, it.labelLat, it.labelLon, it.label, it.route) }, finding)
         }
-        LiveAlternatives.listener?.invoke(LiveAlternatives.shown)
+        LiveAlternatives.listener?.invoke(LiveAlternatives.shown, false)
         // P9.3, P9.4, P9.6: live traffic's colours, delay and offer, starting with what the
         // loop already holds, and Take or Keep on the divided turn card back to it. Both
         // on main: the loop publishes there, and touch() calls the listener there.
@@ -911,6 +918,8 @@ class ProjectionService : Service() {
         Navigation.vehicleFix = null
         Guide.turnListener = null
         LiveAlternatives.listener = null
+        // Routes went with the dashboard; the bubbles it asked for go as the setting says.
+        LiveAlternatives.unask(this)
         Traffic.listener = null
         labReport = null
         pipeline.offerListener = null

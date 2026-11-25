@@ -277,10 +277,10 @@ struct DashboardPane {
     QPoint zoomIn, zoomOut, pauseIcon, dayNightIcon;
     Rect header, pauseBox;
     /// P7.4/P7.5 (the endroute script): the favourites tile the trip panel takes over, the
-    /// turn card across the top of the map, the media pane, End route's centre and the
-    /// first player row's centre (laid out with the no-access hint, as in the lab).
+    /// turn card across the top of the map, the media pane, End route's and Routes' centres
+    /// and the first player row's centre (laid out with the no-access hint, as in the lab).
     Rect tripTile, turnCard, media;
-    QPoint endRoute, resumeRow;
+    QPoint endRoute, routes, resumeRow;
     /// P8.2 (the voice script): the voice toggle at the right end of End route's row, its
     /// box for the picture check and its centre for the press.
     Rect voiceBox;
@@ -353,14 +353,17 @@ struct DashboardPane {
         const int buttonTop = pane.media.y + pane.media.height / 2;
         const int buttonHeight = pane.media.y + pane.media.height - margin - buttonTop;
         const int endHeight = std::min(buttonHeight, std::max(0, rowHeight - 3 * margin));
-        // P8.2: DashboardLayout.voiceToggle, then endRoute a margin short of it.
-        const int voiceWidth = std::min(endHeight, std::max(0, (tileWidth - 3 * margin) / 3));
+        // DashboardLayout.voiceToggle, then routesButton a margin short of it, each two
+        // sevenths of the row, then endRoute a margin short of Routes.
+        const int voiceWidth = std::min(endHeight, std::max(0, tileWidth - 4 * margin) * 2 / 7);
         const int endTop = pane.tripTile.y + rowHeight - margin - endHeight;
         pane.voiceBox = {pane.tripTile.x + tileWidth - margin - voiceWidth, endTop, voiceWidth, endHeight};
         pane.voiceToggle = QPoint(pane.voiceBox.x + voiceWidth / 2, endTop + endHeight / 2);
-        const int endRight = voiceWidth > 0 ? pane.voiceBox.x - margin : pane.tripTile.x + tileWidth - margin;
+        const int routesX = voiceWidth > 0 ? pane.voiceBox.x - margin - voiceWidth : pane.voiceBox.x;
+        const int endRight = voiceWidth > 0 ? routesX - margin : pane.tripTile.x + tileWidth - margin;
         const int endWidth = std::max(0, endRight - pane.tripTile.x - margin);
         pane.endRoute = QPoint(pane.tripTile.x + margin + endWidth / 2, endTop + endHeight / 2);
+        pane.routes = QPoint(routesX + voiceWidth / 2, endTop + endHeight / 2);
         pane.turnCard = {mapX + margin, bodyY + margin + margin, paneWidth - 2 * margin, std::max(24, paneHeight / 5)};
         const int hintHeight = std::max(10, rowHeight / 10);
         const int hintY = pane.media.y + rowHeight - margin - hintHeight;
@@ -2625,8 +2628,10 @@ int main(int argc, char** argv)
     size_t controlIndex = 0;
     // P7.4/P7.5. The endroute script: the trip panel and card before End route, and the
     // cluster's state list when it was pressed, so what followed the press can be read.
-    QByteArray endTileBefore, endCardBefore, endMediaBefore;
+    QByteArray endTileBefore, endCardBefore, endMediaBefore, routesMapBefore;
     int endStatesAtPress = -1;
+    // Routes, pressed before End route: how much of the map pane its framing changed.
+    double routesMapChanged = -1.0;
     double endTileChanged = -1.0, endCardChanged = -1.0, endMediaChanged = -1.0;
     // P7.4a: where the watch after the first End route ended (states, focus requests), and
     // the state count at the second press, so each focus request can be placed between
@@ -3695,11 +3700,10 @@ int main(int argc, char** argv)
                 step = controlIndex < controlPresses.size() ? 0 : 2;
                 break;
             }
-            // P7.4. Parked with a route on the cluster, End route is pressed on the trip panel:
-            // the cluster must go INACTIVE and hear no route after it, the trip panel must
-            // give the tile back and the turn card leave the map. Then P7.5's first Resume
-            // row is pressed; what it does depends on the emulator's apps, so it is logged
-            // and the app's own counters (tools/emulator-lab.sh) are what is checked.
+            // Routes on the trip panel, first: parked with a route on the cluster, it is
+            // pressed, the map must leave the vehicle for the overview of the route, and it
+            // is held open for the frames (and the app's look for other routes) before it is
+            // pressed again to close. The app's report says what it asked for.
             case 1000: {
                 if (!navigation || !navStates.contains("1"))
                     return; // no route on the cluster yet
@@ -3708,6 +3712,55 @@ int main(int argc, char** argv)
                     stepDeadline = uptime.elapsed() + 3000;
                     return;
                 }
+                if (uptime.elapsed() < stepDeadline)
+                    return;
+                routesMapBefore = paneLuma(pane.mapFull);
+                const QPoint touchPoint = caps.toTouch(pane.routes);
+                const oaa::hu::InputChannelHandler::Pointer pointer{touchPoint.x(), touchPoint.y(), 0};
+                input->sendTouchIndication(1, &pointer, 0, 0, uptime.elapsed() * 1000);
+                input->sendTouchIndication(1, &pointer, 0, 1, uptime.elapsed() * 1000 + 1);
+                ++taps;
+                out << "receiver_endroute=routes_opened frame=" << pane.routes.x() << "," << pane.routes.y()
+                    << " touch=" << touchPoint.x() << "," << touchPoint.y() << "\n";
+                out.flush();
+                stepDeadline = uptime.elapsed() + 2 * TAP_DEADLINE_MS;
+                ++step;
+                break;
+            }
+            case 1001: {
+                routesMapChanged = changedFraction(routesMapBefore, paneLuma(pane.mapFull), TRACK_LUMA_THRESHOLD);
+                // A fifth: on the night map most of the pane is dark ground before and after,
+                // and the overview's tiles load over a few seconds (0.28 in the first run).
+                if (routesMapChanged < 0.2 && uptime.elapsed() < stepDeadline)
+                    return;
+                out << "receiver_endroute=routes_framed map_changed=" << routesMapChanged << "\n";
+                out.flush();
+                // Held open: the frames show the overview and what the panel says meanwhile.
+                stepDeadline = uptime.elapsed() + 10000;
+                ++step;
+                break;
+            }
+            case 1002: {
+                if (uptime.elapsed() < stepDeadline)
+                    return;
+                const QPoint touchPoint = caps.toTouch(pane.routes);
+                const oaa::hu::InputChannelHandler::Pointer pointer{touchPoint.x(), touchPoint.y(), 0};
+                input->sendTouchIndication(1, &pointer, 0, 0, uptime.elapsed() * 1000);
+                input->sendTouchIndication(1, &pointer, 0, 1, uptime.elapsed() * 1000 + 1);
+                ++taps;
+                out << "receiver_endroute=routes_closed\n";
+                out.flush();
+                // The map back on the vehicle before the End route press measures the panel.
+                stepDeadline = uptime.elapsed() + 3000;
+                ++step;
+                break;
+            }
+            // P7.4. Parked with a route on the cluster, End route is pressed on the trip panel:
+            // the cluster must go INACTIVE and hear no route after it, the trip panel must
+            // give the tile back and the turn card leave the map. Then P7.5's first Resume
+            // row is pressed; what it does depends on the emulator's apps, so it is logged
+            // and the app's own counters (tools/emulator-lab.sh) are what is checked.
+            case 1003: {
                 if (uptime.elapsed() < stepDeadline)
                     return;
                 endTileBefore = paneLuma(pane.tripTile);
@@ -3725,7 +3778,7 @@ int main(int argc, char** argv)
                 ++step;
                 break;
             }
-            case 1001: {
+            case 1004: {
                 endTileChanged = changedFraction(endTileBefore, paneLuma(pane.tripTile), TRACK_LUMA_THRESHOLD);
                 endCardChanged = changedFraction(endCardBefore, paneLuma(pane.turnCard), TRACK_LUMA_THRESHOLD);
                 const bool inactive = navStates.size() > endStatesAtPress && navStates.last() == "2";
@@ -3739,7 +3792,7 @@ int main(int argc, char** argv)
                 ++step;
                 break;
             }
-            case 1002: {
+            case 1005: {
                 if (uptime.elapsed() < stepDeadline)
                     return;
                 endStatesAtWatch = navStates.size();
@@ -3756,7 +3809,7 @@ int main(int argc, char** argv)
                 ++step;
                 break;
             }
-            case 1003: {
+            case 1006: {
                 endMediaChanged = changedFraction(endMediaBefore, paneLuma(pane.media), TRACK_LUMA_THRESHOLD);
                 if (endMediaChanged < 0.02 && uptime.elapsed() < stepDeadline)
                     return;
@@ -3768,7 +3821,7 @@ int main(int argc, char** argv)
                 ++step;
                 break;
             }
-            case 1004: {
+            case 1007: {
                 const bool again = navStates.mid(endStatesAtWatch).contains("1");
                 if (!again && uptime.elapsed() < stepDeadline)
                     return;
@@ -3779,7 +3832,7 @@ int main(int argc, char** argv)
                 ++step;
                 break;
             }
-            case 1005: {
+            case 1008: {
                 if (uptime.elapsed() < stepDeadline)
                     return;
                 endStatesAtSecond = navStates.size();
@@ -3795,7 +3848,7 @@ int main(int argc, char** argv)
                 ++step;
                 break;
             }
-            case 1006: {
+            case 1009: {
                 // INACTIVE, and the hand-back just after it on the control channel.
                 const bool inactive = navStates.size() > endStatesAtSecond && navStates.last() == "2";
                 const bool handedBack = navFocusTypes.mid(endFocusAtSecond).contains(1);
@@ -4829,8 +4882,11 @@ int main(int argc, char** argv)
         }
         if (script == "endroute" && navigation) {
             // P7.4, from the receiver's side: the press ended the route on the cluster and
-            // on the picture. The app's report says it was End route that did it.
-            check(step >= 7, QString("the endroute script stopped at step %1").arg(step));
+            // on the picture. The app's report says it was End route that did it. Before it,
+            // Routes moved the map off the vehicle onto the route's overview.
+            check(step >= 10, QString("the endroute script stopped at step %1").arg(step));
+            check(routesMapChanged >= 0.2,
+                  QString("Routes changed only %1 of the map pane").arg(routesMapChanged));
             check(endStatesAtPress > 0 && navStates.mid(0, endStatesAtPress).contains("1"),
                   "End route was pressed before the cluster had a route");
             // Up to the end of the watch: the second route comes later, on purpose.
