@@ -1,0 +1,1 @@
+Live traffic can now come from TomTom as well as HERE: pick either, or both, combined or with one as a fallback for the other. Each has its own key, limit and terms on the Maps tab, and the map credits whichever is shown. The Setup tab now hides when there is nothing left to do.
