@@ -256,6 +256,10 @@
 # the turn card divides, and LAB_MARGINS=WxH advertises video margins (74x0 on 800x480 is
 # Ford's 726x480 content rectangle), for the renders of the divided card (P9.6). Every run
 # checks that no key, road, reason, stand-in description or coordinate reached the report.
+# LAB_ALTERNATIVES=off seeds Show alternatives off (route_show_alternatives), so a traffic look
+# searches only the engine's way round and that one search decides the offer: kept, replaced or
+# withdrawn (docs/navigation.md, "The offer"). The offer run's checks are the same, and the
+# report must say the bubbles were off.
 # Every traffic run also keeps what a dropped session needs: the whole logcat (a 32 MB
 # buffer), top.txt (the busiest guest threads every 10 s) and the adb server's transport
 # trace (adb.*.log), since the projection reaches the receiver through adb reverse.
@@ -358,6 +362,8 @@ TRAFFIC_MODE=${LAB_TRAFFIC:-offer}
 case $TRAFFIC_MODE in offer|render|closure|off|drive) ;; *) echo "emulator-lab: LAB_TRAFFIC is offer, render, closure, off or drive" >&2; exit 1 ;; esac
 OFFER_LAYOUT=${LAB_OFFER_LAYOUT:-side-by-side}
 case $OFFER_LAYOUT in side-by-side|stacked) ;; *) echo "emulator-lab: LAB_OFFER_LAYOUT is side-by-side or stacked" >&2; exit 1 ;; esac
+ALTERNATIVES=${LAB_ALTERNATIVES:-on}
+case $ALTERNATIVES in on|off) ;; *) echo "emulator-lab: LAB_ALTERNATIVES is on or off" >&2; exit 1 ;; esac
 # P10: which weather run, and whether the trip panel's voice toggle is on for the alert.
 WEATHER_MODE=${LAB_WEATHER:-show}
 case $WEATHER_MODE in show|tap|alert|stale|unsupported|off|notifier) ;;
@@ -612,7 +618,7 @@ if [ "$SPEAKS" = 1 ] && [ "$SPEECH_ENGINE" = espeak ]; then
 fi
 # P7.2, P7.3: display choices in the app's own settings file, installed before launch.
 if [ -n "${LAB_MARKER:-}" ] || [ -n "${LAB_DIAGNOSTICS:-}" ] || [ "$SCRIPT" = calls ] || [ "$SCRIPT" = speech ] \
-    || [ "$SCRIPT" = voice ] || [ "$SCRIPT" = weather ]; then
+    || [ "$SCRIPT" = voice ] || [ "$SCRIPT" = weather ] || [ "$ALTERNATIVES" = off ]; then
     case ${LAB_MARKER:-blue} in blue|white|yellow|orange|green|red|magenta) ;;
         *) echo "emulator-lab: LAB_MARKER is one of blue white yellow orange green red magenta" >&2; exit 1 ;; esac
     {
@@ -620,6 +626,7 @@ if [ -n "${LAB_MARKER:-}" ] || [ -n "${LAB_DIAGNOSTICS:-}" ] || [ "$SCRIPT" = ca
         echo "<map>"
         [ -z "${LAB_MARKER:-}" ] || echo "    <string name=\"marker_colour\">$LAB_MARKER</string>"
         [ -z "${LAB_DIAGNOSTICS:-}" ] || echo "    <boolean name=\"diagnostics\" value=\"true\" />"
+        [ "$ALTERNATIVES" = on ] || echo "    <boolean name=\"route_show_alternatives\" value=\"false\" />"
         # P7.8, P7.9: both are off by default and are the operator's to turn on.
         if [ "$SCRIPT" = calls ]; then
             echo "    <boolean name=\"notifications_on_dashboard\" value=\"true\" />"
@@ -719,7 +726,7 @@ podman run --rm --pod "$pod" --name "$name" --security-opt label=disable \
   -e LAB_FAVORITES="${LAB_FAVORITES:-}" -e LAB_RECENT="${LAB_RECENT:-}" -e LAB_SCREENS="${LAB_SCREENS:-}" \
   -e LAB_REORDER="${LAB_REORDER:-}" -e LAB_WIRELESS_TCP="${LAB_WIRELESS_TCP:-}" \
   -e CALL_ROUTE="$CALL_ROUTE" -e MODEM="$MODEM" -e SPEECH_ENGINE="$SPEECH_ENGINE" \
-  -e TRAFFIC_MODE="$TRAFFIC_MODE" -e OFFER_LAYOUT="$OFFER_LAYOUT" -e TRAFFIC_KEY="$TRAFFIC_KEY" \
+  -e TRAFFIC_MODE="$TRAFFIC_MODE" -e OFFER_LAYOUT="$OFFER_LAYOUT" -e TRAFFIC_KEY="$TRAFFIC_KEY" -e ALTERNATIVES="$ALTERNATIVES" \
   -e WEATHER_MODE="$WEATHER_MODE" -e WEATHER_VOICE="$WEATHER_VOICE" -e SPEAKS="$SPEAKS" \
   -e CONGESTION_EXPECT="$CONGESTION_EXPECT" -e CONGESTION_RESTART="$CONGESTION_RESTART" \
   $LAB_APK_MOUNT $LAB_NATIVE_MOUNT \
@@ -2246,6 +2253,7 @@ https://osmand.net/map?pin=30.50860,-97.67880#16/30.50860/-97.67880"
             "routing_via=true"; do
             need "$want" $final
         done
+        [ "$ALTERNATIVES" = on ] || need "routing_show_alternatives=false" $final
         at_least traffic_offers_made 2 $final
         at_least dashboard_offers_shown 2 $final
         at_least dashboard_offer_fits 2 $final
