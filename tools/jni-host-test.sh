@@ -241,7 +241,8 @@
 #   WHISPER_MODEL=<a ggml model file> adds its load time and 5 s of silence; without it the
 #   summary line says so. The model file grant and the arm64 build need a phone.
 # LabDrive.java and LabTraffic.java are compiled here but not run: they are generators run
-# by hand over an OBF_DIR holding Us_massachusetts_northamerica.obf, routing with
+# by hand over an OBF_DIR holding Us_massachusetts_northamerica.obf (and, for LabDrive's
+# `austin` drives, Us_texas_austin_northamerica.obf), routing with
 # OsmAndRouter, the second writing the P9 lab's stand-in HERE scenarios and traffic drive
 # (tools/here-standin/, docs/verification.md). LabTraffic needs -Xmx512m: OsmAnd's plain
 # search from the lab position to Boston Common runs out of its memory guard (a third of

@@ -66,7 +66,8 @@
 #
 # LAB_ROUTE (P6.3) asks the app for a cross-town route through a debug intent once it is
 # projecting: LAB_ROUTE=1 for the region's (the lab position to Boston Common, about 14 km of
-# town streets and one motorway; in Austin, downtown to the university, about 3 km), or
+# town streets and one motorway; in Austin, downtown to Guadalupe Street by the university,
+# about 3 km), or
 # LAB_ROUTE="lat,lon lat,lon" for those two points, both inside the installed maps. It works
 # under any script that does not share a destination of its own. The checks are the app's
 # own: the route came back, on the routing thread, and the projection it ran beside still
@@ -83,7 +84,8 @@
 # The guidance script (P6.5, needs OBF data) is the whole loop: the app is
 # sent a destination as an OsmAnd text share while the vehicle is parked, routes to it,
 # and puts it on the receiver cluster; the receiver then drives LAB_DRIVE (default
-# tools/lab-receiver/drives/lexington.csv, written by tools/jni-host-test/LabDrive.java) -
+# tools/lab-receiver/drives/lexington.csv, austin.csv with LAB_REGION=austin, written by
+# tools/jni-host-test/LabDrive.java) -
 # real streets that follow the route, miss a turn, and reach the destination another way -
 # and checks what the cluster was told: a countdown, REROUTING, a new route, arrival. The
 # app side checks its own guidance counters and that no destination reached the report.
@@ -96,7 +98,7 @@
 # routing error for the rest of that attempt (Routing.labFailFor, debug builds only), as a
 # real one does where OsmAnd cannot place the vehicle, and not as "outside the maps", which
 # would stop re-routes altogether. LAB_DRIVE defaults to
-# tools/lab-receiver/drives/lexington-return.csv, which misses the same turn, turns round
+# tools/lab-receiver/drives/lexington-return.csv (austin-return.csv in Austin), which misses the same turn, turns round
 # and rejoins the route it had. The cluster must go REROUTING and then ACTIVE again on the
 # old route, with no new route, and arrive; the app side checks the failures were counted
 # as that error, none was computed, and that it said it was back on the route. Once the
@@ -304,8 +306,11 @@
 # defaults to $OPENAUTO_CACHE/obf/Us_texas_austin_northamerica.obf, installed for every script,
 # the receiver's fixed fix and the track's start are downtown Austin by I-35 (30.2660,-97.7360;
 # --position: the spot near downtown with the most gas stations, food and shops within the
-# 800x480 pane), and LAB_ROUTE and the guidance destination default to Austin points. The
-# Lexington drives do not fit it: give LAB_DRIVE for guidance.
+# 800x480 pane), and LAB_ROUTE and the guidance destination default to Austin points: the
+# destination is Guadalupe Street by the university (AUSTIN_DEST), whose route's last turn is
+# about 650 m before its end, so the cluster is sent the destination step before arrival. Guidance
+# and voice drive tools/lab-receiver/drives/austin.csv (austin-return.csv with
+# LAB_REROUTE=fail), written by LabDrive.java with `austin`.
 #
 # LAB_POI=gas,food,shop (P11.5) lights those map buttons when the projection starts (debug builds
 # read files/lab-poi, written here; the buttons are otherwise off at every start). It installs
@@ -350,10 +355,10 @@ RECEIVER_IMAGE=localhost/openauto-lab-receiver:p4
 # ran out of memory on the Pixel (2026-11-13, docs/navigation.md, "Routing on OsmAnd maps").
 # The receiver runs no script of its own. The stand-in HERE server serves scenario austin, a
 # queue on I-35 north of downtown. While projecting, from the fixed fix downtown, a share to
-# the university (3 km) gives traffic a route to fetch around; traffic is turned on and the
-# jam held as no-go points; then Taylor is shared (57 km), so its search is priced and runs
-# without OsmAnd's highway hierarchy. The run passes when that route comes back, shaped by
-# traffic, and no coordinate of it or of OsmAnd's own error reached the report.
+# Guadalupe Street by the university (3 km) gives traffic a route to fetch around; traffic is
+# turned on and the jam held as no-go points; then Taylor is shared (57 km), so its search is
+# priced and runs without OsmAnd's highway hierarchy. The run passes when that route comes
+# back, shaped by traffic, and no coordinate of it or of OsmAnd's own error reached the report.
 # LAB_OSMAND_EXPECT=fail inverts the last check, for running it against a build from before
 # the fix.
 SCRIPT=${1:-$(if [ -n "${LAB_TRAFFIC:-}" ]; then echo traffic; elif [ -n "${LAB_WEATHER:-}" ]; then echo weather; else echo taps; fi)}
@@ -456,6 +461,8 @@ mkdir -p "$out" "$CACHE_ROOT/emulator-avd"
 REGION=${LAB_REGION:-massachusetts}
 case $REGION in massachusetts|austin) ;; *) echo "emulator-lab: LAB_REGION is massachusetts or austin" >&2; exit 1 ;; esac
 POSITION_ARGS=
+# AUSTIN_DEST: Austin's guidance destination, LAB_ROUTE's end and the osmand script's first share.
+AUSTIN_DEST=30.28750,-97.74170
 if [ "$REGION" = austin ]; then
     POSITION_ARGS="--position 30.2660,-97.7360"
     REGION_OBF=$CACHE_ROOT/obf/Us_texas_austin_northamerica.obf
@@ -467,7 +474,7 @@ fi
 ROUTE=
 if [ -n "${LAB_ROUTE:-}" ]; then
     if [ "$LAB_ROUTE" != 1 ]; then ROUTE=$LAB_ROUTE
-    elif [ "$REGION" = austin ]; then ROUTE="30.2660,-97.7360 30.2849,-97.7341"
+    elif [ "$REGION" = austin ]; then ROUTE="30.2660,-97.7360 $AUSTIN_DEST"
     else ROUTE="42.4242,-71.2121 42.3551,-71.0656"; fi
 fi
 # The osmand script shares its own destinations and checks the route it gets for each; a
@@ -537,18 +544,19 @@ REROUTE_MODE=${LAB_REROUTE:-ok}
 case $REROUTE_MODE in ok|fail) ;; *) echo "emulator-lab: LAB_REROUTE is ok or fail" >&2; exit 1 ;; esac
 # After LAB_REROUTE=fail's attempt a lab route must still be computed: the run's own
 # LAB_ROUTE, else the region's parked position to its guidance destination (the Battle
-# Green; the university in Austin).
+# Green; Guadalupe Street in Austin).
 if [ -n "$ROUTE" ]; then AFTER_ROUTE=$ROUTE
-elif [ "$REGION" = austin ]; then AFTER_ROUTE="30.2660,-97.7360 30.2849,-97.7341"
+elif [ "$REGION" = austin ]; then AFTER_ROUTE="30.2660,-97.7360 $AUSTIN_DEST"
 else AFTER_ROUTE="42.4242,-71.2121 42.4495,-71.2310"; fi
 if [ "$REROUTE_MODE" = fail ] && [ "$SCRIPT" != guidance ]; then
     echo "emulator-lab: LAB_REROUTE=fail is for the guidance script" >&2
     exit 1
 fi
 if [ "$SCRIPT" = guidance ] || [ "$SCRIPT" = voice ] || [ "$SCRIPT" = traffic ]; then
+    town=$(if [ "$REGION" = austin ]; then echo austin; else echo lexington; fi)
     if [ "$SCRIPT" = traffic ]; then drive=${LAB_DRIVE:-tools/lab-receiver/drives/traffic.csv}
-    elif [ "$REROUTE_MODE" = fail ]; then drive=${LAB_DRIVE:-tools/lab-receiver/drives/lexington-return.csv}
-    else drive=${LAB_DRIVE:-tools/lab-receiver/drives/lexington.csv}; fi
+    elif [ "$REROUTE_MODE" = fail ]; then drive=${LAB_DRIVE:-tools/lab-receiver/drives/$town-return.csv}
+    else drive=${LAB_DRIVE:-tools/lab-receiver/drives/$town.csv}; fi
     [ -f "$drive" ] || { echo "emulator-lab: no drive at $drive" >&2; exit 1; }
     cp "$drive" "$out/drive.csv"
     DRIVE_ARGS="--track-file /out/drive.csv --track-speed ${LAB_DRIVE_SPEED:-18}"
@@ -721,7 +729,8 @@ podman run --rm --pod "$pod" --name "$name" --security-opt label=disable \
   -e NAVIGATION_CLUSTER="$NAVIGATION_CLUSTER" -e REROUTE_MODE="$REROUTE_MODE" -e AFTER_ROUTE="$AFTER_ROUTE" \
   -e LAB_SENSORS="${LAB_SENSORS:-all}" -e SCRIPT="$SCRIPT" -e ROUTE="$ROUTE" -e OSMAND_EXPECT="$OSMAND_EXPECT" \
   -e DESTINATION="$DESTINATION" -e NAVIGATION_SCRIPT="$NAVIGATION_SCRIPT" \
-  -e GUIDE_DEST="${LAB_GUIDE_DEST:-$(if [ "$REGION" = austin ]; then echo 30.28490,-97.73410; elif [ "$SCRIPT" = traffic ]; then echo 42.35510,-71.06560; else echo 42.44950,-71.23100; fi)}" \
+  -e GUIDE_DEST="${LAB_GUIDE_DEST:-$(if [ "$REGION" = austin ]; then echo $AUSTIN_DEST; elif [ "$SCRIPT" = traffic ]; then echo 42.35510,-71.06560; else echo 42.44950,-71.23100; fi)}" \
+  -e AUSTIN_DEST="$AUSTIN_DEST" \
   -e POI_AHEAD="$POI_AHEAD" -e OBF_COUNT="$OBF_COUNT" \
   -e LAB_FAVORITES="${LAB_FAVORITES:-}" -e LAB_RECENT="${LAB_RECENT:-}" -e LAB_SCREENS="${LAB_SCREENS:-}" \
   -e LAB_REORDER="${LAB_REORDER:-}" -e LAB_WIRELESS_TCP="${LAB_WIRELESS_TCP:-}" \
@@ -1260,10 +1269,10 @@ https://osmand.net/map?pin=30.50860,-97.67880#16/30.50860/-97.67880"
                 -d "\"geo:$1?z=16\"" > /out/lab-destination-$2.txt 2>&1 || fail "geo VIEW intent $2"
         }
         settled() { report | grep -cE "route (computed in|failed after)" || true; }
-        share 30.28490,-97.73410 university
-        wait_for "route (computed in|failed after)" 300 || fail "the trip to the university never finished"
+        share $AUSTIN_DEST guadalupe
+        wait_for "route (computed in|failed after)" 300 || fail "the trip to Guadalupe Street never finished"
         computed=$(computed)
-        [ "$computed" -ge 1 ] || fail "no route to the university: $(report | grep "route failed" | tail -n 1)"
+        [ "$computed" -ge 1 ] || fail "no route to Guadalupe Street: $(report | grep "route failed" | tail -n 1)"
         log "warm-up route: $(report | grep "route computed in" | tail -n 1 | sed "s/.*route computed/route computed/")"
         traffic_switch true
         log "traffic turned on"
@@ -1289,7 +1298,7 @@ https://osmand.net/map?pin=30.50860,-97.67880#16/30.50860/-97.67880"
         else
             echo "$last" | grep -q "^route failed" || fail "the build expected to fail found a route: $last"
         fi
-        for marker in 30.5698 97.4097 30.2849 97.7341 "30\.2660" "97\.7360"; do
+        for marker in 30.5698 97.4097 "30\.2875" "97\.7417" "30\.2660" "97\.7360"; do
             ! grep -q -- "$marker" /out/app-report-taylor.txt || fail "the report carries $marker"
         done
         grep -E "^routing_|^traffic_(held|nogos|requests)" /out/app-report-taylor.txt | while read -r line; do log "$line"; done
@@ -1686,7 +1695,7 @@ https://osmand.net/map?pin=30.50860,-97.67880#16/30.50860/-97.67880"
         # A task of its own, as a share from OsmAnd lands in OsmAnd task: am start would
         # otherwise bring the connection screen forward, and that screen holds the maps.
         adb shell am start -W --activity-multiple-task -a android.intent.action.VIEW -n $package/.DestinationActivity \
-            -d "\"geo:30.28490,-97.73410?z=16\"" > /out/lab-destination-unheld.txt 2>&1 || fail "geo VIEW intent unheld"
+            -d "\"geo:$AUSTIN_DEST?z=16\"" > /out/lab-destination-unheld.txt 2>&1 || fail "geo VIEW intent unheld"
         for _ in $(seq 20); do
             fix || true
             sleep 2
