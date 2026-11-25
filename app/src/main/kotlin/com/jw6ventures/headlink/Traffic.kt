@@ -5,8 +5,6 @@ import android.os.Handler
 import android.os.Looper
 import android.os.Process
 import android.os.SystemClock
-import java.time.YearMonth
-import java.time.ZoneOffset
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -59,16 +57,15 @@ object Traffic {
     fun install(context: Context) {
         if (feed != null) return
         val app = context.applicationContext
-        val client = TrafficPrefs.client(app)
+        val sources = TrafficPrefs.sources(app)
         val fetchThread = worker("traffic-fetch")
         val matchThread = worker("traffic-match")
         feed = TrafficFeed(object : TrafficHost {
             override fun settings(): TrafficSettings = TrafficPrefs.load(app)
 
-            override fun fetch(box: TrafficBox): TrafficFetch = client.fetch(box)
+            override fun fetch(box: TrafficBox): TrafficFetch = sources.fetch(box)
 
-            override fun requestsThisMonth(): Int =
-                TrafficPrefs.status(app).requestsIn(YearMonth.now(ZoneOffset.UTC))
+            override fun requestsThisMonth(): Int = TrafficPrefs.requestsThisMonth(app)
 
             override fun now(): Long = SystemClock.elapsedRealtime()
 

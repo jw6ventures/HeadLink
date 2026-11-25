@@ -76,30 +76,156 @@ class UrlConnectionHttp(
 }
 
 /** Why nothing was sent. */
-enum class TrafficSkip(val message: String) {
-    OFF("Live traffic is off"),
-    NO_KEY("No HERE API key is saved"),
+enum class TrafficSkip {
+    OFF,
+    NO_KEY,
     /** The message the caller shows is [TrafficStatus.limitReached], which names the month. */
-    LIMIT("Monthly request limit reached"),
+    LIMIT;
+
+    /** The card's words for it, naming [p] where the key is missing. */
+    fun message(p: TrafficProvider): String = when (this) {
+        OFF -> "Live traffic is off"
+        NO_KEY -> "No ${p.label} API key is saved"
+        LIMIT -> "Monthly request limit reached"
+    }
 }
 
-/** What one [TrafficClient.fetch] came to. */
+/** What kind of failure a [TrafficFetch.Failed] was: the report's error class. */
+enum class TrafficFailure { HTTP, NETWORK, PARSE, COUNT, OTHER }
+
+/** What one [TrafficProviderClient.fetch] came to. */
 sealed class TrafficFetch {
-    /** Both responses, read. */
+    /** Every response, read. */
     class Fetched(val snapshot: TrafficSnapshot) : TrafficFetch()
 
     /** Nothing was sent, because of [why]; [message] is the card's words for it. */
     class Skipped(val why: TrafficSkip, val message: String) : TrafficFetch()
 
     /**
-     * Sent, and it went wrong: HERE's own error in words, or why HERE could not be reached
-     * or read. [httpStatus] is HERE's status, or null when there was no answer.
+     * Sent, and it went wrong: the provider's own error in words, or why it could not be
+     * reached or read. [httpStatus] is its status, or null when there was no answer.
      */
-    class Failed(val message: String, val httpStatus: Int?) : TrafficFetch()
+    class Failed(val message: String, val httpStatus: Int?, val cause: TrafficFailure) : TrafficFetch()
+}
+
+/** One live traffic provider's client: [TrafficClient] for HERE, [TomTomClient] for TomTom. */
+interface TrafficProviderClient {
+    val provider: TrafficProvider
+
+    /** Flow and incidents for [box], gated and counted by the provider's own rules. */
+    fun fetch(box: TrafficBox): TrafficFetch
+
+    /** The card's **Test**: one small counted request. */
+    fun test(): TrafficCheck
 }
 
 /** The card's Test: [works], and "works" or what went wrong. */
 class TrafficCheck(val works: Boolean, val message: String)
+
+/** A counted GET's result: the parsed value, or why it stopped ([TrafficFetch.Skipped] or [TrafficFetch.Failed]). */
+internal sealed class Outcome<out T> {
+    class Ok<T>(val value: T) : Outcome<T>()
+    class Stopped(val result: TrafficFetch) : Outcome<Nothing>()
+}
+
+/**
+ * One provider's counted GET, shared by every client: gated again, counted and stored before
+ * it is sent, read, and every failure put in words that name [provider] and never hold the key.
+ * [errorText] picks the provider's own explanation out of an error body.
+ */
+internal class CountedGet(
+    private val provider: TrafficProvider,
+    private val http: TrafficHttp,
+    private val now: () -> Long,
+    private val zone: ZoneId,
+    private val errorText: (String) -> String?,
+) {
+    fun month(): YearMonth = YearMonth.from(Instant.ofEpochMilli(now()).atZone(zone))
+
+    fun skipped(why: TrafficSkip): TrafficFetch.Skipped = TrafficFetch.Skipped(
+        why, if (why == TrafficSkip.LIMIT) TrafficStatus.limitReached(month()) else why.message(provider),
+    )
+
+    /**
+     * One GET: [regate] first, then counted in [ledger] (room for [need] requests under
+     * [limit], one counted), then sent, then read by [parse] off the decompressed body.
+     * Failures are recorded as [record]'s last error, with [key] taken out.
+     */
+    fun <T> get(
+        url: String,
+        headers: Map<String, String>,
+        ledger: TrafficLedger,
+        limit: Int,
+        need: Int,
+        key: String,
+        regate: () -> TrafficSkip?,
+        record: TrafficLedger = ledger,
+        parse: (InputStream) -> T,
+    ): Outcome<T> {
+        // The gate again, with the settings as they are now: traffic turned off or the key
+        // removed while an earlier request was out sends nothing after it.
+        regate()?.let { return Outcome.Stopped(skipped(it)) }
+        val counted = try {
+            ledger.update { it.reserve(month(), limit, 1, need) }
+        } catch (e: RuntimeException) {
+            return Outcome.Stopped(TrafficFetch.Failed("Could not count the request, so it was not sent", null, TrafficFailure.COUNT))
+        }
+        if (counted == null) return Outcome.Stopped(skipped(TrafficSkip.LIMIT))
+        val label = provider.label
+        var status: Int? = null
+        return try {
+            http.get(url, headers).use { response ->
+                status = response.status
+                val body = TrafficClient.decoded(response)
+                if (response.status !in 200..299) {
+                    val text = readText(body, ERROR_BODY_LIMIT)
+                    val what = errorText(text) ?: "no explanation given"
+                    fail(record, key, "$label ${response.status}: $what", response.status, TrafficFailure.HTTP)
+                } else {
+                    Outcome.Ok(parse(body))
+                }
+            }
+        } catch (e: TrafficParseException) {
+            fail(record, key, "$label's answer could not be read (${e.message})", status, TrafficFailure.PARSE)
+        } catch (e: IOException) {
+            fail(record, key, "Could not reach $label: ${e.javaClass.simpleName}${e.message?.let { ": $it" } ?: ""}", status, TrafficFailure.NETWORK)
+        } catch (e: RuntimeException) {
+            // HttpURLConnection throws unchecked exceptions too (a malformed answer, a
+            // security refusal): a failed request like any other, never a crash on the
+            // caller's thread. Its own words are left out; they may hold the URL.
+            fail(record, key, "Could not reach $label: ${e.javaClass.simpleName}", status, TrafficFailure.NETWORK)
+        }
+    }
+
+    private fun fail(record: TrafficLedger, key: String, message: String, status: Int?, cause: TrafficFailure): Outcome.Stopped {
+        val shown = shorten(TrafficClient.redact(message, key))
+        try {
+            record.update { it.copy(lastError = shown) }
+        } catch (e: RuntimeException) {
+            // The error could not be stored: it is still the answer.
+        }
+        return Outcome.Stopped(TrafficFetch.Failed(shown, status, cause))
+    }
+
+    private companion object {
+        const val ERROR_BODY_LIMIT = 16 * 1024
+        const val MESSAGE_LIMIT = 240
+
+        fun readText(body: InputStream, limit: Int): String {
+            val out = ByteArrayOutputStream()
+            val chunk = ByteArray(4096)
+            while (out.size() < limit) {
+                val n = body.read(chunk, 0, minOf(chunk.size, limit - out.size()))
+                if (n < 0) break
+                out.write(chunk, 0, n)
+            }
+            return out.toString(Charsets.UTF_8.name())
+        }
+
+        fun shorten(message: String): String =
+            message.replace(Regex("\\s+"), " ").trim().let { if (it.length > MESSAGE_LIMIT) it.take(MESSAGE_LIMIT - 1) + "…" else it }
+    }
+}
 
 /**
  * The HTTP side of live traffic: the gate, the count, the two requests and
@@ -131,7 +257,11 @@ class TrafficClient(
     /** Whether [TrafficSettings.baseUrl] is honoured: a debuggable build only. */
     private val debuggable: Boolean = false,
     private val zone: ZoneId = ZoneOffset.UTC,
-) {
+) : TrafficProviderClient {
+    override val provider: TrafficProvider get() = TrafficProvider.HERE
+
+    private val counted = CountedGet(TrafficProvider.HERE, http, now, zone, TrafficJson::error)
+
     /** Why a call needing [need] requests would send nothing now, or null when it may go ahead. */
     fun gate(need: Int = FETCH_REQUESTS): TrafficSkip? = gate(settings(), need)
 
@@ -140,7 +270,7 @@ class TrafficClient(
      * before it is sent. Nothing is sent unless a whole fetch fits under the limit. When
      * flow fails, incidents are not asked for.
      */
-    fun fetch(box: TrafficBox): TrafficFetch {
+    override fun fetch(box: TrafficBox): TrafficFetch {
         val raw = settings()
         gate(raw, FETCH_REQUESTS)?.let { return skipped(it) }
         val s = raw.repaired()
@@ -156,7 +286,7 @@ class TrafficClient(
             is Outcome.Stopped -> return got.result
         }
         ledger.update { it.copy(lastFetchMs = now(), lastError = null) }
-        return TrafficFetch.Fetched(TrafficSnapshot(box, elapsed(), flow, incidents))
+        return TrafficFetch.Fetched(TrafficSnapshot(box, elapsed(), flow, incidents, setOf(TrafficProvider.HERE)))
     }
 
     /**
@@ -164,7 +294,7 @@ class TrafficClient(
      * Counted like any other, and gated the same way, so it too sends nothing while the
      * switch is off, which is the switch's guarantee.
      */
-    fun test(): TrafficCheck {
+    override fun test(): TrafficCheck {
         val raw = settings()
         gate(raw, 1)?.let { return TrafficCheck(false, skipped(it).message) }
         val s = raw.repaired()
@@ -178,68 +308,24 @@ class TrafficClient(
 
     private fun gate(s: TrafficSettings, need: Int): TrafficSkip? = when {
         !s.enabled -> TrafficSkip.OFF
+        // HERE no longer chosen, or its terms not accepted: off for HERE, so a switch made
+        // while a fetch is out stops HERE's remaining request.
+        TrafficProvider.HERE !in s.selection.order || !s.disclosed -> TrafficSkip.OFF
         TrafficSettings.cleanKey(s.apiKey) == null -> TrafficSkip.NO_KEY
         ledger.status().reserve(month(), s.repaired().monthlyLimit, 0, need) == null -> TrafficSkip.LIMIT
         else -> null
     }
 
-    private fun skipped(why: TrafficSkip) = TrafficFetch.Skipped(
-        why, if (why == TrafficSkip.LIMIT) TrafficStatus.limitReached(month()) else why.message,
-    )
-
-    private sealed class Outcome<out T> {
-        class Ok<T>(val value: T) : Outcome<T>()
-        class Stopped(val result: TrafficFetch) : Outcome<Nothing>()
-    }
+    private fun skipped(why: TrafficSkip) = counted.skipped(why)
 
     /**
      * One GET: counted first (room for [need] requests, one counted), then sent, then read
      * by [parse] off the decompressed body. Failures are recorded as the last error.
      */
-    private fun <T> request(s: TrafficSettings, url: String, need: Int, parse: (InputStreamReader) -> T): Outcome<T> {
-        // The gate again, with the settings as they are now: traffic turned off or the key
-        // removed while the flow request was out sends no incidents request after it.
-        gate(settings(), need)?.let { return Outcome.Stopped(skipped(it)) }
-        val counted = try {
-            ledger.update { it.reserve(month(), s.monthlyLimit, 1, need) }
-        } catch (e: RuntimeException) {
-            return Outcome.Stopped(TrafficFetch.Failed("Could not count the request, so it was not sent", null))
+    private fun <T> request(s: TrafficSettings, url: String, need: Int, parse: (InputStreamReader) -> T): Outcome<T> =
+        counted.get(url, HEADERS, ledger, s.monthlyLimit, need, s.apiKey, regate = { gate(settings(), need) }) {
+            parse(InputStreamReader(it, Charsets.UTF_8))
         }
-        if (counted == null) return Outcome.Stopped(skipped(TrafficSkip.LIMIT))
-        var status: Int? = null
-        return try {
-            http.get(url, HEADERS).use { response ->
-                status = response.status
-                val body = decoded(response)
-                if (response.status !in 200..299) {
-                    val text = readText(body, ERROR_BODY_LIMIT)
-                    val what = TrafficJson.error(text) ?: "no explanation given"
-                    fail(s, "HERE ${response.status}: $what", response.status)
-                } else {
-                    Outcome.Ok(parse(InputStreamReader(body, Charsets.UTF_8)))
-                }
-            }
-        } catch (e: TrafficParseException) {
-            fail(s, "HERE's answer could not be read (${e.message})", status)
-        } catch (e: IOException) {
-            fail(s, "Could not reach HERE: ${e.javaClass.simpleName}${e.message?.let { ": $it" } ?: ""}", status)
-        } catch (e: RuntimeException) {
-            // HttpURLConnection throws unchecked exceptions too (a malformed answer, a
-            // security refusal): a failed request like any other, never a crash on the
-            // caller's thread. Its own words are left out; they may hold the URL.
-            fail(s, "Could not reach HERE: ${e.javaClass.simpleName}", status)
-        }
-    }
-
-    private fun fail(s: TrafficSettings, message: String, status: Int?): Outcome.Stopped {
-        val shown = shorten(redact(message, s.apiKey))
-        try {
-            ledger.update { it.copy(lastError = shown) }
-        } catch (e: RuntimeException) {
-            // The error could not be stored: it is still the answer.
-        }
-        return Outcome.Stopped(TrafficFetch.Failed(shown, status))
-    }
 
     /**
      * HERE's host, or in a debuggable build the lab's stand-in when one is set and its host
@@ -248,7 +334,7 @@ class TrafficClient(
      */
     private fun base(s: TrafficSettings): String = labBase(s, debuggable) ?: HERE_BASE
 
-    private fun month(): YearMonth = YearMonth.from(Instant.ofEpochMilli(now()).atZone(zone))
+    private fun month(): YearMonth = counted.month()
 
     companion object {
         const val HERE_BASE = "https://data.traffic.hereapi.com"
@@ -262,9 +348,6 @@ class TrafficClient(
 
         /** Flow is six to seven times smaller gzipped. */
         val HEADERS = mapOf("Accept-Encoding" to "gzip", "Accept" to "application/json")
-
-        private const val ERROR_BODY_LIMIT = 16 * 1024
-        private const val MESSAGE_LIMIT = 240
 
         private fun encode(key: String): String = URLEncoder.encode(key, "UTF-8")
 
@@ -305,25 +388,11 @@ class TrafficClient(
             return if (saysGzip || (first == 0x1f && second == 0x8b)) GZIPInputStream(raw) else raw
         }
 
-        private fun readText(body: InputStream, limit: Int): String {
-            val out = ByteArrayOutputStream()
-            val chunk = ByteArray(4096)
-            while (out.size() < limit) {
-                val n = body.read(chunk, 0, minOf(chunk.size, limit - out.size()))
-                if (n < 0) break
-                out.write(chunk, 0, n)
-            }
-            return out.toString(Charsets.UTF_8.name())
-        }
-
         /** [message] with the key, and anything after an `apiKey=`, taken out. */
         fun redact(message: String, key: String): String {
             var text = message
             if (key.isNotEmpty()) text = text.replace(key, "[key]")
             return text.replace(Regex("apiKey=[^&\\s]*"), "apiKey=[key]")
         }
-
-        private fun shorten(message: String): String =
-            message.replace(Regex("\\s+"), " ").trim().let { if (it.length > MESSAGE_LIMIT) it.take(MESSAGE_LIMIT - 1) + "…" else it }
     }
 }

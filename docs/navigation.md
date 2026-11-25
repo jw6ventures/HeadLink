@@ -816,16 +816,26 @@ nodes (BRouter), so sharing allows 50 m at the ends.
 **Verified:** preview and saved route in the emulator; live alternatives in the lab. A
 bubble tap has not been seen on the truck; the preview has not run on the Pixel.
 
-## Live traffic (HERE)
+## Live traffic (HERE, TomTom)
 
 Older code comments call this P9.
 
-**What.** Opt-in (off by default), with the operator's own HERE API key. While a route is
-followed, the app fetches HERE Traffic API v7 flow and incidents for the route ahead,
-colours the route line ahead by congestion, adds the delay to the arrival time, re-routes
-round a closure ahead, and offers a faster way round a jam. Setup is on the Maps tab →
-**Live traffic** card; getting a key is in [data.md](data.md). `INTERNET` exists for this
-alone (spec.md §5.2, APP10 as amended).
+**What.** Opt-in (off by default), with the operator's own HERE or TomTom API key, or both.
+While a route is followed, the app fetches flow and incidents for the route ahead (HERE
+Traffic API v7, or TomTom's Orbis v2 vector flow tiles and incident details), colours the
+route line ahead by congestion, adds the delay to the arrival time, re-routes round a
+closure ahead, and offers a faster way round a jam. Setup is on the Maps tab → **Live
+traffic** card; getting a key is in [data.md](data.md). `INTERNET` exists for this alone
+(spec.md §5.2, APP10 as amended).
+
+**Providers** (`TrafficSources`). The card's Provider is HERE, TomTom, "HERE, then TomTom"
+or "TomTom, then HERE"; the first named is preferred. With two, **Combined** asks both every
+refresh: flow from the first that answered (the preferred one unless it failed), incidents
+and closures from both. Flow is never taken from both, because `TrafficNogos` would double
+a jam's weight. **Failover** asks the second only when the first has no key, is at its
+limit or fails. Each client gates itself, so a provider with no key costs no request. When
+nothing answers, a failure wins over a limit, and a limit over off or no key, so the feed
+retries, waits or stops accordingly.
 
 **Why HERE.** TomTom's developer terms (clause 7) forbid "Automotive Usage", defined to
 include screen replication and naming Ford Sync, and its free tier is evaluation-only.
@@ -833,33 +843,46 @@ HERE's Platform Terms 6.3a carve out a phone projecting onto a car display, and 
 allows combining HERE data with other data into a route with attribution. RoadEagle/TraFF
 has no US feeds, Houston TranStar covers Houston freeways only, Waze for Cities is for
 governments. Before planning any other commercial traffic API, check its terms for
-automotive and screen-replication clauses.
+automotive and screen-replication clauses. TomTom is offered beside HERE because the
+operator asked for it; whether their TomTom agreement allows use in the car is the
+operator's call under that agreement.
 
-**HERE's conditions, and how the design meets them:** "Traffic © HERE" on the map whenever
+**HERE's conditions, and how the design meets them:** the map credit names whose data is
+shown ("Traffic © HERE", "Traffic © TomTom" or "Traffic © HERE, TomTom") whenever
 traffic is drawn or shaped the route or time (6.4a); HERE data is held in memory only and
 replaced by the next response, never written anywhere or committed as a fixture (6.4b,
 6.4j; HERE sends no cache headers); no learning from HERE data, so Learn my pace uses the
 drive's fixes only (6.4f); nothing shared with other apps (6.4h); End User Terms and
-Privacy Policy linked on the card (6.2). Pricing: 5,000 free transactions a month, then
-$2.50 per 1,000.
+Privacy Policy linked on the card (6.2), and TomTom's legal terms and privacy policy beside
+them when TomTom is chosen. Pricing: HERE gives 5,000 free transactions a month, then
+$2.50 per 1,000; TomTom's free tier is 2,500 incident requests and 200,000 flow tiles a
+month.
 
-**The gate** (`TrafficClient`, `TrafficSettings`). No socket opens unless traffic is on
-**and** a key is saved; `TrafficSettings.repaired()` turns traffic off whenever the key is
-blank, and the gate is checked again before every request. Host tests pin that the HTTP
-layer is never called otherwise. The key lives in its own preferences file (`traffic`),
-excluded from backup, never shown after saving, and scrubbed from every error message. A
-monthly cap (default 4,500, by UTC calendar month) stops fetching; each request is counted
-and stored before it is sent. Release builds always use `https://data.traffic.hereapi.com`;
-a debug build honours a base-URL override only for `10.0.2.2`, `127.0.0.1` and `localhost`
-(the lab's stand-in server).
+**The gate** (`TrafficClient`, `TomTomClient`, `TrafficSettings`). No socket opens unless
+traffic is on **and** a key for a chosen provider is saved; `TrafficSettings.repaired()`
+turns traffic off whenever no chosen provider has a key, and each provider's gate is
+checked again before every request. Host tests pin that the HTTP layer is never called
+otherwise. The keys live in their own preferences file (`traffic`), excluded from backup,
+never shown after saving, and scrubbed from every error message; TomTom's key goes only in
+the `TomTom-Api-Key` header, never in a URL. Each provider has its own monthly meters, by
+UTC calendar month, and each request is counted and stored before it is sent: HERE's cap
+(default 4,500), TomTom's incident-request cap (default 2,250, under its free 2,500) and
+a fixed TomTom flow-tile cap of 180,000 (under its free 200,000; not on the card). Release
+builds always use `https://data.traffic.hereapi.com` and `https://api.tomtom.com`; a debug
+build honours a base-URL override only for `10.0.2.2`, `127.0.0.1` and `localhost` (the
+lab's stand-in server, which serves both).
 
 **What is sent.** Only while a route is followed (on it or joining, with a fix in the last
 2 minutes, or any fix while projecting, because a vehicle stopped in a queue sends no new
 fixes): the box around the next 30 km of the route (Look ahead: 15, 30 or 50 km), padded
-2 km, cut into cells under HERE's 1° limit (`TrafficArea`), plus the key. HERE sees roughly
-where the truck is, its IP and when; not the destination or the route. Each box is two
-GETs, flow first, `locationReferencing=shape`, and flow with `functionalClasses=1,2,3`
-(without it a response is 50 times larger, mostly side streets). Gzip is asked for.
+2 km, cut into cells under HERE's 1° limit (`TrafficArea`), plus the key. Each provider
+sees roughly where the truck is, its IP and when; not the destination or the route. Each
+HERE box is two GETs, flow first, `locationReferencing=shape`, and flow with
+`functionalClasses=1,2,3` (without it a response is 50 times larger, mostly side streets).
+TomTom is sent the zoom-12 flow tiles covering the box (`TomTomTiles.covering`, about 15 to
+40), then the box itself for incidents, split into equal cells of at most 9,000 km² each
+(TomTom allows 10,000). Tiles are clipped to their own square so neighbours never repeat a
+road. Gzip is asked for.
 
 **Cadence** (`TrafficFeed`, main-thread state; fetch and match run on their own threads at
 nice 4). First fetch at the first fix on a new route, then every Refresh interval (default
@@ -874,28 +897,30 @@ flow bodies run to megabytes and neither `org.json` nor `android.util.JsonReader
 host-test classpath. Speeds are m/s. Sub-segments split one stretch into spans; a span that
 omits free flow, jam factor or traversability inherits its stretch's, but never its speed
 (HERE omits speed only on closed spans). Non-finite numbers are dropped. Both of HERE's
-error shapes are read.
+error shapes are read. TomTom's tiles are read by `TomTomTiles` (a hand-written vector-tile
+decoder; each line is one direction of travel, its relative speed becoming the jam factor)
+and its incidents and errors by `TomTomJson`.
 
 **Matching** (`TrafficMatch`). The route is cut into 10 m pieces; each takes the closest
-HERE stretch within 15 m **whose heading agrees within 30°**, which keeps a northbound jam
+traffic stretch within 15 m **whose heading agrees within 30°**, which keeps a northbound jam
 off the southbound carriageway and the frontage road. A piece with no match has no data
 and is drawn in the normal route colour, never as free-flowing. Levels: slow for jam factor
 4–8 (amber), queuing above 8 (red), closed (dark red stipple). Only slow and queuing count
-as delay (length at HERE's speed minus the route's time; free flow adds nothing, or empty
+as delay (length at the provider's speed minus the route's time; free flow adds nothing, or empty
 roads showed "+1 min"). A closure ahead needs a closed run of at least 30 m. Managed or
 reversible lanes beside the route are not closures of it. HERE's lines sit within a couple
 of metres of OSM's mostly, but up to 20 m on some interstate stretches.
 
 **No-go points** (`TrafficNogos`, `TrafficCost`, `OsmAndRouter`'s `RequestRouter`).
 Closures become hard circles and jams weighted ones, radius 8 m, at most 150 m apart, none
-within 30 m of a stretch's end (junctions), slid clear of HERE roads that cross
+within 30 m of a stretch's end (junctions), slid clear of traffic roads that cross
 (overpasses), capped at 300. Because HERE's geometry can be 20 m off, closures and jams
-matched to the route also get points on the route's own line, in place of HERE's own for
+matched to the route also get points on the route's own line, in place of the provider's own for
 a jam. Every request carries them
 while a response is held, including re-routes and every alternatives search. A closure
 makes a step impassable; a jam adds time in proportion to the metres of the step inside
 its circle, and overlapping circles add up. Traffic and town prices together charge no
-step more than a day (`StepPenalty.MAX_STEP_SECONDS`), so an absurdly long or slow HERE
+step more than a day (`StepPenalty.MAX_STEP_SECONDS`), so an absurdly long or slow traffic
 stretch cannot add up to a cost OsmAnd's search cannot weigh, and the dearest step is
 still avoided wherever it can be. A request that finds no route with its
 closures closed is tried once more with each closure passable at 300 s a point, so a
@@ -911,7 +936,8 @@ nearest it, which on a long segment can be past it, inside a closure farther alo
 Circles have no direction: on an undivided road a jam one way charges both.
 
 **Weights.** A weight is seconds per metre inside the circle: a jam's points together
-charge its delay times its HERE class's factor to a route through all their middles, so
+charge its delay times its functional class's factor (TomTom's road category mapped to
+HERE's classes) to a route through all their middles, so
 a point weighs its share of that ÷ 16 m. Matched to the route, a jam of several touching
 runs is placed as one, and each point charges the part of the jam nearest it, each run at
 its own class's factor (a queue running off a motorway onto its ramp). The same whatever
@@ -996,13 +1022,20 @@ colours: [dashboard.md](dashboard.md).
 
 ![A traffic offer on the divided turn card at Ford's 726x480 (lab)](images/p9/p9-offer-726-side-by-side-day.png)
 
-**Report.** A `[traffic]` section with counts, minutes and booleans only: never a box, a
-road, a reason, HERE's error text or the key. `traffic_last_error` is a class
-(`network`, `http_401`, `limit`, …).
+**Report.** A `[traffic]` section with counts, minutes, booleans and a few fixed setting
+names (provider selection and tandem, providers held): never a box, a
+road, a reason, a provider's error text or a key. `traffic_last_error` is a class
+(`network`, `http_401`, `limit`, …). The first line also has `traffic_selection`,
+`traffic_tandem`, `traffic_tomtom_key` (whether one is saved), `traffic_tomtom_limit`;
+`traffic_providers_held` names whose data is held (`HERE`, `TomTom`, `HERE+TomTom` or `-`),
+and `traffic_requests_session` counts every provider's requests together.
 
-**Verified:** the card's Test button with a real key on the Pixel. Everything else in the
-emulator lab against a stand-in server (`tools/here-standin/`), all five checks passing,
-and host tests on real Dallas and Austin routes. Not yet: a drive into real congestion,
+**Verified:** HERE: the card's Test button with a real key on the Pixel. Everything else
+in the emulator lab against a stand-in server (`tools/here-standin/`), all five checks
+passing, and host tests on real Dallas and Austin routes. TomTom and both together: host
+tests (`TomTomTrafficTest`) and the lab against the stand-in (offer on TomTom alone, closure
+on Combined, offer on Failover, off on both), 25 Nov 2026; not with a real key. Not yet: a
+drive into real congestion,
 release-build timings of alternatives with points, frame cost at 1080p. The side-by-side
 vs stacked card choice and the night queue red being close to motorway red are open.
 

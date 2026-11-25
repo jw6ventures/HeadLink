@@ -1,6 +1,6 @@
 # HeadLink privacy policy
 
-Effective 28 October 2026. Applies to the HeadLink Android app
+Effective 24 November 2026. Applies to the HeadLink Android app
 (`com.jw6ventures.headlink`) published by JW6 Ventures.
 
 ## The short version
@@ -8,7 +8,7 @@ Effective 28 October 2026. Applies to the HeadLink Android app
 HeadLink has no account, no ads, no analytics, no crash reporting, and no server of its
 own. It keeps what it needs on your phone. It sends something over the internet only when
 you turn on one of two optional features, and then only what is described under
-[Live traffic](#live-traffic-here) and [Home Assistant button](#home-assistant-button).
+[Live traffic](#live-traffic-here-tomtom) and [Home Assistant button](#home-assistant-button).
 
 ## What stays on your phone
 
@@ -32,7 +32,7 @@ turned off for all of it, so none of it is copied to a cloud backup or a new pho
   location, destinations, routes, callers, phone numbers, contacts, notification content,
   or anything you said. Device
   serial numbers are redacted and Wi-Fi network names are replaced by a salted hash.
-- **Your HERE API key**, if you enter one.
+- **Your HERE and TomTom API keys**, if you enter them.
 - **Your Home Assistant server address, service, target and access token**, if you set up
   the Home Assistant button. The token is encrypted with a key held in the Android
   Keystore, is never shown again once saved, and is left out of diagnostic reports.
@@ -87,19 +87,26 @@ is off by default, and each part asks for its permission only when you turn that
 What you said, and the text of your messages, is never saved by HeadLink or put in a
 diagnostic report.
 
-## Live traffic (HERE)
+## Live traffic (HERE, TomTom)
 
-Live traffic is off by default and needs your own HERE API key. While it is on and a route
-is being followed, HeadLink sends HERE, every 10 minutes (or the interval you set):
+Live traffic is off by default and needs your own HERE or TomTom API key. You choose HERE,
+TomTom or both; with both, each refresh asks both (Combined) or the second only when the
+first cannot answer (Failover). While it is on and a route is being followed, HeadLink
+sends each provider it asks, every 10 minutes (or the interval you set):
 
-- the rectangle around the next 30 km of your route, which shows HERE roughly where you
-  are, and
-- your API key.
+- the rectangle around the next 30 km of your route, which shows the provider roughly
+  where you are (TomTom receives it as map tile numbers for its flow tiles and as
+  rectangles of at most 9,000 km² for its incidents), and
+- your API key for that provider.
 
-HERE also sees your IP address and the time of each request. HeadLink does not send your
-destination or the route itself. HeadLink keeps nothing it receives beyond the next
-response. HERE's handling of this data is governed by HERE's own privacy policy:
-<https://legal.here.com/us-en/privacy>.
+The card's **Test** button sends each chosen provider with a saved key one request for a
+small fixed area of downtown Dallas, with the key; it sends nothing about your location.
+
+Each provider also sees your IP address and the time of each request. HeadLink does not
+send your destination or the route itself. HeadLink keeps nothing it receives beyond the
+next response. Each provider's handling of this data is governed by its own privacy
+policy: HERE's at <https://legal.here.com/us-en/privacy> and TomTom's at
+<https://www.tomtom.com/privacy/>.
 
 ## Home Assistant button
 

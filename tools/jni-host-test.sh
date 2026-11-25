@@ -123,6 +123,14 @@
 #   the header, the base-URL override honoured only when debuggable, and that a snapshot is
 #   only its own box. Fixtures are hand-written in HERE's shape; HttpURLConnection and the
 #   preferences file need a phone.
+# * TomTomTrafficTest: TomTom live traffic beside HERE - the provider settings (selection,
+#   tandem, TomTom key and limit) and their repair, the z12 tiles covering a box, vector flow
+#   tiles from the test's own encoder (the flow layer's linestrings only, every numeric value
+#   kind, clipped to the tile so TomTom's margin is dropped, closures), TomTom's incidents and
+#   error shapes, a fetch as its tiles then its incident boxes with the key only in a header
+#   and each request counted in its own meter first, both monthly caps, incident boxes split
+#   under TomTom's area limit, Combined and Failover over fake providers, and the map credit.
+#   Fixtures follow TomTom's documentation; HttpURLConnection against TomTom needs a phone.
 # * TrafficMatchTest: P9.2 - the boxes asked of HERE around the route ahead (padding, the
 #   look-ahead cut at the destination, cells under HERE's 1 degree limit), hand-written HERE
 #   stretches laid on a route (same carriageway, the other one 30 m off and reversed, a
@@ -295,6 +303,7 @@ java -cp "$out:$classes:$stdlib" MicCaptureTest
 java -cp "$out:$classes:$stdlib" VoicePromptsTest
 java -cp "$out" MapThemeTest
 java -cp "$out:$classes:$stdlib" TrafficClientTest
+java -cp "$out:$classes:$stdlib" TomTomTrafficTest
 java -Xmx256m -cp "$out:$classes:$stdlib:$vtm:$osmand" TrafficMatchTest "${OBF_DIR:-}"
 java -Xmx256m -cp "$out:$classes:$stdlib:$vtm:$osmand" NogoRoutingTest "${OBF_DIR:-}"
 java -cp "$out:$classes:$stdlib:$vtm" DashboardTrafficTest

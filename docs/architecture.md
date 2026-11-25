@@ -202,7 +202,7 @@ a head unit is waiting.
 | `aap-audio` | `AudioSource` | PCM pump into `submitAudio` |
 | `aap-media`, `aap-players` | `MediaControl`, `MediaPlayers` | now-playing polling, player list |
 | `aap-route` | `RoutePlanner` | OsmAnd route searches, at lowered priority; a new request terminates the running one |
-| `traffic-fetch`, `traffic-match` | `Traffic` | HERE requests and matching, lowered priority |
+| `traffic-fetch`, `traffic-match` | `Traffic` | HERE and TomTom requests and matching, lowered priority |
 | `aap-poi`, `aap-weather`, `obf-library`, `phone-search` | various | POI queries, weather reads, OsmAnd file reads, search |
 | `wireless-link` and `wireless-*` | `WirelessLink`, `WirelessKeepAwake` | Bluetooth bootstrap, RFCOMM reader and watchdogs, Wi-Fi keep-awake pings |
 | `source-identity` | `IdentityWork` | identity load/create/import and TLS self-test |
@@ -248,7 +248,7 @@ Supporting tools: `jni-host-test/` (JVM tests of the compiled app classes, inclu
 JNI contract under `-Xcheck:jni`), `proto-gen/` (regenerates `aap-proto`; `check.sh`
 fails if the checked-in output is stale), `lab-player/`, `breezy-standin/` and
 `here-standin/` (emulator stand-ins for a media player and caller, Breezy Weather, and
-HERE), and the build and lab scripts described in [development.md](development.md).
+HERE's and TomTom's traffic APIs), and the build and lab scripts described in [development.md](development.md).
 
 ## Constraints, and why
 
@@ -274,8 +274,8 @@ code rule) and are enforced in the build where possible, mostly by
   deliberately not a dependency. Weather reads Breezy Weather's provider on the phone.
 - **`INTERNET` only for opt-in live traffic and the Home Assistant button.** Both are off
   by default; with them off no socket opens (host-tested in `TrafficClientTest` and
-  `HomeAssistantTest`). Traffic contacts only HERE's traffic host with the operator's own
-  key, only while a route is followed. The Home Assistant button contacts only the
+  `HomeAssistantTest`). Traffic contacts only HERE's or TomTom's traffic host, as the card
+  selects, with the operator's own key, only while a route is followed. The Home Assistant button contacts only the
   operator's own https server, only on a tap or the card's Check. `INTERNET` cannot be revoked on stock Android, so the guarantee lives in
   the code. Cleartext is allowed only in debug builds, for the lab's stand-in
   (`app/src/debug/`); `verify-apk.sh` checks a release build carries no network security

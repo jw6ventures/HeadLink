@@ -10,6 +10,7 @@
 import java.time.Instant;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
 import com.jw6ventures.headlink.Box;
 import com.jw6ventures.headlink.Congestion;
@@ -34,6 +35,7 @@ import com.jw6ventures.headlink.TrafficIncident;
 import com.jw6ventures.headlink.TrafficLines;
 import com.jw6ventures.headlink.TrafficOffer;
 import com.jw6ventures.headlink.TrafficPiece;
+import com.jw6ventures.headlink.TrafficProvider;
 import com.jw6ventures.headlink.TrafficRun;
 import com.jw6ventures.headlink.TripPanel;
 import com.jw6ventures.headlink.UpcomingTurn;
@@ -265,7 +267,7 @@ public final class DashboardTrafficTest {
 
     private static void theAttributionIsOwedByTheRule() {
         Route route = straight(30);
-        check(TrafficDisplay.ATTRIBUTION.equals("Traffic \u00a9 HERE"), "the required words");
+        check(TrafficDisplay.Companion.attribution(EnumSet.of(TrafficProvider.HERE)).equals("Traffic \u00a9 HERE"), "the required words");
         check(!TrafficDisplay.Companion.getEMPTY().getAttributed(), "nothing to credit with no traffic");
         check(!new TrafficDisplay(traffic(route, run(0, 500, Congestion.NONE), run(500, 900, Congestion.FREE)), 0, null, false).getAttributed(),
             "free-flowing and no data draw no traffic colour, so nothing is owed");

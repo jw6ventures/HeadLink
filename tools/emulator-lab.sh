@@ -254,6 +254,14 @@
 #     frame cost with the traffic layers (the report's frames and drops against the time).
 #   * render (P9.6's pictures for James): offer as far as Keep, with the same checks on the way,
 #     and no second offer: the divided card in both palettes, in the least lab time.
+# The stand-in also serves TomTom's Orbis traffic API (flow tiles and incident details), converted
+# from the same scenarios on each request, so every run above works against TomTom or both:
+# LAB_TRAFFIC_SELECTION (here, the default | tomtom | here_tomtom | tomtom_here) is the card's
+# Provider, and LAB_TRAFFIC_TANDEM (combined, the default | failover) how two are used. The lab
+# intent saves the stand-in's TomTom key beside HERE's. The run checks whose data the app holds
+# (traffic_providers_held): both when combined, the first named alone on failover; and the
+# stand-in's counts: TomTom tiles and incidents at least 1 when TomTom's is held and 0 when not,
+# HERE's flow likewise.
 # LAB_OFFER_LAYOUT=side-by-side|stacked tells the app (lab_offer_layout) and the receiver how
 # the turn card divides, and LAB_MARGINS=WxH advertises video margins (74x0 on 800x480 is
 # Ford's 726x480 content rectangle), for the renders of the divided card (P9.6). Every run
@@ -365,6 +373,12 @@ SCRIPT=${1:-$(if [ -n "${LAB_TRAFFIC:-}" ]; then echo traffic; elif [ -n "${LAB_
 # P9: which traffic run, and how the offer divides the turn card.
 TRAFFIC_MODE=${LAB_TRAFFIC:-offer}
 case $TRAFFIC_MODE in offer|render|closure|off|drive) ;; *) echo "emulator-lab: LAB_TRAFFIC is offer, render, closure, off or drive" >&2; exit 1 ;; esac
+# P9: which traffic provider or providers the card selects, and how two are used.
+TRAFFIC_SELECTION=${LAB_TRAFFIC_SELECTION:-here}
+case $TRAFFIC_SELECTION in here|tomtom|here_tomtom|tomtom_here) ;;
+    *) echo "emulator-lab: LAB_TRAFFIC_SELECTION is here, tomtom, here_tomtom or tomtom_here" >&2; exit 1 ;; esac
+TRAFFIC_TANDEM=${LAB_TRAFFIC_TANDEM:-combined}
+case $TRAFFIC_TANDEM in combined|failover) ;; *) echo "emulator-lab: LAB_TRAFFIC_TANDEM is combined or failover" >&2; exit 1 ;; esac
 OFFER_LAYOUT=${LAB_OFFER_LAYOUT:-side-by-side}
 case $OFFER_LAYOUT in side-by-side|stacked) ;; *) echo "emulator-lab: LAB_OFFER_LAYOUT is side-by-side or stacked" >&2; exit 1 ;; esac
 ALTERNATIVES=${LAB_ALTERNATIVES:-on}
@@ -375,8 +389,9 @@ case $WEATHER_MODE in show|tap|alert|stale|unsupported|off|notifier) ;;
     *) echo "emulator-lab: LAB_WEATHER is show, tap, alert, stale, unsupported, off or notifier" >&2; exit 1 ;; esac
 WEATHER_VOICE=${LAB_WEATHER_VOICE:-on}
 case $WEATHER_VOICE in on|off) ;; *) echo "emulator-lab: LAB_WEATHER_VOICE is on or off" >&2; exit 1 ;; esac
-# The stand-in's key: sent by the app to the stand-in only, and looked for in the report.
+# The stand-in's keys: sent by the app to the stand-in only, and looked for in the report.
 TRAFFIC_KEY=labkey-p9-standin-7f3a
+TOMTOM_KEY=labkey-p9-tomtom-standin-4c2e
 # The track script drives for about half a minute after the map has settled, so it gets
 # a longer window than the scripts that finish as soon as their taps land.
 if [ "$SCRIPT" = track ] || [ "$SCRIPT" = daynight ] || [ "$SCRIPT" = controls ] || [ "$SCRIPT" = endroute ]; then DEFAULT_MS=90000; else DEFAULT_MS=40000; fi
@@ -736,6 +751,7 @@ podman run --rm --pod "$pod" --name "$name" --security-opt label=disable \
   -e LAB_REORDER="${LAB_REORDER:-}" -e LAB_WIRELESS_TCP="${LAB_WIRELESS_TCP:-}" \
   -e CALL_ROUTE="$CALL_ROUTE" -e MODEM="$MODEM" -e SPEECH_ENGINE="$SPEECH_ENGINE" \
   -e TRAFFIC_MODE="$TRAFFIC_MODE" -e OFFER_LAYOUT="$OFFER_LAYOUT" -e TRAFFIC_KEY="$TRAFFIC_KEY" -e ALTERNATIVES="$ALTERNATIVES" \
+  -e TRAFFIC_SELECTION="$TRAFFIC_SELECTION" -e TRAFFIC_TANDEM="$TRAFFIC_TANDEM" -e TOMTOM_KEY="$TOMTOM_KEY" \
   -e WEATHER_MODE="$WEATHER_MODE" -e WEATHER_VOICE="$WEATHER_VOICE" -e SPEAKS="$SPEAKS" \
   -e CONGESTION_EXPECT="$CONGESTION_EXPECT" -e CONGESTION_RESTART="$CONGESTION_RESTART" \
   $LAB_APK_MOUNT $LAB_NATIVE_MOUNT \
@@ -955,7 +971,7 @@ with zipfile.ZipFile(sys.argv[1], \"a\") as apk:
     if [ "$SCRIPT" = traffic ] || [ "$SCRIPT" = osmand ]; then
         case $SCRIPT:$TRAFFIC_MODE in osmand:*) first=austin ;; *:closure) first=side ;; *) first=a ;; esac
         python3 tools/here-standin/here-standin.py --port 8765 --scenarios tools/here-standin/scenarios \
-            --state /out/here --key "$TRAFFIC_KEY" --scenario $first > /out/here-standin.txt 2>&1 &
+            --state /out/here --key "$TRAFFIC_KEY" --tomtom-key "$TOMTOM_KEY" --scenario $first > /out/here-standin.txt 2>&1 &
         standin=$!
         sleep 1
         kill -0 $standin 2>/dev/null || fail "the stand-in HERE server did not start: $(cat /out/here-standin.txt)"
@@ -990,7 +1006,9 @@ with zipfile.ZipFile(sys.argv[1], \"a\") as apk:
         ${LAB_RECENT:+--es lab_recent "\"$LAB_RECENT\""} \
         $({ [ "$SCRIPT" = traffic ] || [ "$SCRIPT" = osmand ]; } && echo "--ez lab_traffic false \
             --es lab_traffic_url http://10.0.2.2:8765 --es lab_traffic_key $TRAFFIC_KEY --ei lab_traffic_refresh 5 \
-            --ei lab_traffic_limit 4500 --ez lab_traffic_reset true --es lab_offer_layout $OFFER_LAYOUT") \
+            --ei lab_traffic_limit 4500 --ez lab_traffic_reset true --es lab_offer_layout $OFFER_LAYOUT \
+            --es lab_traffic_selection $TRAFFIC_SELECTION --es lab_traffic_tandem $TRAFFIC_TANDEM \
+            --es lab_traffic_tomtom_key $TOMTOM_KEY") \
         --el lab_projection_ms "$PROJECTION_MS" > /out/lab-intent.txt 2>&1 || fail "lab intent"
     log "lab projection attempt started (${PROJECTION_MS} ms)"
 
@@ -2191,8 +2209,18 @@ https://osmand.net/map?pin=30.50860,-97.67880#16/30.50860/-97.67880"
         at_least() { v=$(field "$1" "$3"); [ "${v:-0}" -ge "$2" ] || fail "$(basename "$3") has $1=${v:-none}, wanted at least $2"; }
         need "traffic_key=true" $final
         need "traffic_limit=4500" $final
+        need "traffic_selection=$TRAFFIC_SELECTION" $final
+        # Whose data the app holds: both when combined, the first named alone on failover
+        # (HELD_RE is HELD as an extended regular expression, for need).
+        case $TRAFFIC_SELECTION:$TRAFFIC_TANDEM in
+            here:*) HELD=HERE HELD_RE=HERE ;;
+            tomtom:*) HELD=TomTom HELD_RE=TomTom ;;
+            here_tomtom:combined|tomtom_here:combined) HELD=HERE+TomTom HELD_RE="HERE[+]TomTom" ;;
+            here_tomtom:failover) HELD=HERE HELD_RE=HERE ;;
+            tomtom_here:failover) HELD=TomTom HELD_RE=TomTom ;;
+        esac
         # The key, the stand-in descriptions and ids, the reason words and the places.
-        for marker in "$TRAFFIC_KEY" "Lab queue" "Lab slow" "Lab closure" "Lab free" "Lab other" lab-side lab-route \
+        for marker in "$TRAFFIC_KEY" "$TOMTOM_KEY" "Lab queue" "Lab slow" "Lab closure" "Lab free" "Lab other" lab-side lab-route \
             "Queue on" "Traffic on" "Closed:" "Faster" "bbox" 42.3551 71.0656 42.4246 71.2016 42.4242 71.2121; do
             for f in /out/app-report*.txt; do
                 ! grep -q -- "$marker" "$f" || fail "$(basename "$f") carries $marker"
@@ -2201,6 +2229,22 @@ https://osmand.net/map?pin=30.50860,-97.67880#16/30.50860/-97.67880"
         grep -E "^traffic_|^dashboard_traffic|map_traffic|dashboard_trip_seconds" $final | while read -r line; do log "$line"; done
         grep -E "traffic|closure|offer|looked for other routes|route (computed|requested)|lab offer layout" $final | while read -r line; do log "$line"; done
         log "stand-in: $(cat /out/here/stats.txt)"
+        # Each provider asked only when its data is held (off asks none; its own check below).
+        if [ "$TRAFFIC_MODE" != off ]; then
+            case $HELD in
+                *TomTom*)
+                    [ "$(standin tomtom_tiles)" -ge 1 ] || fail "the stand-in served no TomTom flow tile: $(cat /out/here/stats.txt)"
+                    [ "$(standin tomtom_incidents)" -ge 1 ] || fail "the stand-in served no TomTom incidents: $(cat /out/here/stats.txt)" ;;
+                *)
+                    [ "$(standin tomtom_tiles)" = 0 ] || fail "TomTom was asked for $(standin tomtom_tiles) flow tiles with $HELD held"
+                    [ "$(standin tomtom_incidents)" = 0 ] || fail "TomTom was asked for incidents $(standin tomtom_incidents) times with $HELD held" ;;
+            esac
+            case $HELD in
+                *HERE*) [ "$(standin flow)" -ge 1 ] || fail "the stand-in served no HERE flow: $(cat /out/here/stats.txt)" ;;
+                *) [ "$(standin flow)" = 0 ] || fail "HERE was asked for flow $(standin flow) times with $HELD held" ;;
+            esac
+            log "stand-in: providers held $HELD"
+        fi
     fi
     if [ "$SCRIPT" = traffic ] && { [ "$TRAFFIC_MODE" = offer ] || [ "$TRAFFIC_MODE" = render ]; }; then
         a=/out/app-report-a.txt
@@ -2214,6 +2258,7 @@ https://osmand.net/map?pin=30.50860,-97.67880#16/30.50860/-97.67880"
         need "map_traffic_stale=0" $a
         need "traffic_attributed=true" $a
         need "dashboard_traffic_attributed=true" $a
+        need "traffic_providers_held=$HELD_RE" $a
         # Check 2: the delay against what the same code finds on the host, within a minute,
         # and the trip panel labelling that delay.
         delay=$(field traffic_delay_s $a)

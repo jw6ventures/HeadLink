@@ -18,15 +18,16 @@ import java.io.Reader
  * beside them, and a result with no geometry is dropped rather than failing the response.
  */
 
-/** A body that is not the JSON HERE sends. An [IOException], so a fetch treats it as one. */
+/** A body that is not the JSON or tile a provider sends. An [IOException], so a fetch treats it as one. */
 class TrafficParseException(message: String) : IOException(message)
 
 /**
  * A forward-only JSON reader over a [Reader], shaped like android.util.JsonReader: peek at
  * the next token, then step into it, read it, or skip it. It keeps one small buffer and a
- * stack of open containers, never the document.
+ * stack of open containers, never the document. [source] names what it should have been,
+ * for the failure's words.
  */
-class JsonStream(private val input: Reader) {
+class JsonStream @JvmOverloads constructor(private val input: Reader, private val source: String = "HERE's JSON") {
     enum class Token { BEGIN_OBJECT, END_OBJECT, BEGIN_ARRAY, END_ARRAY, NAME, STRING, NUMBER, BOOLEAN, NULL, END }
 
     private val buffer = CharArray(8192)
@@ -274,7 +275,7 @@ class JsonStream(private val input: Reader) {
         return true
     }
 
-    private fun fail(why: String): Nothing = throw TrafficParseException("not HERE's JSON: $why")
+    private fun fail(why: String): Nothing = throw TrafficParseException("not $source: $why")
 
     private companion object {
         const val EMPTY_ARRAY = 1

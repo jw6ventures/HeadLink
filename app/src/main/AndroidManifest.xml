@@ -47,12 +47,12 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
 
-    <!-- P9: live traffic from HERE (docs/navigation.md, "Live traffic (HERE)", APP10 as amended
+    <!-- P9: live traffic from HERE or TomTom (docs/navigation.md, "Live traffic (HERE)", APP10 as amended
          28 September 2026). The one opt-in integration that uses the network. It is off by default,
          and with it off the app makes no network connection: TrafficClient opens no
-         socket unless the operator has turned Traffic on and saved their own HERE key
-         (host-tested, TrafficClientTest). With it on, it contacts only HERE's traffic
-         API host, only while a route is being followed, and keeps nothing it receives
+         socket unless the operator has turned Traffic on and saved their own key
+         (host-tested, TrafficClientTest). With it on, it contacts only HERE's or TomTom's traffic
+         API host, as the card selects, only while a route is being followed, and keeps nothing it receives
          beyond the next response. The handshake, projection, maps and routing never use
          it. INTERNET is an install-time permission the operator cannot revoke on stock
          Android (GrapheneOS's Network toggle can), which is why the guarantee is in the

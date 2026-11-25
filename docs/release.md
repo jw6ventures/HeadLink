@@ -88,8 +88,8 @@ adding `metadata/com.jw6ventures.headlink.yml`. Not done yet:
   Matching needs a byte-identical `libaap_jni.so`, so Rust's embedded paths have to be
   remapped (`--remap-path-prefix`) to be the same in `/workspace` and on F-Droid's server.
   Not checked yet.
-- **Anti-features.** Expect `NonFreeNet` (live traffic uses HERE, a proprietary service,
-  opt-in with the operator's own key). Reviewers may also ask about the source identity:
+- **Anti-features.** Expect `NonFreeNet` (live traffic uses HERE or TomTom, proprietary services,
+  opt-in with the operator's own keys). Reviewers may also ask about the source identity:
   the app ships no credential, and does nothing until the operator imports one that
   their head unit trusts.
 - **Trademarks.** The listing says "Android Auto head units" descriptively and disclaims
@@ -105,7 +105,7 @@ Not set up, and not recommended without a decision on the risks:
   enforced against the developer account, not just the listing.
 - Play requires an Android App Bundle for new apps (`:app:bundleRelease`, signed with an
   upload key), a privacy policy, the data-safety form (location, phone state, Bluetooth,
-  the optional HERE traffic), a foreground-service declaration with a video for the
+  the optional HERE or TomTom traffic), a foreground-service declaration with a video for the
   connectedDevice service, and justification for `MANAGE_ONGOING_CALLS` and the
   companion-device permissions.
 - Play App Signing re-signs with Google's key, so Play installs can't update from GitHub

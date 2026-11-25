@@ -1431,7 +1431,7 @@ object DashboardDrawing {
         // P9.3: HERE's credit whenever traffic is drawn, or is in the time, or shaped the
         // route (HERE's terms, 6.4 a; docs/navigation.md, "Live traffic (HERE)"). Outside the
         // `ok` branch, because the arrival time owes it even over a pane with no map in it.
-        if (snapshot.trafficAttributed) drawTrafficAttribution(canvas, paint, layout, palette)
+        if (snapshot.trafficAttributed) drawTrafficAttribution(canvas, paint, layout, palette, snapshot.trafficCredit)
         // Outside the `ok` branch too: the Home Assistant button has nothing to do with the
         // map, and a phone with no map data can still open the garage.
         snapshot.homeAssistant?.let {
@@ -1626,14 +1626,13 @@ object DashboardDrawing {
     }
 
     /**
-     * "Traffic © HERE" (P9.3) in its layout box above the ODbL credit, right-aligned, on the
-     * same plate and in the same size, so the two credits read as a pair in either palette.
+     * The traffic credit (P9.3), [text], in its layout box above the ODbL credit, right-aligned,
+     * on the same plate and in the same size, so the two credits read as a pair in either palette.
      */
-    private fun drawTrafficAttribution(canvas: Canvas, paint: Paint, layout: DashboardLayout, palette: DashboardPalette) {
+    private fun drawTrafficAttribution(canvas: Canvas, paint: Paint, layout: DashboardLayout, palette: DashboardPalette, text: String) {
         val box = layout.trafficAttribution
         paint.textSize = layout.attributionTextSize.toFloat()
         val pad = paint.textSize * 0.3f
-        val text = DashboardLayout.TRAFFIC_ATTRIBUTION
         val width = paint.measureText(text)
         val textX = box.right - pad - width
         paint.color = palette.attributionPlate

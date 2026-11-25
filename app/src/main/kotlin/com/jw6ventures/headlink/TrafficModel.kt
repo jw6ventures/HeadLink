@@ -56,9 +56,12 @@ class FlowStretch(
 /** One HERE incident: where it is, in HERE's geometry, and what it is. */
 class TrafficIncident(
     val id: String,
-    /** HERE's `type`: `roadClosure`, `construction`, `congestion`, `plannedEvent`, … */
+    /**
+     * HERE's `type`: `roadClosure`, `construction`, `congestion`, `plannedEvent`, …; or
+     * TomTom's `iconCategory`, e.g. `roadClosed`.
+     */
     val type: String,
-    /** `critical`, `major`, `minor`, or null. */
+    /** HERE's `criticality` or TomTom's `magnitudeOfDelay`: `critical`, `major`, `minor`, or null. */
     val criticality: String?,
     val roadClosed: Boolean,
     /** `summary.value`, else `description.value`, or null. */
@@ -67,16 +70,21 @@ class TrafficIncident(
     val longitudes: DoubleArray,
 )
 
+/** A live traffic service; [label] is its name as the card and the credit write it. */
+enum class TrafficProvider(val label: String) { HERE("HERE"), TOMTOM("TomTom") }
+
 /**
  * One fetch's answer, for the one box it was asked for (never reused for another
  * box, and replaced, not kept, by the next).
  */
-class TrafficSnapshot(
+class TrafficSnapshot @JvmOverloads constructor(
     val box: TrafficBox,
     /** `SystemClock.elapsedRealtime()` when it arrived. */
     val receivedAtMs: Long,
     val flow: List<FlowStretch>,
     val incidents: List<TrafficIncident>,
+    /** Whose data it holds: the credit owed for it. */
+    val providers: Set<TrafficProvider> = setOf(TrafficProvider.HERE),
 )
 
 /**
@@ -194,18 +202,23 @@ class TrafficOffer(
  * runs, whether the attribution is owed, the delay in the arrival time, and the offer if
  * one is up. Published by the traffic loop on the main thread; read by the dashboard.
  */
-class TrafficDisplay(
+class TrafficDisplay @JvmOverloads constructor(
     /** The followed route's traffic, or null when there is none to draw. */
     val traffic: RouteTraffic?,
     /** Seconds of traffic delay in the arrival time now shown, 0 when none. */
     val delaySeconds: Int,
     /** An offer, or null. */
     val offer: TrafficOffer?,
-    /** The followed route was computed with traffic nogos, so HERE shaped it. */
+    /** The followed route was computed with traffic nogos, so the traffic data shaped it. */
     val routeShaped: Boolean = false,
+    /** Whose data is shown, for the credit. */
+    val providers: Set<TrafficProvider> = setOf(TrafficProvider.HERE),
 ) {
+    /** The credit: "Traffic © HERE", "Traffic © TomTom" or both. */
+    val attribution: String get() = Companion.attribution(providers)
+
     /**
-     * "Traffic © HERE" is owed whenever a traffic colour is drawn, or traffic is in the time
+     * The credit is owed whenever a traffic colour is drawn, or traffic is in the time
      * or shaped the route (HERE's Platform Terms, 6.4a). Free-flowing is drawn in the normal colour.
      */
     val attributed: Boolean
@@ -213,7 +226,12 @@ class TrafficDisplay(
             traffic?.runs?.any { it.congestion != Congestion.NONE && it.congestion != Congestion.FREE } == true
 
     companion object {
-        const val ATTRIBUTION = "Traffic © HERE"
+        /** "Traffic © " and each of [providers], in [TrafficProvider] order. */
+        fun attribution(providers: Set<TrafficProvider>): String =
+            "Traffic © " + TrafficProvider.entries.filter { it in providers }.joinToString(", ") { it.label }
+
+        /** The longest credit, which the dashboard sizes its box for. */
+        const val LONGEST_ATTRIBUTION = "Traffic © HERE, TomTom"
         val EMPTY = TrafficDisplay(null, 0, null)
     }
 }

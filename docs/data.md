@@ -11,7 +11,7 @@ The **Setup** tab lists anything missing.
 | --- | --- | --- | --- |
 | [OsmAnd maps](#osmand-maps-obf) | OsmAnd `.obf`, read where they are | The map pane, routes and guidance, address search, map places, search ahead | For the map and navigation |
 | [Breezy Weather](#weather-breezy-weather) | An app | Weather in the dashboard header | Optional |
-| [HERE API key](#live-traffic-here-api-key) | A key | Live traffic | Optional |
+| [HERE or TomTom API key](#live-traffic-here-or-tomtom-api-key) | A key | Live traffic | Optional |
 | [Source identity](#source-identity-pem) | A PEM file | Head units that reject the generated identity | Only if needed |
 
 ## OsmAnd maps: `.obf`
@@ -63,20 +63,28 @@ itself makes no network connection for it.
 HeadLink can't make Breezy refresh. The weather shown is as recent as Breezy's last
 refresh.
 
-## Live traffic: HERE API key
+## Live traffic: HERE or TomTom API key
 
 Live traffic is off by default. It and the [Home Assistant button](#home-assistant-button) are
-the only features that use the network.
+the only features that use the network. It takes a key from HERE, TomTom or both.
 
-1. Create a HERE platform account at <https://platform.here.com/> and make an API key.
+1. For HERE, create a HERE platform account at <https://platform.here.com/> and make an API key.
    The free Base Plan includes 5,000 transactions a month. HeadLink stays well under that.
-2. In the **Live traffic** card on HeadLink's **Maps** tab, paste the key into **HERE API key**, read what traffic
-   sends and HERE's terms, then turn traffic on.
+2. For TomTom, create a key in TomTom's developer portal, <https://developer.tomtom.com/>.
+   The free tier includes 2,500 incident requests and 200,000 flow tiles a month. The card's
+   TomTom incident limit defaults to 2,250 (you can set 1 to 1,000,000); flow tiles have a
+   fixed cap of 180,000 a month that is not on the card.
+3. In the **Live traffic** card on HeadLink's **Maps** tab, choose the **Provider**, paste
+   each key into **HERE API key** or **TomTom API key** and tap **Save key**; the switch is
+   enabled only once a key is saved. Turn traffic on, read the disclosure of what is sent
+   with the chosen providers' terms, and tap **Turn on**. With both, **Using both** picks
+   Combined (both every refresh) or Failover (the second only when the first cannot answer).
 
-The key belongs to you, and you are responsible for how it's used. It is stored in the
-app's private preferences and is left out of backups and diagnostic reports. It is never
-in the APK or this repository. Requests go to `data.traffic.hereapi.com`, and only while
-a route is being followed.
+The keys belong to you, and you are responsible for how they're used. They are stored in the
+app's private preferences and are left out of backups and diagnostic reports. They are never
+in the APK or this repository. Requests go to `data.traffic.hereapi.com` and
+`api.tomtom.com` (TomTom's key in a header, never in the URL), and only while a route is
+being followed.
 
 ## Home Assistant button
 

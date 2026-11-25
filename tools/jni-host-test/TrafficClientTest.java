@@ -193,7 +193,8 @@ public final class TrafficClientTest {
             && back.getLookAheadKm() == 50 && back.getMonthlyLimit() == 1200 && back.getDisclosed(), "the stored form reads back");
         check(back.getBaseUrl().equals("http://10.0.2.2:8765"), "a trailing slash is dropped from the base URL");
         check(chosen.toStored().keySet().toString().equals("[traffic_enabled, traffic_api_key, traffic_refresh_minutes, "
-            + "traffic_look_ahead_km, traffic_monthly_limit, traffic_disclosed, traffic_base_url]"), "the stored keys");
+            + "traffic_look_ahead_km, traffic_monthly_limit, traffic_disclosed, traffic_base_url, traffic_tomtom_api_key, "
+            + "traffic_selection, traffic_tandem, traffic_tomtom_monthly_limit, traffic_tomtom_disclosed]"), "the stored keys");
 
         Map<String, Object> odd = new HashMap<>();
         odd.put(TrafficSettings.ENABLED, true);

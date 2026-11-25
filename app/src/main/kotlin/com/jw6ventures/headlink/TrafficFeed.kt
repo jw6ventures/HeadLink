@@ -130,6 +130,8 @@ class TrafficFeed(private val host: TrafficHost) {
     private var boxes: List<TrafficBox> = emptyList()
     private var flow: List<FlowStretch> = emptyList()
     private var incidents: List<TrafficIncident> = emptyList()
+    /** Every provider whose data has been held since the route began: the credit owed. */
+    private var credited: Set<TrafficProvider> = emptySet()
     private var receivedAt = 0L
     private var traffic: RouteTraffic? = null
     private var nogos: List<Nogo> = emptyList()
@@ -232,6 +234,7 @@ class TrafficFeed(private val host: TrafficHost) {
         routeAlong = DoubleArray(0)
         state = null
         coveredRoute = null
+        credited = emptySet()
         stop()
         kept.clear()
         closures.clear()
@@ -259,7 +262,7 @@ class TrafficFeed(private val host: TrafficHost) {
                 publish()
                 host.changed()
                 // After the drop, so the report this line writes already says nothing is held.
-                host.note(if (!settings.enabled) "live traffic off; traffic dropped" else "no HERE key; traffic dropped")
+                host.note(if (!settings.enabled) "live traffic off; traffic dropped" else "no traffic key; traffic dropped")
             }
             nextFetchAt = null
             return
@@ -440,7 +443,9 @@ class TrafficFeed(private val host: TrafficHost) {
         val now = host.now()
         appendLine(
             "traffic_enabled=${s.enabled} traffic_key=${s.apiKey.isNotBlank()} traffic_refresh_min=${s.refreshMinutes} " +
-                "traffic_look_ahead_km=${s.lookAheadKm} traffic_limit=${s.monthlyLimit}",
+                "traffic_look_ahead_km=${s.lookAheadKm} traffic_limit=${s.monthlyLimit} " +
+                "traffic_selection=${s.selection.key} traffic_tandem=${s.tandem.key} " +
+                "traffic_tomtom_key=${s.tomTomKey.isNotBlank()} traffic_tomtom_limit=${s.tomTomLimit}",
         )
         val followed = route != null && (state == FollowState.ON_ROUTE || state == FollowState.JOINING) &&
             (now - lastPositionAt <= FIX_FRESH_MS || host.projecting())
@@ -454,7 +459,8 @@ class TrafficFeed(private val host: TrafficHost) {
                 "traffic_last_fetch_age_s=${lastFetchAt?.let { ((now - it) / 1000L).coerceAtLeast(0) } ?: "-"} " +
                 "traffic_response_age_s=${if (snapshots.isEmpty()) "-" else ((now - receivedAt) / 1000L).coerceAtLeast(0)} " +
                 "traffic_failures=$failures traffic_skipped=$skipped traffic_stale_drops=$staleDrops " +
-                "traffic_last_error=$lastError",
+                "traffic_last_error=$lastError " +
+                "traffic_providers_held=${TrafficProvider.entries.filter { p -> snapshots.any { p in it.providers } }.joinToString("+") { it.label }.ifEmpty { "-" }}",
         )
         val t = traffic?.takeIf { it.route === route }
         appendLine(
@@ -495,7 +501,7 @@ class TrafficFeed(private val host: TrafficHost) {
                 val result = try {
                     host.fetch(box)
                 } catch (e: RuntimeException) {
-                    TrafficFetch.Failed("traffic fetch threw ${e.javaClass.simpleName}", null)
+                    TrafficFetch.Failed("traffic fetch threw ${e.javaClass.simpleName}", null, TrafficFailure.OTHER)
                 }
                 if (result is TrafficFetch.Fetched) {
                     got += result.snapshot
@@ -521,6 +527,7 @@ class TrafficFeed(private val host: TrafficHost) {
             null -> {
                 // The new response replaces the old whole: nothing of the last is kept.
                 snapshots = got
+                credited = credited + got.flatMap { it.providers }
                 boxes = asked
                 flow = got.flatMap { it.flow }
                 incidents = got.flatMap { it.incidents }
@@ -796,10 +803,13 @@ class TrafficFeed(private val host: TrafficHost) {
 
     private fun publish() {
         val r = route
-        val next = TrafficDisplay(traffic?.takeIf { r != null && it.route === r }, delaySeconds, offer, r?.trafficShaped == true)
+        val next = TrafficDisplay(
+            traffic?.takeIf { r != null && it.route === r }, delaySeconds, offer, r?.trafficShaped == true,
+            credited.ifEmpty { host.settings().selection.order.toSet() },
+        )
         val last = display
         if (next.traffic === last.traffic && next.delaySeconds == last.delaySeconds && next.offer === last.offer &&
-            next.routeShaped == last.routeShaped
+            next.routeShaped == last.routeShaped && next.providers == last.providers
         ) {
             return
         }
@@ -873,17 +883,15 @@ class TrafficFeed(private val host: TrafficHost) {
         fun refreshMs(settings: TrafficSettings): Long = settings.refreshMinutes * 60_000L
 
         /**
-         * A failed fetch as a class for the report, never HERE's text: `http_401`, `network`,
-         * `parse`, `count` or `other`.
+         * A failed fetch as a class for the report, never the provider's text: `http_401`,
+         * `network`, `parse`, `count` or `other`.
          */
-        fun errorClass(failed: TrafficFetch.Failed): String {
-            failed.httpStatus?.let { if (failed.message.startsWith("HERE ")) return "http_$it" }
-            return when {
-                failed.message.startsWith("Could not reach HERE") -> "network"
-                failed.message.startsWith("HERE's answer could not be read") -> "parse"
-                failed.message.startsWith("Could not count") -> "count"
-                else -> "other"
-            }
+        fun errorClass(failed: TrafficFetch.Failed): String = when (failed.cause) {
+            TrafficFailure.HTTP -> "http_${failed.httpStatus}"
+            TrafficFailure.NETWORK -> "network"
+            TrafficFailure.PARSE -> "parse"
+            TrafficFailure.COUNT -> "count"
+            TrafficFailure.OTHER -> "other"
         }
 
         /** The place [metres] along [route], [along] being its metres ([TrafficArea.metres]). */

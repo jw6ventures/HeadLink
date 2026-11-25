@@ -974,8 +974,8 @@ class DashboardLayout @JvmOverloads constructor(
         /** P11.5: the POI card's buttons, left to right: Go (or Add stop), then Close. */
         val POI_CARD_ACTIONS = listOf("primary", "close")
 
-        /** HERE's credit (P9.3); [TrafficDisplay.ATTRIBUTION]. */
-        const val TRAFFIC_ATTRIBUTION = TrafficDisplay.ATTRIBUTION
+        /** The longest traffic credit (P9.3), which its box is sized for; [TrafficDisplay.LONGEST_ATTRIBUTION]. */
+        const val TRAFFIC_ATTRIBUTION = TrafficDisplay.LONGEST_ATTRIBUTION
 
         /** "+12 min traffic": the longest delay label [tripTrafficTextSize] is sized for. */
         const val TRAFFIC_LABEL_CHARACTERS = 15
@@ -1415,8 +1415,10 @@ class Dashboard @JvmOverloads constructor(
         val pressedKey: Int = -1,
         val pressedKeypadClose: Boolean = false,
         // P9: live traffic (docs/navigation.md, "Live traffic (HERE)").
-        /** "Traffic © HERE" is owed ([TrafficDisplay.attributed]) and drawn in the map's corner. */
+        /** The traffic credit is owed ([TrafficDisplay.attributed]) and drawn in the map's corner. */
         val trafficAttributed: Boolean = false,
+        /** The credit's words, "Traffic © HERE" and so on ([TrafficDisplay.attribution]). */
+        val trafficCredit: String = "",
         /** A faster way round, dividing the turn card with Take and Keep; or null. */
         val offer: OfferCard? = null,
         /** P10: the header's weather item; null while Show weather is off. */
@@ -2946,6 +2948,7 @@ class Dashboard @JvmOverloads constructor(
             pressedKey = pressedKey,
             pressedKeypadClose = pressedKeypadClose,
             trafficAttributed = trafficDisplay.attributed.also { if (it) attributedFrames++ },
+            trafficCredit = trafficDisplay.attribution,
             offer = shownOffer()?.let { OfferCard(it.id, it.label, it.reason, pressedOffer) },
             weatherHeader = if (weatherOn) {
                 WeatherDisplay.header(weatherState, nowMillis, alertLevel, pressedWeather, layout::headerWeatherText)

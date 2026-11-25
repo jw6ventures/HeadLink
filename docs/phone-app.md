@@ -280,21 +280,28 @@ and the emulator lab.
 
 Off by default. It is the app's only network use (APP10 as amended, spec.md §5.2). The
 settings live in their own `traffic` preferences file (`TrafficSettings.kt`,
-`TrafficPrefs`), because the key is a secret.
+`TrafficPrefs`), because the keys are secret.
 
 | Control | Default | Notes |
 | --- | --- | --- |
-| Use live traffic | off | Disabled until a key is saved. The first turn-on shows what is sent, with HERE's terms, and only **Turn on** enables it. |
-| HERE API key | none | A masked field, kept out of autofill. Once saved, the card only says "A key is saved." **Remove key** also turns traffic off. |
-| Test | — | One incidents request for a fixed area of downtown Dallas. It counts toward the limit and works only with traffic on. |
+| Use live traffic | off | Disabled until a key for a chosen provider is saved. The first turn-on for a provider shows what is sent, with that provider's terms (HERE's, TomTom's), and only **Turn on** enables it. |
+| Provider | HERE | HERE, TomTom, "HERE, then TomTom" or "TomTom, then HERE"; the first named is preferred and its flow colours the route |
+| Using both | Combined | Shown only with two providers. Combined asks both every refresh (flow from the first provider that answers, the preferred one unless it failed; incidents and closures from both); Failover asks the second only when the first has no key, is at its limit or fails |
+| HERE API key | none | A masked field, kept out of autofill. Once saved, the card only says "A key is saved." **Remove key** turns traffic off when no chosen provider still has a key. |
+| TomTom API key | none | As the HERE key |
+| Test | — | One incidents request to each chosen provider with a key, for a fixed area of downtown Dallas; with two it lists them in the Provider order, e.g. "TomTom: …; HERE: …" for "TomTom, then HERE". It counts toward the limits and works only with traffic on. |
 | Refresh every | 10 min | 5, 10, 15 or 30 min |
 | Look ahead | 30 km | 15, 30 or 50 km |
-| Monthly request limit | 4,500 | 2 to 1,000,000; HERE's free allowance is 5,000 |
+| HERE monthly request limit | 4,500 | 2 to 1,000,000; HERE's free allowance is 5,000 |
+| TomTom monthly incident request limit | 2,250 | 1 to 1,000,000; TomTom's free allowance is 2,500. Flow tiles are counted apart and capped at 180,000 a month (free: 200,000), not on the card |
 
-Under the controls, a status line shows the month's count, the last fetch and the last
-error. A debug build pointed at the lab's stand-in server says so on the card. Behaviour
-is covered in [navigation.md](navigation.md). **Verified:** Test works on the Pixel with a
-real key. Everything else is lab-only.
+Under the controls, a status section per chosen provider shows the month's count, the last fetch and the last
+error (TomTom's also the month's flow tiles). The map credit names whose data is shown:
+"Traffic © HERE", "Traffic © TomTom" or "Traffic © HERE, TomTom". A debug build pointed
+at the lab's stand-in server says so on the card. Behaviour
+is covered in [navigation.md](navigation.md). **Verified:** HERE's Test works on the Pixel
+with a real key, and HERE's other behaviour in the lab. TomTom and both together pass the
+host tests and the lab against the stand-in; no real TomTom key has been tried.
 
 ### Voice guidance
 
@@ -558,8 +565,8 @@ plain-text report. Saving doesn't depend on the screen being open.
 - **Never in a report:**
   - The accessory serial.
   - Raw wire data, unless a capture option was ticked.
-  - Keys, including the HERE key. The traffic section is counts, minutes and booleans
-    only.
+  - Keys, including the HERE and TomTom keys, and providers' error text. The traffic
+    section is counts, minutes, booleans and fixed setting names only.
   - Vehicle position, unless Record the vehicle's position was ticked for that attempt.
     Otherwise only whether a fix arrived.
   - Destination and favorite names; only which source set the destination.

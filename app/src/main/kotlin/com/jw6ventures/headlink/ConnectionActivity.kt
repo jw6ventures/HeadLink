@@ -174,15 +174,23 @@ class ConnectionActivity : Activity() {
     private lateinit var showAlternativesCheck: CompoundButton
     // P9.1: Maps & routing → Live traffic (docs/phone-app.md, "Live traffic").
     private lateinit var trafficCheck: CompoundButton
+    private lateinit var trafficSelectionSpinner: Spinner
+    private lateinit var trafficTandemSpinner: Spinner
+    private lateinit var trafficTandemRow: View
     private lateinit var trafficKeyInput: EditText
     private lateinit var trafficKeyText: TextView
     private lateinit var trafficRemoveKeyButton: Button
+    private lateinit var tomTomKeyInput: EditText
+    private lateinit var tomTomKeyText: TextView
+    private lateinit var tomTomRemoveKeyButton: Button
     private lateinit var trafficTestButton: Button
     private lateinit var trafficTestText: TextView
     private lateinit var trafficRefreshSpinner: Spinner
     private lateinit var trafficLookAheadSpinner: Spinner
     private lateinit var trafficLimitInput: EditText
     private lateinit var trafficLimitText: TextView
+    private lateinit var tomTomLimitInput: EditText
+    private lateinit var tomTomLimitText: TextView
     private lateinit var trafficStatusText: TextView
 
     /** Set while the screen moves the switch itself, so its listener saves nothing. */
@@ -191,8 +199,14 @@ class ConnectionActivity : Activity() {
     /** A Test is out; the button stays off until it answers. */
     private var trafficTesting = false
 
+    /** Counts Provider changes, so a Test answer for the previous choice is not shown. */
+    private var trafficTestRun = 0
+
     /** The last Save key was refused; the line under the field says so until the next. */
     private var trafficKeyInvalid = false
+
+    /** The same for the TomTom key. */
+    private var tomTomKeyInvalid = false
 
     // P10.1: Settings → Weather (docs/phone-app.md, "Settings").
     private lateinit var weatherCheck: CompoundButton
@@ -2096,7 +2110,7 @@ class ConnectionActivity : Activity() {
 
     /**
      * P9 lab extras, debug builds only: live traffic's settings seeded from the intent, so
-     * `tools/emulator-lab.sh` can point it at its stand-in HERE server. They are
+     * `tools/emulator-lab.sh` can point it at its stand-in HERE and TomTom server. They are
      * written to the traffic preferences like the lab favourites are, and stay until
      * changed. False when the intent carries none.
      */
@@ -2104,16 +2118,32 @@ class ConnectionActivity : Activity() {
         val extras = listOf(
             EXTRA_LAB_TRAFFIC, EXTRA_LAB_TRAFFIC_URL, EXTRA_LAB_TRAFFIC_KEY,
             EXTRA_LAB_TRAFFIC_LIMIT, EXTRA_LAB_TRAFFIC_REFRESH, EXTRA_LAB_TRAFFIC_RESET,
+            EXTRA_LAB_TRAFFIC_TOMTOM_KEY, EXTRA_LAB_TRAFFIC_SELECTION, EXTRA_LAB_TRAFFIC_TANDEM,
         )
         if (extras.none(intent::hasExtra)) return false
         if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE == 0) {
             SessionController.note("lab traffic settings in a non-debuggable build; ignored")
             return true
         }
+        val selectionExtra = intent.getStringExtra(EXTRA_LAB_TRAFFIC_SELECTION)
+        val selection = selectionExtra?.let(TrafficSelection::of)
+        if (selectionExtra != null && selection == null) {
+            SessionController.note("lab traffic selection \"$selectionExtra\" unknown; ignored")
+        }
+        val tandemExtra = intent.getStringExtra(EXTRA_LAB_TRAFFIC_TANDEM)
+        val tandem = tandemExtra?.let(TrafficTandem::of)
+        if (tandemExtra != null && tandem == null) {
+            SessionController.note("lab traffic tandem \"$tandemExtra\" unknown; ignored")
+        }
+        var before = TrafficSelection.HERE
         val stored = TrafficPrefs.update(this) { s ->
+            before = s.selection
             var next = s
             intent.getStringExtra(EXTRA_LAB_TRAFFIC_URL)?.let { next = next.copy(baseUrl = it) }
             intent.getStringExtra(EXTRA_LAB_TRAFFIC_KEY)?.let { next = next.copy(apiKey = it) }
+            intent.getStringExtra(EXTRA_LAB_TRAFFIC_TOMTOM_KEY)?.let { next = next.copy(tomTomKey = it) }
+            selection?.let { next = next.copy(selection = it) }
+            tandem?.let { next = next.copy(tandem = it) }
             if (intent.hasExtra(EXTRA_LAB_TRAFFIC_LIMIT)) {
                 next = next.copy(monthlyLimit = intent.getIntExtra(EXTRA_LAB_TRAFFIC_LIMIT, next.monthlyLimit))
             }
@@ -2122,7 +2152,7 @@ class ConnectionActivity : Activity() {
             }
             if (intent.hasExtra(EXTRA_LAB_TRAFFIC)) {
                 val on = intent.getBooleanExtra(EXTRA_LAB_TRAFFIC, false)
-                next = next.copy(enabled = on, disclosed = next.disclosed || on)
+                next = next.copy(enabled = on, disclosed = next.disclosed || on, tomTomDisclosed = next.tomTomDisclosed || on)
             }
             next
         }
@@ -2131,33 +2161,67 @@ class ConnectionActivity : Activity() {
         }
         // The settings' own toString, which says whether a key is set but never shows it.
         SessionController.note("lab traffic settings: $stored (debug build)")
+        showTrafficChoices(stored)
+        if (stored.selection != before) forgetTrafficTest()
         renderState()
         return true
+    }
+
+    /** A Test answer was for the providers chosen before: cleared, and one still out is dropped. */
+    private fun forgetTrafficTest() {
+        trafficTestRun++
+        trafficTestText.text = null
     }
 
     /** Puts live traffic's saved settings on the card, then makes each control save its own. */
     private fun loadTraffic() {
         val saved = TrafficPrefs.load(this)
         setTrafficSwitch(saved.enabled)
+        showTrafficChoices(saved)
         trafficRefreshSpinner.setSelection(TrafficSettings.REFRESH_MINUTES.indexOf(saved.refreshMinutes))
         trafficLookAheadSpinner.setSelection(TrafficSettings.LOOK_AHEAD_KM.indexOf(saved.lookAheadKm))
         // ASCII digits, which is what the field's number keyboard types and parseLimit reads.
         trafficLimitInput.setText(String.format(java.util.Locale.ROOT, "%d", saved.monthlyLimit))
+        tomTomLimitInput.setText(String.format(java.util.Locale.ROOT, "%d", saved.tomTomLimit))
         trafficCheck.setOnCheckedChangeListener { _, checked ->
             if (trafficSwitchQuiet) return@setOnCheckedChangeListener
             val now = TrafficPrefs.load(this)
             when {
                 !checked -> TrafficPrefs.update(this) { it.copy(enabled = false) }
                 // The switch is disabled without a key; this is the belt to that brace.
-                now.apiKey.isEmpty() -> setTrafficSwitch(false)
-                // The first time, what it sends and HERE's terms, before anything is on.
-                !now.disclosed -> {
+                now.keyed().isEmpty() -> setTrafficSwitch(false)
+                // The first time for each provider, what it sends and the provider's terms,
+                // before anything is on.
+                now.selection.order.any { !now.disclosed(it) } -> {
                     setTrafficSwitch(false)
                     confirmTraffic()
                 }
                 else -> TrafficPrefs.update(this) { it.copy(enabled = true) }
             }
             renderState()
+        }
+        // A provider not yet disclosed turns traffic off until its terms are accepted, so
+        // nothing is ever sent to a provider the card has not shown first.
+        trafficSelectionSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                val chosen = TrafficSelection.entries[position]
+                if (TrafficPrefs.load(this@ConnectionActivity).selection != chosen) {
+                    // One write: never an instant on with a provider whose terms were not shown.
+                    var undisclosed = false
+                    TrafficPrefs.update(this@ConnectionActivity) {
+                        val next = it.copy(selection = chosen)
+                        undisclosed = next.enabled && chosen.order.any { p -> !next.disclosed(p) }
+                        if (undisclosed) next.copy(enabled = false) else next
+                    }
+                    forgetTrafficTest()
+                    if (undisclosed) confirmTraffic()
+                }
+                renderState()
+            }
+
+            override fun onNothingSelected(parent: AdapterView<*>?) {
+                renderState()
+            }
         }
         fun Spinner.savesTraffic(change: (TrafficSettings, Int) -> TrafficSettings) {
             onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
@@ -2171,24 +2235,43 @@ class ConnectionActivity : Activity() {
                 }
             }
         }
+        trafficTandemSpinner.savesTraffic { s, i -> s.copy(tandem = TrafficTandem.entries[i]) }
         trafficRefreshSpinner.savesTraffic { s, i -> s.copy(refreshMinutes = TrafficSettings.REFRESH_MINUTES[i]) }
         trafficLookAheadSpinner.savesTraffic { s, i -> s.copy(lookAheadKm = TrafficSettings.LOOK_AHEAD_KM[i]) }
         // Saved as typed whenever it reads as a limit; otherwise the line under it says why
         // and the saved limit stands.
-        trafficLimitInput.addTextChangedListener(object : android.text.TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+        fun EditText.savesLimit(invalid: TextView, parse: (String) -> Int?, change: (TrafficSettings, Int) -> TrafficSettings) {
+            addTextChangedListener(object : android.text.TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
 
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
 
-            override fun afterTextChanged(s: android.text.Editable?) {
-                val limit = TrafficSettings.parseLimit(s?.toString().orEmpty())
-                if (limit != null) TrafficPrefs.update(this@ConnectionActivity) { it.copy(monthlyLimit = limit) }
-                trafficLimitText.visibility = if (limit == null) View.VISIBLE else View.GONE
-                renderTraffic()
-            }
-        })
+                override fun afterTextChanged(s: android.text.Editable?) {
+                    val limit = parse(s?.toString().orEmpty())
+                    if (limit != null) TrafficPrefs.update(this@ConnectionActivity) { change(it, limit) }
+                    invalid.visibility = if (limit == null) View.VISIBLE else View.GONE
+                    renderTraffic()
+                }
+            })
+        }
+        trafficLimitInput.savesLimit(trafficLimitText, { TrafficSettings.parseLimit(it) }) { s, limit -> s.copy(monthlyLimit = limit) }
+        tomTomLimitInput.savesLimit(tomTomLimitText, { TrafficSettings.parseLimit(it, TrafficSettings.TOMTOM_LIMIT_RANGE) }) { s, limit ->
+            s.copy(tomTomLimit = limit)
+        }
         trafficLimitText.setText(R.string.traffic_limit_invalid)
         trafficLimitText.visibility = View.GONE
+        tomTomLimitText.setText(R.string.traffic_tomtom_limit_invalid)
+        tomTomLimitText.visibility = View.GONE
+    }
+
+    /**
+     * The Provider and Using both spinners set from what is saved: on load, and after a lab
+     * intent writes them (which may come before the spinners' first report), never on an
+     * ordinary redraw, where it could undo a pick whose report is still on its way.
+     */
+    private fun showTrafficChoices(saved: TrafficSettings) {
+        trafficSelectionSpinner.setSelection(TrafficSelection.entries.indexOf(saved.selection))
+        trafficTandemSpinner.setSelection(TrafficTandem.entries.indexOf(saved.tandem))
     }
 
     private fun setTrafficSwitch(on: Boolean) {
@@ -2198,36 +2281,59 @@ class ConnectionActivity : Activity() {
     }
 
     /**
-     * The first turn-on: the paragraph on what is sent, and HERE's End
-     * User Terms and Privacy Policy. Only **Turn on** turns it on.
+     * The first turn-on for the chosen providers: the paragraph on what is sent, and each
+     * provider's terms and privacy policy. Only **Turn on** turns it on, and marks those
+     * providers as shown.
      */
     private fun confirmTraffic() {
+        val order = TrafficPrefs.load(this).selection.order
         val message = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(ui.dp(24), ui.dp(16), ui.dp(24), 0)
             addView(ui.body().apply { setText(R.string.traffic_disclosure) })
-            addView(termsText().apply { setPadding(0, ui.dp(12), 0, 0) })
+            addView(termsText(order).apply { setPadding(0, ui.dp(12), 0, 0) })
         }
         AlertDialog.Builder(this)
             .setTitle(R.string.traffic_disclosure_title)
             .setView(ScrollView(this).apply { addView(message) })
             .setPositiveButton(R.string.traffic_turn_on) { _, _ ->
-                val stored = TrafficPrefs.update(this) { it.copy(enabled = true, disclosed = true) }
-                SessionController.note("live traffic turned on (${if (stored.enabled) "on" else "no key"})")
+                // The selection may have changed while the dialog was up: only what it showed
+                // is marked as shown, and a provider it did not show keeps traffic off.
+                var unshown = false
+                val stored = TrafficPrefs.update(this) {
+                    val shown = it.copy(
+                        disclosed = it.disclosed || TrafficProvider.HERE in order,
+                        tomTomDisclosed = it.tomTomDisclosed || TrafficProvider.TOMTOM in order,
+                    )
+                    unshown = it.selection.order.any { p -> !shown.disclosed(p) }
+                    if (unshown) it.copy(enabled = false) else shown.copy(enabled = true)
+                }
+                if (unshown) {
+                    confirmTraffic()
+                } else {
+                    SessionController.note("live traffic turned on (${if (stored.enabled) "on" else "no key"})")
+                }
                 renderState()
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
     }
 
-    /** HERE's terms, linked, at the foot of the card. */
-    private fun termsText(): TextView = ui.caption().apply {
+    /** The providers' terms, linked, a paragraph each: in the dialog and at the foot of the card. */
+    private fun termsText(providers: Collection<TrafficProvider>): TextView = ui.caption().apply {
         autoLinkMask = android.text.util.Linkify.WEB_URLS
         movementMethod = android.text.method.LinkMovementMethod.getInstance()
-        setText(R.string.traffic_terms)
+        text = providers.joinToString("\n\n") {
+            getString(
+                when (it) {
+                    TrafficProvider.HERE -> R.string.traffic_terms
+                    TrafficProvider.TOMTOM -> R.string.traffic_terms_tomtom
+                },
+            )
+        }
     }
 
-    /** Saves a typed or pasted key, or with null removes the saved one (which turns traffic off). */
+    /** Saves a typed or pasted key, or with null removes the saved one (which may turn traffic off). */
     private fun saveTrafficKey(text: String?) {
         if (text != null) {
             val key = TrafficSettings.cleanKey(text)
@@ -2240,62 +2346,105 @@ class ConnectionActivity : Activity() {
             SessionController.note("HERE API key saved")
         } else {
             trafficKeyInvalid = false
-            TrafficPrefs.update(this) { it.copy(apiKey = "") }
-            SessionController.note("HERE API key removed; live traffic off")
+            val stored = TrafficPrefs.update(this) { it.copy(apiKey = "") }
+            SessionController.note("HERE API key removed" + if (stored.enabled) "" else "; live traffic off")
         }
         trafficKeyInput.text.clear()
         trafficTestText.text = null
         renderState()
     }
 
-    /** One incidents request, off the main thread, for the card's Test. */
+    /** [saveTrafficKey] for the TomTom key. */
+    private fun saveTomTomKey(text: String?) {
+        if (text != null) {
+            val key = TrafficSettings.cleanKey(text)
+            tomTomKeyInvalid = key == null
+            if (key == null) {
+                renderTraffic()
+                return
+            }
+            TrafficPrefs.update(this) { it.copy(tomTomKey = key) }
+            SessionController.note("TomTom API key saved")
+        } else {
+            tomTomKeyInvalid = false
+            val stored = TrafficPrefs.update(this) { it.copy(tomTomKey = "") }
+            SessionController.note("TomTom API key removed" + if (stored.enabled) "" else "; live traffic off")
+        }
+        tomTomKeyInput.text.clear()
+        trafficTestText.text = null
+        renderState()
+    }
+
+    /** One incidents request per chosen provider with a key, off the main thread, for the card's Test. */
     private fun testTraffic() {
         trafficTesting = true
         trafficTestText.setText(R.string.traffic_testing)
         renderTraffic()
-        val client = TrafficPrefs.client(this)
+        val sources = TrafficPrefs.sources(this)
+        val run = trafficTestRun
         Thread({
-            // Nothing thrown here may take the app down: the client turns its own failures
+            // Nothing thrown here may take the app down: the clients turn their own failures
             // into a message, and anything else (the preferences' commit, say) says so too.
             val message = try {
-                getString(R.string.traffic_test_result, client.test().message)
+                getString(R.string.traffic_test_result, sources.test().message)
             } catch (e: RuntimeException) {
                 getString(R.string.traffic_test_crashed, e.javaClass.simpleName)
             }
             runOnUiThread {
                 trafficTesting = false
                 if (isDestroyed) return@runOnUiThread
-                trafficTestText.text = message
+                // Dropped when the selection changed while it ran.
+                if (run == trafficTestRun) trafficTestText.text = message
                 renderState()
             }
         }, "traffic-test").start()
     }
 
     /**
-     * The card from what is saved: the switch (which needs a key), whether a key is saved,
-     * Test (only with traffic on), and the Status. Re-read on every render, since
-     * the route's refreshes write the status from another thread.
+     * The card from what is saved: the switch (which needs a key for a chosen provider),
+     * whether each key is saved, Test (only with traffic on), and a Status per chosen
+     * provider. Re-read on every render, since the route's refreshes write the status
+     * from another thread.
      */
     private fun renderTraffic() {
         val saved = TrafficPrefs.load(this)
         if (trafficCheck.isChecked != saved.enabled) setTrafficSwitch(saved.enabled)
-        trafficCheck.isEnabled = saved.apiKey.isNotEmpty() || saved.enabled
-        trafficKeyText.setText(
-            when {
-                trafficKeyInvalid -> R.string.traffic_key_invalid
-                saved.apiKey.isEmpty() -> R.string.traffic_key_none
-                else -> R.string.traffic_key_saved
-            },
-        )
+        trafficCheck.isEnabled = saved.keyed().isNotEmpty() || saved.enabled
+        trafficTandemRow.visibility = if (saved.selection.order.size == 2) View.VISIBLE else View.GONE
+        fun keyLine(invalid: Boolean, key: String) = when {
+            invalid -> R.string.traffic_key_invalid
+            key.isEmpty() -> R.string.traffic_key_none
+            else -> R.string.traffic_key_saved
+        }
+        trafficKeyText.setText(keyLine(trafficKeyInvalid, saved.apiKey))
+        tomTomKeyText.setText(keyLine(tomTomKeyInvalid, saved.tomTomKey))
         trafficRemoveKeyButton.isEnabled = saved.apiKey.isNotEmpty()
+        tomTomRemoveKeyButton.isEnabled = saved.tomTomKey.isNotEmpty()
         trafficTestButton.isEnabled = saved.usable && !trafficTesting
-        val status = TrafficPrefs.status(this)
         val month = java.time.YearMonth.now(java.time.ZoneOffset.UTC)
-        val lastFetch = status.lastFetchMs.takeIf { it > 0 }?.let {
+        fun lastFetch(status: TrafficStatus) = status.lastFetchMs.takeIf { it > 0 }?.let {
             val date = Date(it)
             "${DateFormat.getDateFormat(this).format(date)} ${DateFormat.getTimeFormat(this).format(date)}"
         }
-        val described = status.describe(month, saved.monthlyLimit, lastFetch)
+        val described = saved.selection.order.joinToString("\n\n") { p ->
+            p.label + "\n" + when (p) {
+                TrafficProvider.HERE -> TrafficPrefs.status(this, TrafficMeter.HERE).let {
+                    it.describe(month, saved.monthlyLimit, lastFetch(it))
+                }
+                TrafficProvider.TOMTOM -> {
+                    val incidents = TrafficPrefs.status(this, TrafficMeter.TOMTOM)
+                    val tiles = TrafficPrefs.status(this, TrafficMeter.TOMTOM_TILES)
+                    val tileLine = String.format(
+                        java.util.Locale.UK,
+                        "\nFlow tiles this month: %,d of %,d",
+                        tiles.requestsIn(month),
+                        TomTomClient.TILE_LIMIT,
+                    )
+                    val tilesFull = if (tiles.atLimit(month, TomTomClient.TILE_LIMIT, 1)) "\n" + TrafficStatus.limitReached(month) else ""
+                    incidents.describe(month, saved.tomTomLimit, lastFetch(incidents), 1) + tileLine + tilesFull
+                }
+            }
+        }
         // A lab override in force is said on the card, so one left over from a lab run on the
         // phone is never silent (only the lab hosts are honoured: TrafficClient.labBase).
         val lab = TrafficClient.labBase(saved, applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0)
@@ -2615,10 +2764,12 @@ class ConnectionActivity : Activity() {
         etaSpinner = spinner(RouteOptions.ETA_PERCENTS.map(RouteOptions::etaLabel))
         learnPaceCheck = switch(R.string.route_learn_pace_label)
         showAlternativesCheck = switch(R.string.route_show_alternatives_label)
-        // P9.1: live traffic. The key is typed into a masked field and never put back in
+        // P9.1: live traffic. Each key is typed into a masked field and never put back in
         // it: once saved, the card only says that a key is saved.
         trafficCheck = switch(R.string.traffic_switch)
-        trafficKeyInput = EditText(this).apply {
+        trafficSelectionSpinner = spinner(TrafficSelection.entries.map { it.label })
+        trafficTandemSpinner = spinner(TrafficTandem.entries.map { it.label })
+        fun keyInput() = EditText(this).apply {
             setHint(R.string.traffic_key_hint)
             inputType = android.text.InputType.TYPE_CLASS_TEXT or
                 android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD or
@@ -2627,8 +2778,12 @@ class ConnectionActivity : Activity() {
             importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
             maxLines = 1
         }
+        trafficKeyInput = keyInput()
         trafficKeyText = ui.caption()
         trafficRemoveKeyButton = quietButton(R.string.traffic_key_remove) { saveTrafficKey(null) }
+        tomTomKeyInput = keyInput()
+        tomTomKeyText = ui.caption()
+        tomTomRemoveKeyButton = quietButton(R.string.traffic_key_remove) { saveTomTomKey(null) }
         trafficTestButton = button(R.string.traffic_test) { testTraffic() }
         trafficTestText = ui.caption().apply {
             setTextIsSelectable(true)
@@ -2636,12 +2791,15 @@ class ConnectionActivity : Activity() {
         }
         trafficRefreshSpinner = spinner(TrafficSettings.REFRESH_MINUTES.map { "$it min" })
         trafficLookAheadSpinner = spinner(TrafficSettings.LOOK_AHEAD_KM.map { "$it km (${Math.round(it / 1.609344)} mi)" })
-        trafficLimitInput = EditText(this).apply {
+        fun limitInput() = EditText(this).apply {
             inputType = android.text.InputType.TYPE_CLASS_NUMBER
             maxLines = 1
             minEms = 5
         }
+        trafficLimitInput = limitInput()
         trafficLimitText = ui.caption()
+        tomTomLimitInput = limitInput()
+        tomTomLimitText = ui.caption()
         trafficStatusText = ui.body(selectable = true)
         // P10.1: weather. Off by default (APP09); the status line is the phone's
         // own words for what the last read found, place name included, shown here only.
@@ -2822,17 +2980,24 @@ class ConnectionActivity : Activity() {
                 ui.title(R.string.traffic_title),
                 ui.caption().apply { setText(R.string.traffic_caption) },
                 ui.withHelp(trafficCheck, R.string.traffic_switch, R.string.traffic_switch_help),
+                ui.labelled(R.string.traffic_selection_label, R.string.traffic_selection_help, trafficSelectionSpinner),
+                ui.labelled(R.string.traffic_tandem_label, R.string.traffic_tandem_help, trafficTandemSpinner).also { trafficTandemRow = it },
                 ui.labelled(R.string.traffic_key_label, R.string.traffic_key_help, trafficKeyInput, stacked = true),
                 trafficKeyText,
                 ui.row(button(R.string.traffic_key_save) { saveTrafficKey(trafficKeyInput.text.toString()) }, trafficRemoveKeyButton),
+                ui.labelled(R.string.traffic_tomtom_key_label, R.string.traffic_tomtom_key_help, tomTomKeyInput, stacked = true),
+                tomTomKeyText,
+                ui.row(button(R.string.traffic_key_save) { saveTomTomKey(tomTomKeyInput.text.toString()) }, tomTomRemoveKeyButton),
                 ui.withHelp(trafficTestButton, R.string.traffic_test, R.string.traffic_test_help),
                 trafficTestText,
                 ui.labelled(R.string.traffic_refresh_label, R.string.traffic_refresh_help, trafficRefreshSpinner),
                 ui.labelled(R.string.traffic_look_ahead_label, R.string.traffic_look_ahead_help, trafficLookAheadSpinner),
                 ui.labelled(R.string.traffic_limit_label, R.string.traffic_limit_help, trafficLimitInput),
                 trafficLimitText,
+                ui.labelled(R.string.traffic_tomtom_limit_label, R.string.traffic_tomtom_limit_help, tomTomLimitInput),
+                tomTomLimitText,
                 trafficStatusText,
-                termsText(),
+                termsText(TrafficProvider.entries),
             ),
             // P8.3: Maps & routing → Voice guidance.
             ui.card(
@@ -3298,6 +3463,12 @@ class ConnectionActivity : Activity() {
         const val EXTRA_LAB_TRAFFIC_REFRESH = "lab_traffic_refresh"
         /** P9 lab: clear the month's count, the last fetch and the last error (boolean). */
         const val EXTRA_LAB_TRAFFIC_RESET = "lab_traffic_reset"
+        /** P9 lab: the TomTom key to send; the stand-in's own, never a real one. */
+        const val EXTRA_LAB_TRAFFIC_TOMTOM_KEY = "lab_traffic_tomtom_key"
+        /** P9 lab: which providers to ask, a [TrafficSelection.key]; an unknown one is noted and ignored. */
+        const val EXTRA_LAB_TRAFFIC_SELECTION = "lab_traffic_selection"
+        /** P9 lab: with two providers, `combined` or `failover` ([TrafficTandem.key]). */
+        const val EXTRA_LAB_TRAFFIC_TANDEM = "lab_traffic_tandem"
         /**
          * P9.6 lab: how the turn card divides for a traffic offer, `stacked` or
          * `side-by-side` ([OfferLayout.key]), set before the projection's layout is made so
